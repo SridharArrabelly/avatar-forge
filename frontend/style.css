@@ -555,6 +555,15 @@ input[type="range"]::-webkit-slider-thumb {
     border-radius: 0;
 }
 
+/* Photo/custom avatars are tightly framed on the subject, so a small zoom
+   fills the frame nicely. Standard (prebuilt) avatars stream a 16:9 full-body
+   shot over a white background; zooming them crops the head on wide windows,
+   so the zoom is scoped to photo-avatar only (standard avatars stay scale(1),
+   see `.avatar-video video`). */
+.avatar-container.photo-avatar .avatar-video video {
+    transform: scale(1.15);
+}
+
 /* Column sized to the avatar's intrinsic width: the video on top and the
    caption / onboarding strip directly beneath it share the same width. */
 .avatar-stack {
@@ -660,7 +669,7 @@ input[type="range"]::-webkit-slider-thumb {
     width: auto;
     height: auto;
     object-fit: contain;
-    transform: scale(1.15);
+    transform: scale(1);
     transform-origin: center center;
     opacity: 0;
     /* Idle state: full grayscale. Switches to color via the
