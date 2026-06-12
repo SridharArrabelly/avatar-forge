@@ -566,17 +566,18 @@ input[type="range"]::-webkit-slider-thumb {
 
 /* Column sized to the avatar's intrinsic width: the video on top and the
    caption / onboarding strip directly beneath it share the same width. The
-   column takes the full container height so the stage below can derive a
-   DEFINITE height (required for object-fit: contain to constrain the video —
-   a fit-content/indefinite height would let the video render at its intrinsic
-   1080px and overflow/clip on shorter windows). */
+   column HUGS the video (height: auto) rather than filling the container, so
+   the stage hugs the video too and the dock/identity (absolutely positioned
+   to the stage) stay glued to the video's edges. The container centers this
+   shorter stack vertically, which gives the head breathing room at the top.
+   The video itself is height-capped (see `.avatar-video video`) so it never
+   overflows/clips on short windows. */
 .avatar-stack {
     display: flex;
     flex-direction: column;
     align-items: stretch;
     width: fit-content;
     max-width: 100%;
-    height: 100%;
     max-height: 100%;
     min-height: 0;
 }
@@ -587,10 +588,10 @@ input[type="range"]::-webkit-slider-thumb {
     align-items: center;
     justify-content: center;
     width: fit-content;
-    /* flex:1 (not fit-content height) gives the stage a definite height = the
-       stack height minus the caption strip, so the video can be contained to
-       fit instead of overflowing. */
-    flex: 1 1 auto;
+    /* Hug the (height-capped) video so the absolutely-positioned dock and
+       identity align to the video's actual rendered box, not a taller stage. */
+    height: fit-content;
+    flex: 0 1 auto;
     max-width: 100%;
     max-height: 100%;
     min-height: 0;
@@ -637,14 +638,8 @@ input[type="range"]::-webkit-slider-thumb {
     justify-content: center;
     max-width: 100%;
     max-height: 100%;
-    /* Definite height inherited from the stage (flex) so the video below can be
-       constrained by max-height/object-fit rather than overflowing. */
-    height: 100%;
-    /* Flex items default to min-height/min-width: auto, which refuses to shrink
-       below the video's intrinsic resolution. On smaller windows the stage is
-       smaller than the native stream, so the video would overflow and the
-       `overflow: hidden` below would clip it (centered -> head AND feet cut off).
-       min-*: 0 lets the item shrink so object-fit: contain fits the whole frame. */
+    /* Hug the video (no height:100%) so this box equals the rendered video and
+       the dock/identity anchored to the stage line up with the video edges. */
     min-width: 0;
     min-height: 0;
     /* Clip the scale(1.15) zoom to the video box so the avatar never bleeds
@@ -683,13 +678,17 @@ input[type="range"]::-webkit-slider-thumb {
 .avatar-video video {
     display: block;
     max-width: 100%;
-    max-height: 100%;
+    /* Cap height with a DEFINITE viewport-based value (not %, which can't
+       resolve against the fit-content stage — that was the old clip bug). With
+       width/height auto + this cap, the video element box equals the rendered
+       frame (aspect preserved, no letterbox), so the whole frame is always
+       visible — full-body avatars (e.g. Lisa) show head to feet, talking-head
+       avatars (e.g. Simone/Nuru) are never cropped — AND the stage hugs the
+       video so the dock/identity stay aligned. The subtracted px reserve the
+       header, the caption strip below, and top/bottom breathing room. */
+    max-height: calc(100vh - 150px);
     width: auto;
-    /* Fill the stage's definite height; width follows the aspect ratio (capped
-       by max-width). object-fit: contain then guarantees the WHOLE frame is
-       visible at any window size — full-body avatars (e.g. Lisa) show head to
-       feet, talking-head avatars (e.g. Nuru/Simone) are never cropped. */
-    height: 100%;
+    height: auto;
     object-fit: contain;
     object-position: center top;
     transform: scale(1);
