@@ -629,6 +629,13 @@ input[type="range"]::-webkit-slider-thumb {
     justify-content: center;
     max-width: 100%;
     max-height: 100%;
+    /* Flex items default to min-height/min-width: auto, which refuses to shrink
+       below the video's intrinsic resolution. On smaller windows the stage is
+       smaller than the native stream, so the video would overflow and the
+       `overflow: hidden` below would clip it (centered -> head AND feet cut off).
+       min-*: 0 lets the item shrink so object-fit: contain fits the whole frame. */
+    min-width: 0;
+    min-height: 0;
     /* Clip the scale(1.15) zoom to the video box so the avatar never bleeds
        into the caption strip below it. Clipping here (not on .avatar-stage)
        keeps the docked mic's volume glow and the speaking halo unclipped. */
@@ -669,8 +676,9 @@ input[type="range"]::-webkit-slider-thumb {
     width: auto;
     height: auto;
     object-fit: contain;
+    object-position: center top;
     transform: scale(1);
-    transform-origin: center center;
+    transform-origin: top center;
     opacity: 0;
     /* Idle state: full grayscale. Switches to color via the
        `.avatar-stage.speaking` rule below. The 450ms ease matches the
