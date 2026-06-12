@@ -149,14 +149,18 @@ def load_settings() -> dict:
         # allow-list of sites the web tool is restricted to.
         "bing_custom_config_name": (os.getenv("BING_CUSTOM_CONFIG_NAME") or "").strip() or None,
     }
+    # Bing is OPTIONAL: if BING_CONNECTION_NAME / BING_CUSTOM_CONFIG_NAME are
+    # unset (e.g. a greenfield deploy that provisioned Foundry + AI Search but
+    # no Grounding-with-Bing-Custom-Search resource, which must be configured
+    # out of band in the Bing Custom Search portal), the agent is still created
+    # with the AI Search (board/meeting minutes) tool alone. The web/news tool
+    # is added once Bing is configured and the script is re-run.
     required = (
         "project_endpoint",
         "search_connection_name",
         "search_index_name",
         "agent_name",
         "agent_model",
-        "bing_connection_name",
-        "bing_custom_config_name",
     )
     missing = [k for k in required if not settings[k]]
     if missing:
@@ -212,10 +216,10 @@ def build_bing_tool(
 def build_tools(
     search_connection_id: str,
     search_index_name: str,
-    bing_connection_id: str,
-    bing_custom_config_name: str,
+    bing_connection_id: str | None = None,
+    bing_custom_config_name: str | None = None,
 ) -> list:
-    """Build the tool list for the agent: AI Search + Grounding-with-Bing-Custom-Search.
+    """Build the tool list for the agent: AI Search + (optional) Bing Custom Search.
 
     AI Search uses VECTOR_SIMPLE_HYBRID — vector ANN + BM25 keyword.
     The semantic re-ranker (VECTOR_SEMANTIC_HYBRID) would lift recall on
@@ -245,7 +249,10 @@ def build_tools(
             ]
         )
     )
-    return [ai_search, build_bing_tool(bing_connection_id, bing_custom_config_name)]
+    tools: list = [ai_search]
+    if bing_connection_id and bing_custom_config_name:
+        tools.append(build_bing_tool(bing_connection_id, bing_custom_config_name))
+    return tools
 
 
 def _model_supports_reasoning(model: str) -> bool:
@@ -302,17 +309,28 @@ def create_agent(project: AIProjectClient, settings: dict):
     """
     azs_connection = project.connections.get(settings["search_connection_name"])
 
-    bing_connection = project.connections.get(settings["bing_connection_name"])
-    print(
-        f"Web tool: bing_custom_search (connection {settings['bing_connection_name']!r}, "
-        f"configuration {settings['bing_custom_config_name']!r})."
-    )
+    bing_connection_id = None
+    bing_custom_config_name = settings.get("bing_custom_config_name")
+    if settings.get("bing_connection_name") and bing_custom_config_name:
+        bing_connection = project.connections.get(settings["bing_connection_name"])
+        bing_connection_id = bing_connection.id
+        print(
+            f"Web tool: bing_custom_search (connection {settings['bing_connection_name']!r}, "
+            f"configuration {bing_custom_config_name!r})."
+        )
+    else:
+        print(
+            "Web tool: DISABLED — BING_CONNECTION_NAME / BING_CUSTOM_CONFIG_NAME not set. "
+            "Creating the agent with the AI Search (board/meeting minutes) tool only. "
+            "Provision a Grounding-with-Bing-Custom-Search connection and re-run this "
+            "script to add the news/web tool."
+        )
 
     tools = build_tools(
         azs_connection.id,
         settings["search_index_name"],
-        bing_connection.id,
-        settings["bing_custom_config_name"],
+        bing_connection_id,
+        bing_custom_config_name,
     )
 
     definition_kwargs = {
