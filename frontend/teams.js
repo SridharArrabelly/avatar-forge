@@ -49,6 +49,15 @@
       if (!teams || !teams.app || typeof teams.app.initialize !== 'function') return;
 
       teams.app.initialize().then(function () {
+        // Tell the Teams host the content loaded successfully. Without this the
+        // host keeps its loading veil over the tab iframe, so the page renders
+        // fine underneath but the user only sees a blank/black frame. This is
+        // the required handshake for a custom tab — call it as soon as init
+        // resolves (the avatar app is already interactive by now).
+        try {
+          if (typeof teams.app.notifySuccess === 'function') teams.app.notifySuccess();
+        } catch (e) {}
+
         try {
           teams.app.getContext().then(function (ctx) {
             applyTeamsTheme(ctx && ctx.app && ctx.app.theme);
