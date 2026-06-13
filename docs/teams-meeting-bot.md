@@ -311,18 +311,38 @@ re‑confirmed before any production use.
 
 ### Step 2 — **Face**: Nuru is visible in the meeting
 
-Same bot foundation; a second slice. Two routes:
+Same bot foundation; a second slice. The route is **decided**:
 
-- **Route B — shared‑stage Companion *(recommended first)*:** embed the **existing** web
-  avatar on the meeting stage (muted; the bot does the audio). The face appears with almost
-  no new code. Shows as app/shared content, not a camera tile.
-- **Route A — server VideoSocket *(premium upgrade)*:** capture the Azure avatar's WebRTC
-  video → decode → NV12 → feed the bot's `VideoSocket` → a true participant **camera tile**.
-  This is a real‑time transcode pipeline in .NET on the Windows host — the riskiest
-  sub‑system (latency, CPU, frame pacing). Do it only if a real camera tile is required.
+- **✅ Route A — server VideoSocket (CHOSEN):** capture the Azure avatar's WebRTC
+  video → decode → NV12 → feed the bot's `VideoSocket` → a true participant **camera
+  tile**, lip-synced to the answer audio because *both streams come from one Voice Live
+  avatar synthesis*. This is a real-time transcode pipeline in .NET on the Windows host
+  — the riskiest sub-system (latency, CPU, frame pacing) — but it is the only route that
+  delivers a genuinely **synced** face, which is the user's explicit requirement.
+- **❌ Route B — shared-stage Companion (REJECTED):** embedding the existing web avatar on
+  the meeting stage is cheap, but its lips are driven by a *separate* browser synthesis
+  with no timing relationship to the audio the bot speaks — an **unsynced** face. The user
+  and the rubber-duck review agreed an unsynced face is misleading/waste, so Route B is
+  not pursued.
 
-**Build order:** Step 1 (audio) → Step 2 Route B (cheap face) → optional Route A (camera
-tile). Audio value is never blocked on the video work.
+**The full Route A design — architecture, data flow, why audio and video must share one
+synthesis, component changes, the aiortc↔Voice Live feasibility risk, and the phased
+increments — is in [`docs/teams-avatar-video.md`](./teams-avatar-video.md).**
+
+**Build order:** Slice 1 (audio, DONE) → Slice 2A scaffold (flag-gated `VideoSocket` +
+placeholder NV12 tile, compiles) → the hard increment (server-side avatar WebRTC capture
+→ real NV12 frames over the bridge). Audio value is never blocked on the video work.
+
+> **Build status (Slice 2A scaffold landed).** The .NET camera-tile path is in place and
+> compiles against the real SDK, gated on `Bot:EnableVideo` (default off = byte-for-byte
+> the audio-only Slice 1 session). `MeetingBotService.CreateLocalMediaSession` adds an
+> outbound NV12 `VideoSocket`; `CallHandler` wires a video playout loop that sends frames
+> at the configured fps — real avatar frames from the bridge (`VideoData`) when present,
+> otherwise a static placeholder so the tile is provable before the Python video source
+> exists. The bridge contract (`VoiceLiveBridgeClient`) carries a new `VideoData` inbound
+> frame + `VideoReceived` event. What remains is the Python video source (enable the
+> avatar on the bridge session, capture its WebRTC video, forward NV12) — see
+> `docs/teams-avatar-video.md`.
 
 ---
 

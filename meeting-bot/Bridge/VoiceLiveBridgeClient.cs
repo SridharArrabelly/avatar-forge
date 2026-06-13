@@ -23,6 +23,14 @@ namespace AvatarForge.MeetingBot.Bridge;
 ///   Inbound (Python -> bot, Nuru answering):
 ///     {"Kind":"AudioData","AudioData":{"Data":"<base64 PCM16>"}}   -> play into call
 ///     {"Kind":"StopAudio","StopAudio":{}}                          -> flush outbound buffer (barge-in)
+///     {"Kind":"VideoData","VideoData":{"Data":"<base64 NV12>","Width":640,"Height":360}}
+///                                                                  -> render as the avatar camera tile (Slice 2A)
+///
+/// The VideoData frames carry raw NV12 video from the SAME Voice Live avatar
+/// synthesis that produced the AudioData, so audio and video stay lip-synced.
+/// Video is only emitted by Python when the avatar is enabled on the bridge
+/// session; an audio-only deploy never sends it and the .NET side never wires a
+/// VideoSocket (see <see cref="Configuration.BotOptions.EnableVideo"/>).
 /// </summary>
 public sealed class VoiceLiveBridgeClient : IAsyncDisposable
 {
@@ -44,6 +52,13 @@ public sealed class VoiceLiveBridgeClient : IAsyncDisposable
 
     /// <summary>Raised on barge-in: flush any buffered outbound audio immediately.</summary>
     public event Func<Task>? StopAudioRequested;
+
+    /// <summary>
+    /// Raised when a Nuru avatar video frame (raw NV12) arrives to be rendered as
+    /// the bot's camera tile. Only fires when the Python bridge has the avatar
+    /// enabled and is forwarding <c>VideoData</c> frames (Slice 2A).
+    /// </summary>
+    public event Func<VideoFrame, Task>? VideoReceived;
 
     public VoiceLiveBridgeClient(Uri uri, int sampleRate, ILogger<VoiceLiveBridgeClient> logger)
     {
@@ -152,6 +167,15 @@ public sealed class VoiceLiveBridgeClient : IAsyncDisposable
             case "StopAudio":
                 if (StopAudioRequested is not null) await StopAudioRequested().ConfigureAwait(false);
                 break;
+
+            case "VideoData" when frame.VideoData?.Data is { Length: > 0 } vb64:
+                if (VideoReceived is not null)
+                {
+                    var nv12 = Convert.FromBase64String(vb64);
+                    await VideoReceived(new VideoFrame(nv12, frame.VideoData.Width, frame.VideoData.Height))
+                        .ConfigureAwait(false);
+                }
+                break;
         }
     }
 
@@ -180,10 +204,25 @@ public sealed class VoiceLiveBridgeClient : IAsyncDisposable
     {
         [JsonPropertyName("Kind")] public string? Kind { get; set; }
         [JsonPropertyName("AudioData")] public AudioDataPayload? AudioData { get; set; }
+        [JsonPropertyName("VideoData")] public VideoDataPayload? VideoData { get; set; }
     }
 
     private sealed class AudioDataPayload
     {
         [JsonPropertyName("Data")] public string? Data { get; set; }
     }
+
+    private sealed class VideoDataPayload
+    {
+        [JsonPropertyName("Data")] public string? Data { get; set; }
+        [JsonPropertyName("Width")] public int Width { get; set; }
+        [JsonPropertyName("Height")] public int Height { get; set; }
+    }
 }
+
+/// <summary>
+/// One decoded avatar video frame in NV12 (Y plane of Width*Height bytes followed
+/// by an interleaved UV plane of Width*Height/2 bytes). Transport-only; carries no
+/// media-SDK dependency so it stays unit-testable on any OS.
+/// </summary>
+public readonly record struct VideoFrame(byte[] Nv12, int Width, int Height);

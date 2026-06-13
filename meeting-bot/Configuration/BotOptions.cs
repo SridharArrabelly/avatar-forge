@@ -62,6 +62,30 @@ public sealed class BotOptions
     /// </summary>
     public int BridgeSampleRate { get; set; } = 16000;
 
+    // ── Slice 2A — the avatar's video face (camera tile) ──────────────────────
+    //
+    // The face is a SECOND, additive media leg. When EnableVideo is false (the
+    // default) the bot is audio-only and behaves exactly like Slice 1 — no
+    // VideoSocket is created, no video is negotiated, nothing changes. When true,
+    // the bot negotiates an outbound NV12 video stream and pumps frames into the
+    // call as a participant camera tile. The frames are sourced from the SAME
+    // Voice Live avatar synthesis that produces the answer audio (forwarded from
+    // Python as `VideoData` bridge frames), so the lips stay in sync with the
+    // speech. Until the Python video source is wired, the loop sends a static
+    // placeholder frame so the camera-tile path can be proven independently.
+
+    /// <summary>Master switch for the avatar video face (Slice 2A). Off = audio-only.</summary>
+    public bool EnableVideo { get; set; } = false;
+
+    /// <summary>Outbound video width in pixels. Must match a supported NV12 send format.</summary>
+    public int VideoWidth { get; set; } = 640;
+
+    /// <summary>Outbound video height in pixels. Must match a supported NV12 send format.</summary>
+    public int VideoHeight { get; set; } = 360;
+
+    /// <summary>Outbound video frame rate (fps). 15 keeps CPU/bandwidth modest for a talking head.</summary>
+    public int VideoFps { get; set; } = 15;
+
     public void Validate()
     {
         if (string.IsNullOrWhiteSpace(AppId)) throw new InvalidOperationException("Bot:AppId is required.");

@@ -71,6 +71,7 @@ Full walkthrough — building the search index, smoke tests, developer mode — 
 | **[docs/auth.md](docs/auth.md)** | `DefaultAzureCredential`, required roles, startup pre-warm, IMDS skip, token caching. |
 | **[teams/README.md](teams/README.md)** | Microsoft Teams tab + conversational bot: build the package, sideload (no admin), Azure Bot setup, validation. |
 | **[docs/teams-meeting-bot.md](docs/teams-meeting-bot.md)** | Phase 2b in-call media: decisions, **why Python + a thin .NET/Windows media bot**, the final architecture, audio bridge, and the two-step delivery plan. |
+| **[docs/teams-avatar-video.md](docs/teams-avatar-video.md)** | Phase 2b Slice 2A: the avatar's **synced video face** as a meeting camera tile — data flow, why audio+video share one synthesis, the `VideoSocket` + `VideoData` design, and the phased increments. |
 | **[meeting-bot/README.md](meeting-bot/README.md)** | The .NET/Windows media bot itself (Phase 2b Slice 1): project layout, configuration, the operator runbook, and what's verified vs. pending. |
 | **[prompts/README.md](prompts/README.md)** | Agent prompt content, the reasoning/non-reasoning variants, and the edit workflow. |
 

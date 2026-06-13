@@ -70,6 +70,16 @@ Set via `appsettings.json` or environment (`Bot__*`). **Never commit the secret.
 | `Bot:CertificateThumbprint` | a publicly-trusted cert in `LocalMachine\My` matching the FQDN |
 | `Bot:BridgeWebSocketUrl` | `wss://ca-avatar-mngenv-ha2avgzxshnbo.orangepebble-e59f7bd5.swedencentral.azurecontainerapps.io/ws/acs/audio` |
 | `Bot:BridgeSampleRate` | `16000` |
+| `Bot:EnableVideo` | `false` (Slice 2A — set `true` to add the avatar camera tile) |
+| `Bot:VideoWidth` / `Bot:VideoHeight` / `Bot:VideoFps` | `640` / `360` / `15` (only used when `EnableVideo=true`) |
+
+> **Slice 2A — the avatar's video face.** With `Bot__EnableVideo=true` the bot adds an
+> outbound NV12 `VideoSocket` and shows up as a **camera tile**. Until the Python video
+> source is wired it sends a static placeholder frame (so the tile/path is provable);
+> once Python forwards real `VideoData` (NV12) frames from the same Voice Live avatar
+> synthesis as the audio, the face is lip-synced to the voice. Default `false` = the
+> audio-only Slice 1 bot, byte-for-byte unchanged. Full design:
+> [`docs/teams-avatar-video.md`](../docs/teams-avatar-video.md).
 
 ## Deployed host (MngEnv, rg-avatar-mngenv) — already provisioned
 
