@@ -156,14 +156,46 @@ cert issuance + a real meeting):
    `https://<fqdn>:9441/api/health` → `{"status":"ok"}` from the public internet.
 7. **(USER) Teams manifest:** build with `python teams/build_package.py --enable-calling`
    (sets `supportsCalling: true`), then upload it in Teams ("Apps → Manage your apps →
-   Upload an app"). Requires a tenant **custom-app** policy + a **meeting policy allowing
-   bots** — you are global admin in MngEnv, so self-serviceable (Teams admin center or
-   `Set-CsTeamsMeetingPolicy`).
-8. **(USER) Live test:** start a Teams meeting in the MngEnv tenant, then
-   `POST https://avatar-meetingbot-mngenv.swedencentral.cloudapp.azure.com:9441/api/join { "joinUrl": "<meeting link>" }`.
+   Upload an app"). Note: uploading the manifest is only needed for the chat/tab surface
+   and for in-meeting *app* presence — the calling bot joins via Graph application
+   permissions (see "Which tenant can the bot join?" below) and does **not** require the
+   app to be installed in the meeting.
+8. **(USER) Live test:** start a Teams meeting **in a tenant that has Teams *and* has
+   admin-consented this bot** (see below), then
+   `POST https://avatar-meetingbot-mngenv.swedencentral.cloudapp.azure.com:9441/api/join { "joinUrl": "<classic meetup-join link>" }`.
    Nuru should appear in the roster, hear the room, and answer aloud on the wake phrase
    ("nuru" / "hey nuru"). Watch latency (joiner + media hop on top of Voice Live
    first-token).
+
+### Which tenant can the bot join? (multi-tenant + admin consent)
+
+The bot acquires its Graph token **against the meeting's organizer tenant** (the `Tid`
+encoded in the classic `meetup-join` link), not its own home tenant — so a meeting
+hosted in any tenant can be joined **provided that tenant has admin-consented the bot**.
+This mirrors how third-party meeting bots join customer tenants. Two facts must both hold:
+
+- **The link must be the classic `…/l/meetup-join/19%3ameeting_…%40thread.v2/…?context=…`
+  form.** The new short `…/meet/<id>?p=…` share link carries no thread id or tenant and
+  cannot be joined. Get the classic link from the invite body ("Click here to join the
+  meeting" → right-click → Copy Link).
+- **The organizer's tenant must have admin-consented the bot app** (`860ecee0-…`, now
+  registered **multi-tenant**). A directory admin in that tenant grants this **once** via:
+
+  ```
+  https://login.microsoftonline.com/<TARGET_TENANT_ID_OR_DOMAIN>/adminconsent?client_id=860ecee0-c226-4930-8c00-e37bae4a3ae5
+  ```
+
+  This creates the bot's service principal in that tenant and grants the declared Graph
+  application permissions (`Calls.JoinGroupCall.All`, `Calls.AccessMedia.All`,
+  `Calls.JoinGroupCallAsGuest.All`, `OnlineMeetings.Read.All`). The bot needs **no Teams
+  license** in that tenant.
+
+> ⚠️ **MngEnv has no Teams.** The MngEnv host tenant (`349b3dac…`) is licensed for free
+> Power BI only — no Microsoft 365 / Teams — so meetings cannot be *organized* there.
+> Either (a) add a Microsoft 365 / Teams trial to MngEnv and organize meetings there, or
+> (b) admin-consent the bot in a tenant that already has Teams (e.g. your corporate
+> tenant) and join meetings organized there. Option (b) needs the one-time admin consent
+> above from someone with directory rights in that tenant.
 
 ## What is verified vs. pending
 
