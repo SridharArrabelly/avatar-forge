@@ -25,6 +25,12 @@ let avatarConnecting = false;
 let pendingAvatarEnabled = false;
 let avatarLoadingHideTimer = null;
 let micRevealTimer = null;
+// Teams-only safety net: when embedded in the Teams webview the app auto-connects
+// in kiosk mode, and if the avatar video never reveals (e.g. WebRTC/media blocked
+// by the host) the user is left staring at a silent dark stage with no feedback.
+// This watchdog converts that into a visible, tappable "tap to restart" state.
+// It is armed ONLY inside Teams, so the standalone web experience is unchanged.
+let avatarRevealWatchdog = null;
 // Avatar "thinking" indicator: shown while the agent works (response_created ->
 // first token) so the user isn't staring at a silent face during the 2-3s
 // grounding gap. Purely visual — never touches the audio/avatar pipeline.
@@ -608,6 +614,7 @@ async function connectSession() {
         if (avatarContainer) avatarContainer.classList.toggle('photo-avatar', isPhotoAvatarSession);
         showAvatarLoading('Connecting…');
         updateDeveloperModeLayout();
+        armAvatarRevealWatchdog();
     }
 
     try {
@@ -681,6 +688,7 @@ function handleDisconnect() {
     avatarConnecting = false;
     pendingAvatarEnabled = false;
     clearAvatarLoading();
+    clearAvatarRevealWatchdog();
 
     stopAudioCapture();
     stopAudioPlayback();
@@ -1049,6 +1057,28 @@ function setAvatarNameLabelFromConfig() {
     labelEl.textContent = rawName ? rawName.split('-')[0] : '';
 }
 
+// Teams-only safety net (see `avatarRevealWatchdog`). Armed when the avatar
+// starts connecting inside the Teams webview; if the video has not revealed
+// after a generous timeout, surface a visible, tappable restart state instead
+// of leaving the user on a silent dark stage. No-op (never armed) standalone.
+function armAvatarRevealWatchdog() {
+    clearAvatarRevealWatchdog();
+    if (!isEmbeddedInTeams() || isDeveloperMode) return;
+    avatarRevealWatchdog = setTimeout(() => {
+        avatarRevealWatchdog = null;
+        // Only fire if the avatar genuinely never came up.
+        if (!avatarConnecting) return;
+        console.warn('[Avatar] reveal watchdog fired — video never started in Teams webview');
+        clearAvatarLoading();
+        avatarConnecting = false;
+        setConnectionState('error');
+    }, 15000);
+}
+
+function clearAvatarRevealWatchdog() {
+    if (avatarRevealWatchdog) { clearTimeout(avatarRevealWatchdog); avatarRevealWatchdog = null; }
+}
+
 function showAvatarLoading(text) {
     if (avatarLoadingHideTimer) { clearTimeout(avatarLoadingHideTimer); avatarLoadingHideTimer = null; }
     const el = document.getElementById('avatarLoading');
@@ -1085,6 +1115,7 @@ function clearAvatarLoading() {
 function revealAvatarVideo(mediaPlayer) {
     if (mediaPlayer) mediaPlayer.classList.add('avatar-video-ready');
     avatarConnecting = false;
+    clearAvatarRevealWatchdog();
     setAvatarNameLabelFromConfig();
     hideAvatarLoading();
     showMicControls();
