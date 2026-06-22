@@ -86,6 +86,13 @@ public sealed class BotOptions
     /// <summary>Outbound video frame rate (fps). 15 keeps CPU/bandwidth modest for a talking head.</summary>
     public int VideoFps { get; set; } = 15;
 
+    /// <summary>
+    /// DIAGNOSTIC: when true, the playout loop emits a continuous 440 Hz test
+    /// tone into the meeting instead of Nuru's answer audio. Used to isolate
+    /// audio transport/mute from bridge/format issues. Set via Bot__TestTone=1.
+    /// </summary>
+    public bool TestTone { get; set; } = false;
+
     public void Validate()
     {
         if (string.IsNullOrWhiteSpace(AppId)) throw new InvalidOperationException("Bot:AppId is required.");

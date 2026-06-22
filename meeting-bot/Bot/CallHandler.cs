@@ -38,6 +38,10 @@ public sealed class CallHandler : IAsyncDisposable
     // flush everything instantly.
     private readonly ConcurrentQueue<byte[]> _playout = new();
     private volatile bool _flush;
+    // Whether the media platform is currently accepting outbound audio. When the
+    // bot is muted this is Inactive and audioSocket.Send() is silently dropped.
+    private volatile bool _audioSendActive;
+    private long _framesSent;
 
     // 20 ms of 16 kHz mono PCM16 = 16000 * 0.02 * 2 bytes = 640 bytes.
     private const int FrameBytes = 640;
@@ -104,6 +108,15 @@ public sealed class CallHandler : IAsyncDisposable
         var mediaSession = _call.GetLocalMediaSession();
         IAudioSocket audioSocket = mediaSession.AudioSocket;
 
+        // Track whether the platform is accepting outbound audio. If this never
+        // goes Active (e.g. the bot is muted), Send() is dropped and the room
+        // hears nothing even though we keep pushing frames.
+        audioSocket.AudioSendStatusChanged += (_, e) =>
+        {
+            _audioSendActive = e.MediaSendStatus == MediaSendStatus.Active;
+            _logger.LogInformation("Audio SEND status = {Status}", e.MediaSendStatus);
+        };
+
         // ── Inbound: room -> Python ──
         audioSocket.AudioMediaReceived += async (_, e) =>
         {
@@ -115,9 +128,10 @@ public sealed class CallHandler : IAsyncDisposable
                 var pcm = new byte[len];
                 System.Runtime.InteropServices.Marshal.Copy(e.Buffer.Data, pcm, 0, len);
 
-                // Cheap silence flag so Python can short-circuit (it re-checks).
-                bool silent = IsSilent(pcm);
-                await _bridge.SendAudioFrameAsync(pcm, silent).ConfigureAwait(false);
+                // Forward ALL audio to the bridge (never mark as silent).
+                // Voice Live has its own VAD; the bridge drops silent-flagged
+                // frames which fragments the audio stream and breaks STT.
+                await _bridge.SendAudioFrameAsync(pcm, silent: false).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
@@ -138,8 +152,40 @@ public sealed class CallHandler : IAsyncDisposable
     {
         var carry = new List<byte>(FrameBytes * 2);
         var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(20));
+        // Monotonic media timestamp in 100-ns ticks. The Real-Time Media Platform
+        // uses this to schedule playback; frames sent with a stale/zero timestamp
+        // are dropped (the room hears nothing even though Send() succeeds). One
+        // 20 ms PCM16 frame == 200,000 ticks.
+        long ts = System.Diagnostics.Stopwatch.GetTimestamp();
+        const long FrameTicks = 200_000;
+        // DIAGNOSTIC test-tone generator state (440 Hz sine @ 16 kHz).
+        double phase = 0;
+        const double toneHz = 440.0;
+        const double phaseStep = 2 * Math.PI * toneHz / 16000.0;
         while (await timer.WaitForNextTickAsync().ConfigureAwait(false))
         {
+            if (_options.TestTone)
+            {
+                var tone = new byte[FrameBytes];
+                for (int i = 0; i < FrameBytes; i += 2)
+                {
+                    short s = (short)(Math.Sin(phase) * 12000);
+                    tone[i] = (byte)(s & 0xFF);
+                    tone[i + 1] = (byte)((s >> 8) & 0xFF);
+                    phase += phaseStep;
+                }
+                try
+                {
+                    ts += FrameTicks;
+                    audioSocket.Send(new AudioSendBuffer(tone, AudioFormat.Pcm16K, ts));
+                    if (System.Threading.Interlocked.Increment(ref _framesSent) % 100 == 1)
+                        _logger.LogInformation("TestTone: sent {Count} frames (audioSendActive={Active})",
+                            _framesSent, _audioSendActive);
+                }
+                catch (Exception ex) { _logger.LogError(ex, "Test tone send failed."); }
+                continue;
+            }
+
             if (_flush) { carry.Clear(); continue; }
 
             while (carry.Count < FrameBytes && _playout.TryDequeue(out var chunk))
@@ -152,9 +198,15 @@ public sealed class CallHandler : IAsyncDisposable
 
             try
             {
-                // Send one 20 ms PCM16 frame into the meeting.
-                var buffer = new AudioSendBuffer(frame, AudioFormat.Pcm16K);
+                // Send one 20 ms PCM16 frame into the meeting, with a monotonic
+                // media timestamp so the platform actually plays it out.
+                ts += FrameTicks;
+                var buffer = new AudioSendBuffer(frame, AudioFormat.Pcm16K, ts);
                 audioSocket.Send(buffer);
+                if (System.Threading.Interlocked.Increment(ref _framesSent) % 100 == 1)
+                    _logger.LogInformation(
+                        "Playout: sent {Count} frames (audioSendActive={Active})",
+                        _framesSent, _audioSendActive);
             }
             catch (Exception ex)
             {
@@ -287,7 +339,7 @@ public sealed class CallHandler : IAsyncDisposable
         int samples = pcm16.Length / 2;
         if (samples == 0) return true;
         double rms = Math.Sqrt(sumSq / (double)samples);
-        return rms < 200; // ~ -40 dBFS
+        return rms < 50; // ~ -50 dBFS; Teams meeting mix is quieter than direct mic
     }
 
     public async ValueTask DisposeAsync()
@@ -304,10 +356,11 @@ public sealed class CallHandler : IAsyncDisposable
 /// </summary>
 internal sealed class AudioSendBuffer : Microsoft.Skype.Bots.Media.AudioMediaBuffer
 {
-    public AudioSendBuffer(byte[] pcm, AudioFormat format)
+    public AudioSendBuffer(byte[] pcm, AudioFormat format, long timestamp = 0)
     {
         Length = pcm.Length;
         AudioFormat = format;
+        Timestamp = timestamp;
         Data = System.Runtime.InteropServices.Marshal.AllocHGlobal(pcm.Length);
         System.Runtime.InteropServices.Marshal.Copy(pcm, 0, Data, pcm.Length);
     }
