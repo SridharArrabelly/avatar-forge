@@ -74,4 +74,32 @@ public static class JoinInfo
         var m = Regex.Match(json, "\"" + key + "\"\\s*:\\s*\"([^\"]+)\"");
         return m.Success ? m.Groups[1].Value : null;
     }
+
+    /// <summary>
+    /// Detects the NEW short Teams meeting link
+    /// (<c>https://teams.microsoft.com/meet/&lt;digits&gt;?p=...</c>) or a bare
+    /// numeric meeting id, and extracts the numeric join meeting id. New Teams
+    /// "Meet" meetings expose ONLY this short link in the UI (no classic
+    /// <c>/l/meetup-join</c> URL), so the bot must resolve it via Graph. Returns
+    /// false for classic links (which <see cref="ParseJoinURL"/> handles directly).
+    /// </summary>
+    public static bool TryGetShortLinkMeetingId(string joinUrl, out string meetingId)
+    {
+        meetingId = string.Empty;
+        if (string.IsNullOrWhiteSpace(joinUrl)) return false;
+
+        // Classic links contain a thread id — not a short link.
+        if (joinUrl.Contains("meetup-join", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        // https://teams.microsoft.com/meet/<digits>?p=<passcode>
+        var m = Regex.Match(joinUrl, @"/meet/(\d{9,})");
+        if (m.Success) { meetingId = m.Groups[1].Value; return true; }
+
+        // A bare meeting id, with or without the spaced "123 456 789" grouping.
+        var digits = Regex.Replace(joinUrl.Trim(), @"\s+", string.Empty);
+        if (Regex.IsMatch(digits, @"^\d{9,}$")) { meetingId = digits; return true; }
+
+        return false;
+    }
 }

@@ -96,6 +96,16 @@ public sealed class MeetingBotService : IDisposable
     /// </summary>
     public async Task<string> JoinMeetingAsync(string joinUrl, string? displayName = null)
     {
+        // New Teams "Meet" meetings expose only a SHORT link (/meet/<id>?p=...)
+        // with no thread id / organizer. Resolve it to the classic join URL via
+        // Graph onlineMeetings before parsing. Classic links pass straight through.
+        if (JoinInfo.TryGetShortLinkMeetingId(joinUrl, out var shortId))
+        {
+            _logger.LogInformation("Short meeting link detected (id={MeetingId}); resolving via Graph.", shortId);
+            joinUrl = await ResolveShortLinkAsync(shortId).ConfigureAwait(false);
+            _logger.LogInformation("Resolved short link to classic join URL.");
+        }
+
         // Parse the join URL into the chat + meeting info the SDK needs.
         var (chatInfo, meetingInfo, meetingTenantId) = JoinInfo.ParseJoinURL(joinUrl);
 
@@ -166,6 +176,54 @@ public sealed class MeetingBotService : IDisposable
             try { await handler.Call.DeleteAsync().ConfigureAwait(false); }
             finally { await handler.DisposeAsync().ConfigureAwait(false); }
         }
+    }
+
+    private static readonly HttpClient _http = new();
+
+    /// <summary>
+    /// Resolve a SHORT Teams meeting link's numeric join meeting id to the
+    /// classic join URL via Graph <c>onlineMeetings</c>. App-only Graph requires
+    /// an organizer user context, so we look the meeting up under
+    /// <see cref="BotOptions.DefaultOrganizerId"/> in the organizer tenant.
+    /// Requires the bot app to (a) hold OnlineMeetings.Read.All and (b) be granted
+    /// a Teams application access policy for that organizer — otherwise Graph
+    /// returns 403 "No application access policy found for this app."
+    /// </summary>
+    private async Task<string> ResolveShortLinkAsync(string meetingId)
+    {
+        if (string.IsNullOrWhiteSpace(_options.DefaultOrganizerId))
+            throw new InvalidOperationException(
+                "Cannot resolve a short Teams meeting link: Bot:DefaultOrganizerId is not configured. " +
+                "Set it to the meeting organizer's Entra object id, or supply a classic /l/meetup-join link.");
+
+        var tenant = !string.IsNullOrWhiteSpace(_options.DefaultMeetingTenantId)
+            ? _options.DefaultMeetingTenantId
+            : _options.TenantId;
+
+        var token = await _authProvider.AcquireAppTokenAsync(tenant).ConfigureAwait(false);
+
+        var uri = $"https://graph.microsoft.com/v1.0/users/{_options.DefaultOrganizerId}" +
+                  $"/onlineMeetings?$filter=joinMeetingIdSettings/joinMeetingId eq '{meetingId}'";
+        using var req = new HttpRequestMessage(HttpMethod.Get, uri);
+        req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+
+        using var resp = await _http.SendAsync(req).ConfigureAwait(false);
+        var body = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
+        if (!resp.IsSuccessStatusCode)
+            throw new InvalidOperationException(
+                $"Graph onlineMeetings lookup for meeting id {meetingId} failed ({(int)resp.StatusCode}): {body}");
+
+        using var doc = System.Text.Json.JsonDocument.Parse(body);
+        if (!doc.RootElement.TryGetProperty("value", out var arr) ||
+            arr.ValueKind != System.Text.Json.JsonValueKind.Array || arr.GetArrayLength() == 0)
+            throw new InvalidOperationException(
+                $"No online meeting found for meeting id {meetingId} under organizer {_options.DefaultOrganizerId}.");
+
+        var joinWebUrl = arr[0].TryGetProperty("joinWebUrl", out var j) ? j.GetString() : null;
+        if (string.IsNullOrWhiteSpace(joinWebUrl))
+            throw new InvalidOperationException($"Resolved meeting {meetingId} has no joinWebUrl.");
+
+        return joinWebUrl!;
     }
 
     /// <summary>

@@ -24,6 +24,22 @@ public sealed class BotOptions
     public string TenantId { get; set; } = string.Empty;
 
     /// <summary>
+    /// Default organizer (Entra object id) used to resolve a SHORT Teams meeting
+    /// link (https://teams.microsoft.com/meet/&lt;id&gt;?p=...) into the full
+    /// meeting info the media SDK needs. The short link carries only a numeric
+    /// meeting id + passcode — no thread id / organizer — so we look the meeting
+    /// up via Graph onlineMeetings under this organizer. Leave empty to disable
+    /// short-link resolution (classic /l/meetup-join links still work).
+    /// </summary>
+    public string DefaultOrganizerId { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Tenant that owns the meetings being resolved from short links (the
+    /// organizer's tenant). Defaults to <see cref="TenantId"/> when empty.
+    /// </summary>
+    public string DefaultMeetingTenantId { get; set; } = string.Empty;
+
+    /// <summary>
     /// Public FQDN of this bot's signaling endpoint (the Bot Framework calling
     /// webhook), e.g. "bot.contoso.com". Must resolve to this host and be
     /// reachable over HTTPS on <see cref="SignalingPort"/>.

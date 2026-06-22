@@ -70,6 +70,21 @@ public sealed class AuthenticationProvider : IRequestAuthenticationProvider
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", result.AccessToken);
     }
 
+    /// <summary>
+    /// Acquire an app-only Graph token for an explicit tenant. Used by the
+    /// short-link resolver to call <c>/users/{id}/onlineMeetings</c> against the
+    /// organizer tenant (outside the SDK's own request pipeline).
+    /// </summary>
+    public async Task<string> AcquireAppTokenAsync(string tenant)
+    {
+        var authorityTenant = string.IsNullOrWhiteSpace(tenant) ? _tenantId : tenant;
+        var app = GetOrCreateApp(authorityTenant);
+        var result = await app.AcquireTokenForClient(new[] { GraphScope })
+            .ExecuteAsync()
+            .ConfigureAwait(false);
+        return result.AccessToken;
+    }
+
     public Task<RequestValidationResult> ValidateInboundRequestAsync(HttpRequestMessage request)
     {
         // The Graph Communications SDK ships a full inbound validator
