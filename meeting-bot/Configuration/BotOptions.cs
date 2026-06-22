@@ -24,6 +24,15 @@ public sealed class BotOptions
     public string TenantId { get; set; } = string.Empty;
 
     /// <summary>
+    /// The avatar's display / brand name (e.g. "Nuru"). The single source of truth
+    /// is the AVATAR_DISPLAY_NAME environment variable shared with the Python
+    /// backend; Program.cs copies it here at startup. Used as the default
+    /// participant name when joining a meeting — it must NEVER be hardcoded.
+    /// Falls back to "Avatar" when unset.
+    /// </summary>
+    public string AvatarDisplayName { get; set; } = "Avatar";
+
+    /// <summary>
     /// Default organizer (Entra object id) used to resolve a SHORT Teams meeting
     /// link (https://teams.microsoft.com/meet/&lt;id&gt;?p=...) into the full
     /// meeting info the media SDK needs. The short link carries only a numeric

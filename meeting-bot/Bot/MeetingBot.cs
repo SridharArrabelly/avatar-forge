@@ -96,6 +96,11 @@ public sealed class MeetingBotService : IDisposable
     /// </summary>
     public async Task<string> JoinMeetingAsync(string joinUrl, string? displayName = null)
     {
+        // Resolve the participant/display name from config (AVATAR_DISPLAY_NAME)
+        // when the caller didn't supply one — never hardcode the custom name.
+        displayName = string.IsNullOrWhiteSpace(displayName) ? _options.AvatarDisplayName : displayName;
+        _logger.LogInformation("Joining meeting as avatar '{DisplayName}'.", displayName);
+
         // New Teams "Meet" meetings expose only a SHORT link (/meet/<id>?p=...)
         // with no thread id / organizer. Resolve it to the classic join URL via
         // Graph onlineMeetings before parsing. Classic links pass straight through.

@@ -20,6 +20,14 @@ if (!string.IsNullOrWhiteSpace(envSecret))
     builder.Services.PostConfigure<BotOptions>(o => o.AppSecret = envSecret);
 }
 
+// The avatar's brand name is shared with the Python backend through the single
+// AVATAR_DISPLAY_NAME env var — never hardcode the custom name in the bot.
+var envAvatarName = Environment.GetEnvironmentVariable("AVATAR_DISPLAY_NAME");
+if (!string.IsNullOrWhiteSpace(envAvatarName))
+{
+    builder.Services.PostConfigure<BotOptions>(o => o.AvatarDisplayName = envAvatarName.Trim());
+}
+
 builder.Services.AddControllers();
 builder.Services.AddSingleton<MeetingBotService>();
 

@@ -32,8 +32,14 @@ param botAppId string
 @description('Tenant id of the single-tenant calling bot app registration.')
 param botAppTenantId string
 
-@description('Display name for the Azure Bot resource.')
-param botDisplayName string = 'Avatar Forge Meeting Bot'
+@description('The avatar brand/display name (sourced from AVATAR_DISPLAY_NAME). Becomes the meeting roster name via the Azure Bot resource. Never hardcode the custom avatar name.')
+param avatarDisplayName string = 'Avatar'
+
+@description('Display name for the Azure Bot resource. Defaults to the avatar name so the meeting roster shows the avatar brand.')
+param botDisplayName string = avatarDisplayName
+
+@description('Public URL of the bot icon (the avatar logo). Shown for the bot in Teams. Leave empty to use the default Bot Framework icon.')
+param botIconUrl string = ''
 
 @description('Local administrator username for the Windows VM.')
 param adminUsername string = 'avatarbot'
@@ -214,6 +220,7 @@ resource bot 'Microsoft.BotService/botServices@2022-09-15' = {
   kind: 'azurebot'
   properties: {
     displayName: botDisplayName
+    iconUrl: empty(botIconUrl) ? null : botIconUrl
     // The chat messaging endpoint is unused by the media bot; calling uses the
     // channel webhook below. Point it at the same host for completeness.
     endpoint: 'https://${publicFqdn}:${signalingPort}/api/messages'

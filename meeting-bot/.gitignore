@@ -1,6 +1,8 @@
 ## Build output
 bin/
 obj/
+publish/
+publish-out/
 
 ## Local secrets / overrides — never commit
 appsettings.Development.json

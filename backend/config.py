@@ -108,10 +108,16 @@ ACS_CALLBACK_BASE_URL = os.getenv("ACS_CALLBACK_BASE_URL", "").strip()
 # ACS supports 16000 or 24000; keep this aligned with the Voice Live formats.
 ACS_AUDIO_SAMPLE_RATE = int(os.getenv("ACS_AUDIO_SAMPLE_RATE", "24000"))
 # Wake phrases the in-call avatar listens for before answering aloud (turn-taking
-# so she never talks over participants). Pipe/comma tolerated; lower-cased.
+# so she never talks over participants). Pipe/comma tolerated; lower-cased. The
+# default derives from the avatar's brand name (AVATAR_DISPLAY_NAME) so the wake
+# word tracks the configured name instead of hardcoding it; override explicitly
+# with ACS_WAKE_PHRASES.
+_avatar_name = (os.getenv("AVATAR_DISPLAY_NAME", "").strip() or "Avatar").lower()
 ACS_WAKE_PHRASES = [
     p.strip().lower()
-    for p in os.getenv("ACS_WAKE_PHRASES", "hey nuru,nuru").replace("|", ",").split(",")
+    for p in os.getenv("ACS_WAKE_PHRASES", f"hey {_avatar_name},{_avatar_name}")
+    .replace("|", ",")
+    .split(",")
     if p.strip()
 ]
 # When True, the avatar only speaks if the triggering utterance contained a wake

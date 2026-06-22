@@ -34,7 +34,9 @@ public sealed class JoinController : ControllerBase
             return BadRequest(new { error = "joinUrl is required" });
         try
         {
-            var callId = await _bot.JoinMeetingAsync(req.JoinUrl, req.DisplayName ?? "Nuru");
+            // Display name defaults to the configured avatar name (AVATAR_DISPLAY_NAME)
+            // inside JoinMeetingAsync — never hardcode the custom name here.
+            var callId = await _bot.JoinMeetingAsync(req.JoinUrl, req.DisplayName);
             return Ok(new { callId });
         }
         catch (Exception ex)
