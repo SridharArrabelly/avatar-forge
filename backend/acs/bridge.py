@@ -64,11 +64,14 @@ class AcsVoiceBridge:
 
         # ACS inbound audio metadata (filled from the AudioMetadata frame).
         self._inbound_sample_rate: Optional[int] = None
-        # Voice Live expects PCM16 @ 24 kHz. The meeting bot delivers 16 kHz, so
-        # we resample inbound audio up to 24 kHz here; otherwise Voice Live
-        # interprets it at the wrong speed and STT returns empty transcripts.
+        # Voice Live speaks PCM16 @ 24 kHz; the Teams meeting bot uses 16 kHz.
+        # Inbound audio is resampled UP to 24 kHz (else STT returns empty
+        # transcripts) and outbound answer audio is resampled DOWN to the bot's
+        # rate (else playback is garbled/slow once unmuted). Each direction keeps
+        # its own interpolation carry sample for continuity across frames.
         self._target_sample_rate = 24000
-        self._resample_carry: Optional[int] = None
+        self._resample_carry_in: Optional[int] = None
+        self._resample_carry_out: Optional[int] = None
         self._frames_in = 0
         self._frames_out = 0
         self._silent_in = 0
@@ -85,10 +88,17 @@ class AcsVoiceBridge:
         if self._closed or self._suppress_current_response:
             return
         try:
+            pcm_bytes = self._resample_from_target(pcm_bytes)
             data_b64 = base64.b64encode(pcm_bytes).decode("ascii")
             frame = {"Kind": "AudioData", "AudioData": {"Data": data_b64}}
             await self._ws.send_text(json.dumps(frame))
             self._frames_out += 1
+            if self._frames_out == 1 or self._frames_out % 100 == 0:
+                logger.info(
+                    f"[ACS {self.client_id}] outbound answer AudioData "
+                    f"frames_out={self._frames_out} "
+                    f"{self._target_sample_rate}->{self._inbound_sample_rate} bot"
+                )
         except Exception as e:  # noqa: BLE001 — one bad frame must not kill the call
             logger.debug(f"[ACS {self.client_id}] outbound audio send failed: {e}")
 
@@ -194,27 +204,43 @@ class AcsVoiceBridge:
             await self.handler.send_audio_bytes(pcm)
 
     def _resample_to_target(self, pcm: bytes) -> bytes:
-        """Resample mono PCM16 from the inbound rate up to Voice Live's 24 kHz.
-
-        The Teams media bot delivers 16 kHz; Voice Live expects 24 kHz. Without
-        this, audio is interpreted ~1.5x too fast and STT returns empty
-        transcripts even though VAD detects speech. Uses dependency-free linear
-        interpolation, carrying the last sample across frames for continuity.
-        """
+        """Resample inbound mono PCM16 from the bot's rate up to 24 kHz."""
         in_rate = self._inbound_sample_rate
-        if not in_rate or in_rate == self._target_sample_rate or len(pcm) < 2:
+        if not in_rate or in_rate == self._target_sample_rate:
             return pcm
-        out_rate = self._target_sample_rate
+        out, self._resample_carry_in = self._resample_pcm16(
+            pcm, in_rate, self._target_sample_rate, self._resample_carry_in
+        )
+        return out
+
+    def _resample_from_target(self, pcm: bytes) -> bytes:
+        """Resample outbound mono PCM16 from Voice Live's 24 kHz down to the bot's rate."""
+        out_rate = self._inbound_sample_rate
+        if not out_rate or out_rate == self._target_sample_rate:
+            return pcm
+        out, self._resample_carry_out = self._resample_pcm16(
+            pcm, self._target_sample_rate, out_rate, self._resample_carry_out
+        )
+        return out
+
+    @staticmethod
+    def _resample_pcm16(
+        pcm: bytes, in_rate: int, out_rate: int, carry: Optional[int]
+    ) -> tuple[bytes, Optional[int]]:
+        """Linear-interpolation resample of mono PCM16, dependency-free.
+
+        Carries the last input sample across calls so consecutive frames join
+        without clicks. Returns the resampled bytes and the new carry sample.
+        """
+        if len(pcm) < 2 or in_rate == out_rate:
+            return pcm, carry
         samples = array("h")
         samples.frombytes(pcm)
         if sys.byteorder == "big":
             samples.byteswap()
-        prev = self._resample_carry
-        if prev is None:
-            prev = samples[0]
+        prev = carry if carry is not None else samples[0]
         src = [prev] + list(samples)
-        n_in = len(samples)
-        n_out = (n_in * out_rate) // in_rate
+        n_out = (len(samples) * out_rate) // in_rate
         out = array("h", bytes(2 * n_out))
         step = in_rate / out_rate
         for i in range(n_out):
@@ -223,11 +249,11 @@ class AcsVoiceBridge:
             frac = pos - idx
             a = src[idx]
             b = src[idx + 1] if idx + 1 < len(src) else src[idx]
-            out[i] = int(a + (b - a) * frac)
-        self._resample_carry = samples[-1]
+            out[i] = max(-32768, min(32767, int(a + (b - a) * frac)))
+        new_carry = samples[-1]
         if sys.byteorder == "big":
             out.byteswap()
-        return out.tobytes()
+        return out.tobytes(), new_carry
 
     # ───────── turn-taking ─────────
 

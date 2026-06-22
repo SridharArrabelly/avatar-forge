@@ -60,18 +60,32 @@ public sealed class MeetingBotService : IDisposable
         _client.Calls().OnUpdated += OnCallsUpdated;
     }
 
-    private MediaPlatformSettings BuildMediaPlatformSettings() => new()
+    private MediaPlatformSettings BuildMediaPlatformSettings()
     {
-        MediaPlatformInstanceSettings = new MediaPlatformInstanceSettings
+        // Resolve the ServiceFqdn to its actual public IP. The media platform
+        // needs the routable IP (not 0.0.0.0) so it can tell Teams' media
+        // relays where to send audio/video packets.
+        var publicIp = System.Net.Dns.GetHostAddresses(_options.ServiceFqdn)
+            .FirstOrDefault(a => a.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
+            ?? throw new InvalidOperationException(
+                $"Cannot resolve ServiceFqdn '{_options.ServiceFqdn}' to an IPv4 address.");
+
+        _logger.LogInformation("Media platform public IP resolved: {IP} (from {Fqdn})",
+            publicIp, _options.ServiceFqdn);
+
+        return new MediaPlatformSettings
         {
-            CertificateThumbprint = _options.CertificateThumbprint,
-            InstanceInternalPort = _options.MediaPort,
-            InstancePublicPort = _options.MediaPort,
-            InstancePublicIPAddress = System.Net.IPAddress.Any,
-            ServiceFqdn = _options.ServiceFqdn,
-        },
-        ApplicationId = _options.AppId,
-    };
+            MediaPlatformInstanceSettings = new MediaPlatformInstanceSettings
+            {
+                CertificateThumbprint = _options.CertificateThumbprint,
+                InstanceInternalPort = _options.MediaPort,
+                InstancePublicPort = _options.MediaPort,
+                InstancePublicIPAddress = publicIp,
+                ServiceFqdn = _options.ServiceFqdn,
+            },
+            ApplicationId = _options.AppId,
+        };
+    }
 
     /// <summary>
     /// Join a Teams meeting by its full join URL (the "Click here to join the
@@ -92,17 +106,45 @@ public sealed class MeetingBotService : IDisposable
             // Graph rejects "tenant mismatch" if they differ.
             TenantId = meetingTenantId ?? _options.TenantId,
         };
-        if (!string.IsNullOrWhiteSpace(displayName))
-        {
-            joinParams.GuestIdentity = new Microsoft.Graph.Models.Identity
-            {
-                DisplayName = displayName,
-                Id = Guid.NewGuid().ToString(),
-            };
-        }
+        // NOTE: Do NOT set GuestIdentity for app-hosted-media bots. The bot
+        // must join with its APPLICATION identity (derived from AppId) so that
+        // the Real-Time Media Platform can negotiate media. GuestIdentity
+        // causes the bot to join as a "guest" participant which breaks media.
+        // The display name in the meeting comes from the Azure Bot registration.
 
         var call = await _client.Calls().AddAsync(joinParams).ConfigureAwait(false);
         _logger.LogInformation("Joining meeting; call id = {CallId}", call.Id);
+
+        // Self-unmute once the call reaches "Established". The bot joins muted and
+        // Teams does NOT let organizers unmute other participants (only mute), so
+        // the bot MUST unmute itself via the API. The state transition happens on
+        // the per-call OnUpdated event AFTER AddAsync returns (the call is added
+        // in "Establishing"), so subscribing here — not in Calls().OnUpdated's
+        // AddedResources — is what actually catches it.
+        var unmuted = 0;
+        async Task TryUnmuteAsync(ICall c)
+        {
+            if (!string.Equals(c.Resource?.State?.ToString(), "Established", StringComparison.OrdinalIgnoreCase))
+                return;
+            if (Interlocked.Exchange(ref unmuted, 1) == 1)
+                return;
+            try
+            {
+                await c.UnmuteAsync().ConfigureAwait(false);
+                _logger.LogInformation("Call {CallId}: self-unmuted (Established).", c.Id);
+            }
+            catch (Exception ex)
+            {
+                Interlocked.Exchange(ref unmuted, 0);
+                _logger.LogWarning(ex, "Call {CallId}: self-unmute failed.", c.Id);
+            }
+        }
+        call.OnUpdated += async (sender, args) =>
+        {
+            if (sender is ICall c) await TryUnmuteAsync(c).ConfigureAwait(false);
+        };
+        // Cover the race where the call is already Established by the time we subscribe.
+        _ = TryUnmuteAsync(call);
 
         var handler = new CallHandler(call, _options, _loggerFactory);
         _handlers[call.Id] = handler;
@@ -184,8 +226,34 @@ public sealed class MeetingBotService : IDisposable
 
     private void OnCallsUpdated(object? sender, CollectionEventArgs<ICall> args)
     {
+        foreach (var call in args.AddedResources)
+        {
+            _logger.LogInformation(
+                "Call {CallId} state updated: {State}, result: {ResultCode}",
+                call.Id, call.Resource?.State, call.Resource?.ResultInfo?.Code);
+
+            // Self-unmute once the call is established (not before).
+            if (string.Equals(call.Resource?.State?.ToString(), "Established", StringComparison.OrdinalIgnoreCase))
+            {
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await call.UnmuteAsync().ConfigureAwait(false);
+                        _logger.LogInformation("Call {CallId}: self-unmuted.", call.Id);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Call {CallId}: self-unmute failed.", call.Id);
+                    }
+                });
+            }
+        }
         foreach (var call in args.RemovedResources)
         {
+            _logger.LogInformation(
+                "Call {CallId} removed (state: {State}, result: {ResultCode})",
+                call.Id, call.Resource?.State, call.Resource?.ResultInfo?.Code);
             if (_handlers.Remove(call.Id, out var handler))
             {
                 _logger.LogInformation("Call {CallId} ended; tearing down handler.", call.Id);
