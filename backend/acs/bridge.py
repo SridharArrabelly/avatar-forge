@@ -10,10 +10,11 @@ for PCM16 output) and driving its input via ``send_audio_bytes``.
     Voice Live RESPONSE_AUDIO_DELTA (PCM16)
         --> send_binary(pcm) --> ACS AudioData frame            [outbound]
 
-Format: 16-bit PCM mono at ``ACS_AUDIO_SAMPLE_RATE`` (24 kHz default), which
-matches Voice Live's PCM16 input/output, so no resampling is needed. If the rate
-is changed to 16 kHz, both ACS and Voice Live agree on 16 kHz and it still lines
-up (Voice Live accepts 16/24 kHz PCM16 input; output is forwarded as-is).
+Format: 16-bit PCM mono. Voice Live expects 24 kHz PCM16. The Teams meeting bot
+delivers 16 kHz, so inbound audio is **resampled up to 24 kHz** here (see
+``_resample_to_target``) — without it Voice Live interprets the audio ~1.5x too
+fast and STT returns empty transcripts. Browser clients already send 24 kHz and
+bypass the resampler. Output is forwarded as-is.
 
 Turn-taking (so she never talks over the room): outbound speech is gated on a
 **wake phrase** appearing in the triggering user utterance (``ACS_REQUIRE_WAKE_
@@ -29,7 +30,9 @@ import asyncio
 import base64
 import json
 import logging
+import sys
 import time
+from array import array
 from typing import Optional
 
 from ..config import (
@@ -61,6 +64,11 @@ class AcsVoiceBridge:
 
         # ACS inbound audio metadata (filled from the AudioMetadata frame).
         self._inbound_sample_rate: Optional[int] = None
+        # Voice Live expects PCM16 @ 24 kHz. The meeting bot delivers 16 kHz, so
+        # we resample inbound audio up to 24 kHz here; otherwise Voice Live
+        # interprets it at the wrong speed and STT returns empty transcripts.
+        self._target_sample_rate = 24000
+        self._resample_carry: Optional[int] = None
         self._frames_in = 0
         self._frames_out = 0
         self._silent_in = 0
@@ -173,15 +181,53 @@ class AcsVoiceBridge:
                 pcm = base64.b64decode(data_b64)
             except Exception:  # noqa: BLE001
                 return
+            pcm = self._resample_to_target(pcm)
             self._frames_in += 1
             if self._frames_in == 1 or self._frames_in % 100 == 0:
                 logger.info(
                     f"[ACS {self.client_id}] inbound voice AudioData "
                     f"non-silent={self._frames_in} silent={self._silent_in} "
-                    f"-> forwarding to Voice Live"
+                    f"in_rate={self._inbound_sample_rate} -> "
+                    f"{self._target_sample_rate} Voice Live"
                 )
             self._last_activity_ms = time.monotonic() * 1000.0
             await self.handler.send_audio_bytes(pcm)
+
+    def _resample_to_target(self, pcm: bytes) -> bytes:
+        """Resample mono PCM16 from the inbound rate up to Voice Live's 24 kHz.
+
+        The Teams media bot delivers 16 kHz; Voice Live expects 24 kHz. Without
+        this, audio is interpreted ~1.5x too fast and STT returns empty
+        transcripts even though VAD detects speech. Uses dependency-free linear
+        interpolation, carrying the last sample across frames for continuity.
+        """
+        in_rate = self._inbound_sample_rate
+        if not in_rate or in_rate == self._target_sample_rate or len(pcm) < 2:
+            return pcm
+        out_rate = self._target_sample_rate
+        samples = array("h")
+        samples.frombytes(pcm)
+        if sys.byteorder == "big":
+            samples.byteswap()
+        prev = self._resample_carry
+        if prev is None:
+            prev = samples[0]
+        src = [prev] + list(samples)
+        n_in = len(samples)
+        n_out = (n_in * out_rate) // in_rate
+        out = array("h", bytes(2 * n_out))
+        step = in_rate / out_rate
+        for i in range(n_out):
+            pos = i * step
+            idx = int(pos)
+            frac = pos - idx
+            a = src[idx]
+            b = src[idx + 1] if idx + 1 < len(src) else src[idx]
+            out[i] = int(a + (b - a) * frac)
+        self._resample_carry = samples[-1]
+        if sys.byteorder == "big":
+            out.byteswap()
+        return out.tobytes()
 
     # ───────── turn-taking ─────────
 
