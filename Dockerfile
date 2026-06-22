@@ -14,6 +14,9 @@ RUN uv sync --frozen --no-install-project --no-dev
 
 COPY backend/ backend/
 COPY frontend/ frontend/
+# Canonical brand assets (logo/icons) shared by web + Teams + meeting bot, served
+# at /brand/*. Only assets/brand is un-ignored in .dockerignore.
+COPY assets/ assets/
 
 RUN uv sync --frozen --no-dev
 

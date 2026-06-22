@@ -148,6 +148,15 @@ app.include_router(build_bot_router())
 # non-ACS deploy. Mounted before the static SPA so /api/acs/* + /ws/acs/* resolve.
 app.include_router(build_acs_router())
 
+# Canonical brand assets (logo/icons) live in assets/brand and are the single
+# source of truth shared by the web app, the Teams package, and the meeting bot.
+# Serve them at /brand/* so the web favicon and the Azure Bot iconUrl can both
+# reference one URL (e.g. /brand/color.png) without copying the file around.
+# Mounted before the catch-all SPA so /brand/* resolves here.
+_brand = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets", "brand")
+if os.path.isdir(_brand):
+    app.mount("/brand", StaticFiles(directory=_brand), name="brand")
+
 # Mount frontend
 _frontend = os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend")
 if os.path.isdir(_frontend):

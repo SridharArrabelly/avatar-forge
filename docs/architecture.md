@@ -220,8 +220,13 @@ avatar-forge/
 ├── teams/                         # Microsoft Teams app package (tab + Phase 2a bot)
 │   ├── README.md                  # Sideload + bot setup walkthrough + validation checklist
 │   ├── manifest.template.json     # Manifest (schema v1.17): staticTabs + bots, templated placeholders
-│   ├── build_package.py           # Stdlib-only: renders the manifest and zips a sideloadable package
-│   └── icons/                     # color.png (192×192) + outline.png (32×32)
+│   └── build_package.py           # Stdlib-only: renders the manifest and zips a sideloadable package
+│
+├── assets/brand/                  # Canonical brand assets (single source of truth)
+│   ├── color.png                  # 192×192 logo — Teams app icon, meeting-bot iconUrl, served at /brand/
+│   ├── outline.png                # 32×32 Teams outline icon
+│   ├── favicon.svg                # Web favicon (served at /brand/favicon.svg)
+│   └── generate_icons.py          # Regenerates color.png/outline.png (Pillow, isolated)
 │
 ├── infra/                         # Bicep IaC consumed by azd (azure.yaml)
 │   ├── main.bicep                 # Deployment entry point

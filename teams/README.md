@@ -30,9 +30,9 @@ Start with the tab walkthrough, then the bot section if you're enabling it.
 | File | Purpose |
 | --- | --- |
 | `manifest.template.json` | Teams manifest (schema v1.17) with `{{HOSTNAME}}`, `{{VERSION}}`, `{{APP_ID}}` placeholders. |
-| `icons/color.png` | 192×192 color app icon. |
-| `icons/outline.png` | 32×32 transparent outline icon (Teams recolors it). |
-| `build_package.py` | Stdlib-only script that renders the manifest and zips a sideloadable package. |
+| `../assets/brand/color.png` | 192×192 color app icon (canonical brand source, shared with web + meeting bot). |
+| `../assets/brand/outline.png` | 32×32 transparent outline icon (Teams recolors it). |
+| `build_package.py` | Stdlib-only script that renders the manifest and zips a sideloadable package. Embeds the icons from `assets/brand/` into the zip. |
 | `build/avatar-forge-teams.zip` | Build output (git-ignored). |
 
 ## Build the package

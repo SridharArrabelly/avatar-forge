@@ -41,7 +41,9 @@ import zipfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE = os.path.join(HERE, "manifest.template.json")
-ICONS_DIR = os.path.join(HERE, "icons")
+# Brand assets live in the repo-root canonical folder (assets/brand) so the web
+# app, Teams package, and meeting bot all derive from a single source of truth.
+ICONS_DIR = os.path.join(os.path.dirname(HERE), "assets", "brand")
 BUILD_DIR = os.path.join(HERE, "build")
 OUTPUT_ZIP = os.path.join(BUILD_DIR, "avatar-forge-teams.zip")
 
