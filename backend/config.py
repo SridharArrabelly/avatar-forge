@@ -120,6 +120,11 @@ ACS_WAKE_PHRASES = [
 ACS_REQUIRE_WAKE_PHRASE = os.getenv(
     "ACS_REQUIRE_WAKE_PHRASE", "true"
 ).strip().lower() in ("1", "true", "yes", "on")
+# After the avatar finishes an answer, stay "armed" for this many seconds so a
+# natural follow-up question does NOT need the wake phrase again (conversational
+# turn-taking). Only applies when ACS_REQUIRE_WAKE_PHRASE is True. 0 disables the
+# grace window (every turn then needs the wake phrase). Default 30s.
+ACS_FOLLOWUP_WINDOW_S = float(os.getenv("ACS_FOLLOWUP_WINDOW_S", "30"))
 # Seconds of inactivity before the participant leaves the call (0 disables).
 ACS_IDLE_TIMEOUT_S = float(os.getenv("ACS_IDLE_TIMEOUT_S", "0"))
 # Phase 2b Slice 1: the .NET/Windows Graph media bot connects to the

@@ -36,6 +36,7 @@ from array import array
 from typing import Optional
 
 from ..config import (
+    ACS_FOLLOWUP_WINDOW_S,
     ACS_IDLE_TIMEOUT_S,
     ACS_REQUIRE_WAKE_PHRASE,
     ACS_WAKE_PHRASES,
@@ -61,6 +62,9 @@ class AcsVoiceBridge:
         self._answer_armed = not ACS_REQUIRE_WAKE_PHRASE
         self._suppress_current_response = False
         self._last_activity_ms = time.monotonic() * 1000.0
+        # Timestamp (monotonic ms) of the last answer we actually spoke; powers the
+        # follow-up grace window so conversational follow-ups skip the wake phrase.
+        self._last_answer_done_ms = 0.0
 
         # ACS inbound audio metadata (filled from the AudioMetadata frame).
         self._inbound_sample_rate: Optional[int] = None
@@ -126,6 +130,9 @@ class AcsVoiceBridge:
                     await self.handler.interrupt()
 
         elif mtype in ("response_done", "audio_done"):
+            # An answer the room actually heard re-opens the follow-up window.
+            if not self._suppress_current_response:
+                self._last_answer_done_ms = time.monotonic() * 1000.0
             # Re-arm gate for the next turn when a wake phrase is required.
             if ACS_REQUIRE_WAKE_PHRASE:
                 self._answer_armed = False
@@ -266,6 +273,13 @@ class AcsVoiceBridge:
             return
         lowered = transcript.lower()
         armed = any(p in lowered for p in ACS_WAKE_PHRASES)
+        if not armed and self._in_followup_window():
+            armed = True
+            logger.info(
+                f"[ACS {self.client_id}] follow-up window "
+                f"({ACS_FOLLOWUP_WINDOW_S:.0f}s) active — answering without wake "
+                f"phrase: {transcript!r}"
+            )
         self._answer_armed = armed
         if armed:
             logger.info(
@@ -277,6 +291,13 @@ class AcsVoiceBridge:
                 f"[ACS {self.client_id}] no wake phrase {ACS_WAKE_PHRASES} in "
                 f"utterance — staying silent"
             )
+
+    def _in_followup_window(self) -> bool:
+        """True if we recently answered and the follow-up grace window is open."""
+        if ACS_FOLLOWUP_WINDOW_S <= 0 or not self._last_answer_done_ms:
+            return False
+        elapsed = time.monotonic() * 1000.0 - self._last_answer_done_ms
+        return elapsed <= ACS_FOLLOWUP_WINDOW_S * 1000.0
 
     async def _send_stop_audio(self) -> None:
         """Tell ACS to flush any buffered outbound audio (barge-in)."""
@@ -332,6 +353,7 @@ class BrowserVoiceBridge:
         self._suppress_current_response = False
         self._hard_muted = False  # host pressed "Mute Nuru" — suppress all output
         self._last_activity_ms = time.monotonic() * 1000.0
+        self._last_answer_done_ms = 0.0  # powers the follow-up grace window
 
         self._frames_in = 0
         self._frames_out = 0
@@ -371,6 +393,8 @@ class BrowserVoiceBridge:
                     await self.handler.interrupt()
 
         elif mtype in ("response_done", "audio_done"):
+            if not self._suppress_current_response:
+                self._last_answer_done_ms = time.monotonic() * 1000.0
             if ACS_REQUIRE_WAKE_PHRASE:
                 self._answer_armed = False
 
@@ -483,6 +507,13 @@ class BrowserVoiceBridge:
             return
         lowered = transcript.lower()
         armed = any(p in lowered for p in ACS_WAKE_PHRASES)
+        if not armed and self._in_followup_window():
+            armed = True
+            logger.info(
+                f"[browser {self.client_id}] follow-up window "
+                f"({ACS_FOLLOWUP_WINDOW_S:.0f}s) active — answering without wake "
+                f"phrase: {transcript!r}"
+            )
         self._answer_armed = armed
         if armed:
             logger.info(
@@ -494,3 +525,10 @@ class BrowserVoiceBridge:
                 f"[browser {self.client_id}] no wake phrase {ACS_WAKE_PHRASES} in "
                 f"utterance — staying silent"
             )
+
+    def _in_followup_window(self) -> bool:
+        """True if we recently answered and the follow-up grace window is open."""
+        if ACS_FOLLOWUP_WINDOW_S <= 0 or not self._last_answer_done_ms:
+            return False
+        elapsed = time.monotonic() * 1000.0 - self._last_answer_done_ms
+        return elapsed <= ACS_FOLLOWUP_WINDOW_S * 1000.0

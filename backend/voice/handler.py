@@ -456,10 +456,15 @@ class VoiceSessionHandler:
             await self.connection.response.cancel()
         except Exception as e:
             logger.debug(f"response.cancel during interrupt (often no active response): {e}")
-        try:
-            await self.connection.output_audio_buffer.clear()
-        except Exception as e:
-            logger.warning(f"output_audio_buffer.clear during interrupt failed: {e}")
+        # output_audio_buffer.clear() is ONLY valid in avatar mode; calling it on a
+        # non-avatar session (e.g. the Teams meeting bot) returns an
+        # ``avatar_not_configured`` error on every barge-in/suppression. response.cancel()
+        # above plus the stop_playback below already stop playback there.
+        if self.config.get("avatarEnabled", False):
+            try:
+                await self.connection.output_audio_buffer.clear()
+            except Exception as e:
+                logger.warning(f"output_audio_buffer.clear during interrupt failed: {e}")
         try:
             await self.send_message({
                 "type": "stop_playback",
