@@ -11,14 +11,21 @@ function configure() {
     const teams = window.microsoftTeams;
     if (!teams || !teams.app || !teams.pages || !teams.pages.config) return;
 
-    teams.app.initialize().then(() => {
+    teams.app.initialize().then(async () => {
         const origin = window.location.origin;
+        // Tab name comes from the server's single branding knob
+        // (AVATAR_DISPLAY_NAME) — never hardcode the avatar name.
+        let displayName = "Avatar";
+        try {
+            const cfg = await (await fetch("/api/config")).json();
+            displayName = (cfg.defaults && cfg.defaults.avatarDisplayName) || "Avatar";
+        } catch (_) { /* keep fallback */ }
         teams.pages.config.registerOnSaveHandler((saveEvent) => {
             teams.pages.config.setConfig({
-                entityId: "nuruMeetingControl",
+                entityId: "avatarMeetingControl",
                 contentUrl: `${origin}/companion.html?inTeams=1`,
                 websiteUrl: `${origin}/companion.html`,
-                suggestedDisplayName: "Nuru",
+                suggestedDisplayName: displayName,
             }).then(() => saveEvent.notifySuccess())
               .catch(() => saveEvent.notifyFailure("Failed to set tab config"));
         });

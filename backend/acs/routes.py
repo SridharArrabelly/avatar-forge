@@ -19,7 +19,13 @@ import logging
 from fastapi import APIRouter, Request, WebSocket
 from fastapi.responses import JSONResponse
 
-from ..config import ACS_CALLBACK_BASE_URL, ACS_ENABLED, ACS_ENDPOINT, DEFAULT_ENDPOINT
+from ..config import (
+    ACS_CALLBACK_BASE_URL,
+    ACS_ENABLED,
+    ACS_ENDPOINT,
+    AVATAR_DISPLAY_NAME,
+    DEFAULT_ENDPOINT,
+)
 from ..voice import VoiceSessionHandler
 from ..voice.auth import create_credential
 from . import client as acs_client
@@ -72,7 +78,13 @@ def build_acs_router() -> APIRouter:
     @router.get("/api/acs/config")
     async def acs_config():
         """Tell the joiner page whether Phase 2b is enabled."""
-        return {"enabled": ACS_ENABLED, "endpoint": ACS_ENDPOINT}
+        return {
+            "enabled": ACS_ENABLED,
+            "endpoint": ACS_ENDPOINT,
+            # Single branding knob (AVATAR_DISPLAY_NAME) so the browser joiner's
+            # participant name is never hardcoded.
+            "avatarDisplayName": AVATAR_DISPLAY_NAME,
+        }
 
     @router.get("/api/acs/status")
     async def acs_status():

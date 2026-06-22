@@ -66,6 +66,10 @@ const linkEl = $("meetingLink");
 
 let call = null;
 let callAgent = null;
+// Avatar brand name, resolved from the server (/api/acs/config -> AVATAR_DISPLAY_NAME)
+// in ensureEnabled() so the participant name is never hardcoded.
+let avatarDisplayName = "Avatar";
+let _configReady = null;
 
 // ───────── browser-side media bridge (client-side audio path) ─────────
 // Server-side Call Automation media streaming does not deliver Teams *meeting*
@@ -424,6 +428,8 @@ async function ensureEnabled() {
         joinBtn.disabled = true;
         return false;
     }
+    // Branding name comes from the server (AVATAR_DISPLAY_NAME) — never hardcoded.
+    avatarDisplayName = (cfg.avatarDisplayName || "Avatar").trim();
     return true;
 }
 
@@ -484,6 +490,9 @@ async function join() {
     joinBtn.disabled = true;
 
     try {
+        // Ensure the branding name (AVATAR_DISPLAY_NAME) has loaded before we
+        // create the call agent with it.
+        try { await _configReady; } catch (_) { /* falls back to "Avatar" */ }
         log("Requesting an ACS access token…");
         const tokRes = await fetch("/api/acs/token", { method: "POST" });
         if (!tokRes.ok) throw new Error(`token endpoint returned ${tokRes.status}`);
@@ -512,7 +521,7 @@ async function join() {
         }
 
         callAgent = await callClient.createCallAgent(credential, {
-            displayName: "Nuru (AI assistant)",
+            displayName: `${avatarDisplayName} (AI assistant)`,
         });
 
         const locator = buildMeetingLocator(meetingLink);
@@ -649,4 +658,4 @@ try {
     if (prefill) linkEl.value = prefill;
 } catch (e) { /* ignore */ }
 
-ensureEnabled();
+_configReady = ensureEnabled();
