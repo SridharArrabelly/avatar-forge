@@ -66,10 +66,22 @@ from dotenv import load_dotenv
 # travel with the code that depends on the prompt's structure.
 _PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
 
+# The avatar's brand name — the single knob (AVATAR_DISPLAY_NAME), shared with the
+# backend and the meeting bot. Prompt files use the {{AVATAR_NAME}} placeholder so
+# the persona is never hardcoded; it's substituted here at load time. Empty -> "Avatar".
+_AVATAR_NAME = os.getenv("AVATAR_DISPLAY_NAME", "").strip() or "Avatar"
+
+
+def _apply_brand(text: str) -> str:
+    """Substitute brand placeholders ({{AVATAR_NAME}}) in a loaded prompt."""
+    return text.replace("{{AVATAR_NAME}}", _AVATAR_NAME)
+
 
 def _load_prompt(*relative: str) -> str:
     """Load a prompt file from prompts/ as UTF-8 plain text."""
-    return _PROMPTS_DIR.joinpath(*relative).read_text(encoding="utf-8").strip()
+    return _apply_brand(
+        _PROMPTS_DIR.joinpath(*relative).read_text(encoding="utf-8").strip()
+    )
 
 
 AGENT_DESCRIPTION = _load_prompt("agent", "description.md")
@@ -117,7 +129,7 @@ def _load_agent_instructions(model: str) -> str:
                 f"Loading reasoning prompt variant "
                 f"(prompts/agent/instructions-reasoning.md) for model {model!r}."
             )
-            return path.read_text(encoding="utf-8").strip()
+            return _apply_brand(path.read_text(encoding="utf-8").strip())
         print(
             f"WARNING: model {model!r} supports reasoning but "
             "prompts/agent/instructions-reasoning.md is missing — falling "

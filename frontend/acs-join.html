@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Nuru — Join a Teams meeting</title>
+    <title>{{AVATAR_NAME}} — Join a Teams meeting</title>
     <link rel="icon" type="image/svg+xml" href="/brand/favicon.svg" />
     <style>
         :root { color-scheme: light dark; }
@@ -27,16 +27,16 @@
     </style>
 </head>
 <body>
-    <h1>🎙️ Bring Nuru into a Teams meeting</h1>
+    <h1>🎙️ Bring {{AVATAR_NAME}} into a Teams meeting</h1>
     <p class="notice">
         This page joins a Microsoft Teams meeting as an audio assistant using
         Azure Communication Services. Once joined, anyone in the call can say a
-        wake phrase (e.g. <strong>"Hey Nuru"</strong>) and ask a question aloud;
-        Nuru answers by voice, grounded in the knowledge base.
+        wake phrase (e.g. <strong>"Hey {{AVATAR_NAME}}"</strong>) and ask a question aloud;
+        {{AVATAR_NAME}} answers by voice, grounded in the knowledge base.
     </p>
     <p class="notice consent">
         <strong>Please notify participants:</strong> an AI assistant is present
-        and listening in the meeting. Nuru does <strong>not</strong> record or
+        and listening in the meeting. {{AVATAR_NAME}} does <strong>not</strong> record or
         transcribe the meeting — she only listens live to answer when addressed.
     </p>
 
@@ -49,21 +49,22 @@
         <button id="leaveBtn" class="secondary" disabled>Leave</button>
     </div>
     <div class="row">
-        <button id="muteNuruBtn" class="secondary" disabled>🔇 Mute Nuru</button>
-        <button id="unmuteNuruBtn" class="secondary" disabled>🔊 Unmute Nuru</button>
+        <button id="muteNuruBtn" class="secondary" disabled>🔇 Mute {{AVATAR_NAME}}</button>
+        <button id="unmuteNuruBtn" class="secondary" disabled>🔊 Unmute {{AVATAR_NAME}}</button>
         <button id="farSideBtn" class="secondary" disabled
-                title="Share the Teams window/tab WITH audio so Nuru can hear remote participants">
+                title="Share the Teams window/tab WITH audio so {{AVATAR_NAME}} can hear remote participants">
             👥 Capture far-side audio
         </button>
     </div>
     <p class="notice">
-        <strong>Hear remote participants:</strong> by default Nuru hears only this
+        <strong>Hear remote participants:</strong> by default {{AVATAR_NAME}} hears only this
         device's microphone (Teams isolates per-client audio). To let her hear the
         far side, click <em>Capture far-side audio</em> and share the Teams
         window/tab <strong>with “Share audio” ticked</strong>.
     </p>
     <div id="status">Idle.</div>
 
+    <script src="/brand.js"></script>
     <script type="module" src="/acs-join.js"></script>
 </body>
 </html>

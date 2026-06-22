@@ -25,6 +25,20 @@ const liveText = $("liveText");
 const TEAMS_SDK_URL = "https://res.cdn.office.net/teams-js/2.31.1/js/MicrosoftTeams.min.js";
 
 let joinerWindow = null;
+// Avatar brand name, resolved from the server (/api/config -> AVATAR_DISPLAY_NAME)
+// so it's never hardcoded; falls back to "Avatar" until the fetch resolves.
+let avatarName = "Avatar";
+
+async function loadAvatarName() {
+    try {
+        const res = await fetch("/api/config");
+        if (res.ok) {
+            const cfg = await res.json();
+            avatarName = (cfg.defaults && cfg.defaults.avatarDisplayName) || "Avatar";
+            refreshStatus();
+        }
+    } catch (_) { /* keep the fallback */ }
+}
 
 function log(msg) {
     console.log("[companion]", msg);
@@ -35,8 +49,8 @@ function setLive(state) {
     // state: "live" | "off" | "disabled" | "unknown"
     liveDot.className = "dot" + (state === "live" ? " live" : state === "disabled" ? " off" : "");
     liveText.textContent = {
-        live: "Nuru is in the call",
-        off: "Nuru is not in the call yet",
+        live: `${avatarName} is in the call`,
+        off: `${avatarName} is not in the call yet`,
         disabled: "Phase 2b is not enabled on this deployment",
         unknown: "Checking…",
     }[state] || "Checking…";
@@ -65,7 +79,7 @@ function bringNuruIn() {
         log("Couldn't open the joiner window — allow pop-ups for this site, then try again.");
         return;
     }
-    log("Joiner opened in a separate window. Click 'Join meeting' there; admit Nuru from the lobby if prompted. Keep that window open during the call.");
+    log(`Joiner opened in a separate window. Click 'Join meeting' there; admit ${avatarName} from the lobby if prompted. Keep that window open during the call.`);
     // Poll a little more eagerly for a short while so the panel reflects the join.
     let ticks = 0;
     const t = setInterval(() => { refreshStatus(); if (++ticks >= 20) clearInterval(t); }, 3000);
@@ -115,5 +129,6 @@ function loadTeamsSdk() {
 }
 
 loadTeamsSdk();
+loadAvatarName();
 refreshStatus();
 setInterval(refreshStatus, 10000);

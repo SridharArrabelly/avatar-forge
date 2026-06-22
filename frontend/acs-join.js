@@ -304,7 +304,7 @@ function startRemoteAudioCapture() {
         }
     }).catch((e) => {
         console.warn("[acs-join] mic capture failed", e);
-        log(`Microphone capture failed: ${e.message || e}. Nuru can't hear questions.`);
+        log(`Microphone capture failed: ${e.message || e}. ${avatarDisplayName} can't hear questions.`);
     });
 }
 
@@ -341,7 +341,7 @@ async function startFarSideCapture() {
         const audioTracks = stream.getAudioTracks();
         if (!audioTracks.length) {
             stream.getTracks().forEach((t) => t.stop());
-            log("No audio was shared. Re-click and tick “Share audio” / “Share tab audio” in the picker so Nuru can hear the far side.");
+            log(`No audio was shared. Re-click and tick “Share audio” / “Share tab audio” in the picker so ${avatarDisplayName} can hear the far side.`);
             return;
         }
         // We only want the audio; drop the video track immediately to save resources.
@@ -357,13 +357,13 @@ async function startFarSideCapture() {
         audioTracks[0].addEventListener("ended", () => {
             try { if (displaySource) displaySource.disconnect(); } catch (_) {}
             displaySource = null; displayStream = null;
-            log("Far-side audio sharing stopped. Nuru now hears only this device's mic.");
+            log(`Far-side audio sharing stopped. ${avatarDisplayName} now hears only this device's mic.`);
         });
         console.log("[acs-join] far-side (display) audio wired ->", audioTracks.length, "track(s)");
         if (mediaWs && mediaWs.readyState === WebSocket.OPEN) {
             try { mediaWs.send(JSON.stringify({ type: "farside_wired", tracks: audioTracks.length })); } catch (_) {}
         }
-        log("Far-side audio connected — Nuru can now hear shared meeting audio. Keep the share running.");
+        log(`Far-side audio connected — ${avatarDisplayName} can now hear shared meeting audio. Keep the share running.`);
     } catch (e) {
         console.warn("[acs-join] getDisplayMedia failed", e);
         log(`Far-side capture cancelled or failed: ${e.message || e}`);
@@ -384,10 +384,10 @@ async function muteNuru() {
         flushPlayback();
         muteNuruBtn.disabled = true;
         unmuteNuruBtn.disabled = false;
-        log("Nuru muted. She won't speak until you unmute her.");
+        log(`${avatarDisplayName} muted. She won't speak until you unmute her.`);
     } catch (e) {
         console.warn("[acs-join] muteNuru failed", e);
-        log(`Could not mute Nuru: ${e.message || e}`);
+        log(`Could not mute ${avatarDisplayName}: ${e.message || e}`);
     }
 }
 
@@ -399,10 +399,10 @@ async function unmuteNuru() {
         }
         muteNuruBtn.disabled = false;
         unmuteNuruBtn.disabled = true;
-        log("Nuru unmuted. She'll answer when addressed.");
+        log(`${avatarDisplayName} unmuted. She'll answer when addressed.`);
     } catch (e) {
         console.warn("[acs-join] unmuteNuru failed", e);
-        log(`Could not unmute Nuru: ${e.message || e}`);
+        log(`Could not unmute ${avatarDisplayName}: ${e.message || e}`);
     }
 }
 
@@ -581,7 +581,7 @@ async function join() {
 
 async function startBrowserMedia() {
     try {
-        log("Connected. Bridging meeting audio to Nuru…");
+        log(`Connected. Bridging meeting audio to ${avatarDisplayName}…`);
         openMediaSocket();
         startRemoteAudioCapture();
         // Stop the SDK from rendering the meeting's incoming audio out the local
@@ -619,7 +619,7 @@ async function startBrowserMedia() {
                 }, 600);
             });
         } catch (_) { /* event not in this SDK build */ }
-        log("Nuru is live in the call. Ask a question aloud and she'll answer.");
+        log(`${avatarDisplayName} is live in the call. Ask a question aloud and she'll answer.`);
         muteNuruBtn.disabled = false;
         unmuteNuruBtn.disabled = true;
         farSideBtn.disabled = false;

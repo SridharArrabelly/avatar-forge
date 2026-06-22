@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Nuru — Meeting control panel</title>
+    <title>{{AVATAR_NAME}} — Meeting control panel</title>
     <link rel="icon" type="image/svg+xml" href="/brand/favicon.svg" />
     <style>
         :root { color-scheme: light dark; }
@@ -37,19 +37,19 @@
     </style>
 </head>
 <body>
-    <h1>🎙️ Nuru — meeting control panel</h1>
+    <h1>🎙️ {{AVATAR_NAME}} — meeting control panel</h1>
 
     <div class="row" style="justify-content: space-between; align-items: center;">
         <span class="pill"><span id="liveDot" class="dot"></span><span id="liveText">Checking…</span></span>
     </div>
 
     <p class="notice consent">
-        <strong>Please tell participants:</strong> when Nuru joins she is an AI
+        <strong>Please tell participants:</strong> when {{AVATAR_NAME}} joins she is an AI
         assistant that <strong>listens live</strong> to answer when addressed. She
         does <strong>not</strong> record or transcribe the meeting.
     </p>
 
-    <h2>Bring Nuru into this call</h2>
+    <h2>Bring {{AVATAR_NAME}} into this call</h2>
     <p class="notice">
         Paste the meeting join link, then open the joiner. It opens in a
         <strong>separate window</strong> (kept outside the Teams meeting window on
@@ -61,15 +61,15 @@
                placeholder="Paste the Teams meeting join link…" />
     </div>
     <div class="row">
-        <button id="bringBtn">Bring Nuru into this call</button>
+        <button id="bringBtn">Bring {{AVATAR_NAME}} into this call</button>
         <button id="refreshBtn" class="secondary">Refresh status</button>
     </div>
     <div id="status">Idle.</div>
 
     <h2>How to ask her things</h2>
     <p class="notice">
-        Once Nuru shows as <strong>in the call</strong>, anyone can unmute and say
-        the wake phrase (e.g. <strong>"Hey Nuru"</strong>) followed by a question.
+        Once {{AVATAR_NAME}} shows as <strong>in the call</strong>, anyone can unmute and say
+        the wake phrase (e.g. <strong>"Hey {{AVATAR_NAME}}"</strong>) followed by a question.
         She answers aloud, grounded in the knowledge base, and stays quiet
         otherwise so she never talks over people.
     </p>
@@ -78,7 +78,7 @@
         <summary>If she doesn't join, or drops out</summary>
         <ul class="notice">
             <li>Confirm the joiner window is still open and shows
-                "Nuru is in the call".</li>
+                "{{AVATAR_NAME}} is in the call".</li>
             <li>If she's stuck in the lobby, admit her from the meeting roster.</li>
             <li>Re-open the joiner with the button above to rejoin.</li>
             <li>If the panel says Phase 2b isn't enabled, the deployment needs
@@ -89,14 +89,15 @@
     <details>
         <summary>Private avatar preview (optional)</summary>
         <p class="notice">
-            Want to see Nuru's animated face? Open the
+            Want to see {{AVATAR_NAME}}'s animated face? Open the
             <a id="previewLink" href="/?inTeams=1" target="_blank" rel="noopener">personal avatar tab</a>.
-            That preview is a <strong>private</strong> conversation with Nuru — it
+            That preview is a <strong>private</strong> conversation with {{AVATAR_NAME}} — it
             is separate from the in-call audio participant and is not shown to the
             meeting.
         </p>
     </details>
 
+    <script src="/brand.js"></script>
     <script type="module" src="/companion.js"></script>
 </body>
 </html>

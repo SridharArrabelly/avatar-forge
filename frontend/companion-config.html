@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Add Nuru to this meeting</title>
+    <title>Add {{AVATAR_NAME}} to this meeting</title>
     <link rel="icon" type="image/svg+xml" href="/brand/favicon.svg" />
     <style>
         :root { color-scheme: light dark; }
@@ -16,15 +16,16 @@
     </style>
 </head>
 <body>
-    <h1>🎙️ Nuru meeting control panel</h1>
+    <h1>🎙️ {{AVATAR_NAME}} meeting control panel</h1>
     <p class="notice">
-        Adds a side-panel control to bring Nuru (an AI audio assistant) into this
+        Adds a side-panel control to bring {{AVATAR_NAME}} (an AI audio assistant) into this
         meeting and ask her questions aloud. Click <strong>Save</strong> to add it.
     </p>
     <p class="notice">
-        Nuru listens live to answer when addressed and does not record or
+        {{AVATAR_NAME}} listens live to answer when addressed and does not record or
         transcribe the meeting.
     </p>
+    <script src="/brand.js"></script>
     <script type="module" src="/companion-config.js"></script>
 </body>
 </html>
