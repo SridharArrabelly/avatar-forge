@@ -26,6 +26,7 @@ public sealed class MeetingBotService : IDisposable
     private readonly ILoggerFactory _loggerFactory;
     private readonly ILogger<MeetingBotService> _logger;
     private readonly ICommunicationsClient _client;
+    private readonly AuthenticationProvider _authProvider;
     private readonly Dictionary<string, CallHandler> _handlers = new();
 
     public MeetingBotService(IOptions<BotOptions> options, ILoggerFactory loggerFactory)
@@ -38,6 +39,12 @@ public sealed class MeetingBotService : IDisposable
         // Telemetry/logging sink required by the SDK.
         var graphLogger = new GraphLogger(nameof(MeetingBotService));
 
+        _authProvider = new AuthenticationProvider(
+            _options.AppId,
+            _options.AppSecret,
+            _options.TenantId,
+            graphLogger);
+
         // Build the calling client. The media platform is configured with our
         // public FQDN, media port and TLS cert (see BotOptions) so the
         // Real-Time Media Platform can negotiate media with Teams.
@@ -45,12 +52,7 @@ public sealed class MeetingBotService : IDisposable
                 appName: "AvatarForgeMeetingBot",
                 appId: _options.AppId,
                 logger: graphLogger)
-            .SetAuthenticationProvider(
-                new AuthenticationProvider(
-                    _options.AppId,
-                    _options.AppSecret,
-                    _options.TenantId,
-                    graphLogger))
+            .SetAuthenticationProvider(_authProvider)
             .SetNotificationUrl(new Uri($"https://{_options.ServiceFqdn}:{_options.SignalingPort}/api/calling"))
             .SetMediaPlatformSettings(BuildMediaPlatformSettings())
             .SetServiceBaseUrl(new Uri("https://graph.microsoft.com/v1.0"));
@@ -96,6 +98,10 @@ public sealed class MeetingBotService : IDisposable
     {
         // Parse the join URL into the chat + meeting info the SDK needs.
         var (chatInfo, meetingInfo, meetingTenantId) = JoinInfo.ParseJoinURL(joinUrl);
+
+        // Make the meeting tenant the fallback authority for mid-call control
+        // requests (UnmuteAsync etc.), which the SDK issues with an empty tenant.
+        _authProvider.MeetingTenantOverride = meetingTenantId ?? _options.TenantId;
 
         var mediaSession = CreateLocalMediaSession();
 
