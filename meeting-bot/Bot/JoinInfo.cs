@@ -18,7 +18,7 @@ namespace AvatarForge.MeetingBot.Bot;
 /// </summary>
 public static class JoinInfo
 {
-    public static (ChatInfo chatInfo, MeetingInfo meetingInfo) ParseJoinURL(string joinUrl)
+    public static (ChatInfo chatInfo, MeetingInfo meetingInfo, string? tenantId) ParseJoinURL(string joinUrl)
     {
         if (string.IsNullOrWhiteSpace(joinUrl))
             throw new ArgumentException("Join URL is required.", nameof(joinUrl));
@@ -66,7 +66,7 @@ public static class JoinInfo
             };
         }
 
-        return (chatInfo, meetingInfo);
+        return (chatInfo, meetingInfo, tenantId);
     }
 
     private static string? MatchJson(string json, string key)

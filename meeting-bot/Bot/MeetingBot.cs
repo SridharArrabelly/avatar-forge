@@ -81,14 +81,16 @@ public sealed class MeetingBotService : IDisposable
     public async Task<string> JoinMeetingAsync(string joinUrl, string? displayName = null)
     {
         // Parse the join URL into the chat + meeting info the SDK needs.
-        var (chatInfo, meetingInfo) = JoinInfo.ParseJoinURL(joinUrl);
+        var (chatInfo, meetingInfo, meetingTenantId) = JoinInfo.ParseJoinURL(joinUrl);
 
         var mediaSession = CreateLocalMediaSession();
 
         var joinParams = new JoinMeetingParameters(chatInfo, meetingInfo, mediaSession)
         {
-            // How Nuru appears in the roster.
-            TenantId = _options.TenantId,
+            // Use the MEETING's tenant (from the join URL context), not the bot's
+            // home tenant. The SDK acquires its Graph token for this tenant, and
+            // Graph rejects "tenant mismatch" if they differ.
+            TenantId = meetingTenantId ?? _options.TenantId,
         };
         if (!string.IsNullOrWhiteSpace(displayName))
         {
