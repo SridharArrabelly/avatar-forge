@@ -30,6 +30,7 @@ import asyncio
 import base64
 import json
 import logging
+import math
 import sys
 import time
 from array import array
@@ -43,6 +44,54 @@ from ..config import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Per-section Q values for a 6th-order Butterworth response (3 cascaded biquads).
+_BUTTERWORTH_Q6 = (0.51763809, 0.70710678, 1.93185165)
+
+
+def _design_lowpass(fs: int, fc: float, q_list=_BUTTERWORTH_Q6):
+    """RBJ-cookbook biquad coefficients for a cascaded low-pass at ``fc``."""
+    sections = []
+    w0 = 2 * math.pi * fc / fs
+    cos_w0 = math.cos(w0)
+    sin_w0 = math.sin(w0)
+    for q in q_list:
+        alpha = sin_w0 / (2 * q)
+        b0 = (1 - cos_w0) / 2
+        b1 = 1 - cos_w0
+        b2 = (1 - cos_w0) / 2
+        a0 = 1 + alpha
+        a1 = -2 * cos_w0
+        a2 = 1 - alpha
+        sections.append((b0 / a0, b1 / a0, b2 / a0, a1 / a0, a2 / a0))
+    return sections
+
+
+class _LowPass:
+    """Stateful cascaded-biquad low-pass filter (pure Python, no deps).
+
+    Used as the anti-aliasing filter ahead of downsampling: plain linear-interp
+    decimation (e.g. 24 kHz -> 16 kHz) with no low-pass folds content above the
+    output Nyquist back into the audible band as hiss ("shh" on sibilants). The
+    filter state (``z1``/``z2`` per section, transposed Direct-Form II) carries
+    across frames so consecutive chunks join without discontinuities.
+    """
+
+    def __init__(self, fs: int, fc: float):
+        self._sections = _design_lowpass(fs, fc)
+        self._state = [[0.0, 0.0] for _ in self._sections]
+
+    def process(self, samples: list) -> list:
+        for si, (b0, b1, b2, a1, a2) in enumerate(self._sections):
+            z1, z2 = self._state[si]
+            for i, x in enumerate(samples):
+                y = b0 * x + z1
+                z1 = b1 * x - a1 * y + z2
+                z2 = b2 * x - a2 * y
+                samples[i] = y
+            self._state[si] = [z1, z2]
+        return samples
+
 
 
 class AcsVoiceBridge:
@@ -76,6 +125,9 @@ class AcsVoiceBridge:
         self._target_sample_rate = 24000
         self._resample_carry_in: Optional[int] = None
         self._resample_carry_out: Optional[int] = None
+        # Anti-aliasing low-pass applied before outbound downsampling (built lazily
+        # once the bot's sample rate is known from the AudioMetadata frame).
+        self._lpf_out: Optional[_LowPass] = None
         self._frames_in = 0
         self._frames_out = 0
         self._silent_in = 0
@@ -225,10 +277,37 @@ class AcsVoiceBridge:
         out_rate = self._inbound_sample_rate
         if not out_rate or out_rate == self._target_sample_rate:
             return pcm
+        # Downsampling (e.g. 24 kHz -> 16 kHz) aliases without a low-pass: content
+        # above the output Nyquist folds back as audible hiss ("shh" on sibilants).
+        # Filter it out first, then do the rate conversion.
+        if out_rate < self._target_sample_rate:
+            pcm = self._lowpass_out(pcm)
         out, self._resample_carry_out = self._resample_pcm16(
             pcm, self._target_sample_rate, out_rate, self._resample_carry_out
         )
         return out
+
+    def _lowpass_out(self, pcm: bytes) -> bytes:
+        """Apply the stateful anti-aliasing low-pass to outbound 24 kHz PCM16."""
+        if self._lpf_out is None:
+            # Cutoff safely below the output Nyquist (out_rate / 2).
+            fc = min(6800.0, 0.45 * self._inbound_sample_rate)
+            self._lpf_out = _LowPass(self._target_sample_rate, fc)
+            logger.info(
+                f"[ACS {self.client_id}] anti-aliasing low-pass enabled "
+                f"(fc={fc:.0f}Hz, fs={self._target_sample_rate})"
+            )
+        samples = array("h")
+        samples.frombytes(pcm)
+        if sys.byteorder == "big":
+            samples.byteswap()
+        filtered = self._lpf_out.process([float(s) for s in samples])
+        out = array("h", bytes(2 * len(filtered)))
+        for i, v in enumerate(filtered):
+            out[i] = -32768 if v < -32768 else (32767 if v > 32767 else int(v))
+        if sys.byteorder == "big":
+            out.byteswap()
+        return out.tobytes()
 
     @staticmethod
     def _resample_pcm16(
