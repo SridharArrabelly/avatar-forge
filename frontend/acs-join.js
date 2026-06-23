@@ -80,7 +80,7 @@ let avatarVideoEnabled = false;
 let _LocalVideoStreamCtor = null; // captured from the SDK at join() time
 let localVideoStream = null;      // ACS LocalVideoStream wrapping the placard canvas
 let placardStream = null;         // MediaStream from canvas.captureStream()
-let placardRafId = null;          // animation loop handle (also keeps frames flowing)
+let placardTimerId = null;        // canvas redraw timer (setInterval keeps frames flowing even when the tab is backgrounded)
 let placardImg = null;            // brand logo image, loaded once from /brand/color.png
 
 // ───────── browser-side media bridge (client-side audio path) ─────────
@@ -370,19 +370,30 @@ async function startPlacardVideo() {
         ctx.font = "400 18px -apple-system, 'Segoe UI', system-ui, sans-serif";
         ctx.textAlign = "left";
         ctx.fillText("listening", canvas.width / 2 - 48, 324);
-        placardRafId = requestAnimationFrame(draw);
+        // Force a captured frame even when requestAnimationFrame is throttled (the
+        // joiner tab usually sits BEHIND the Teams app). canvas.captureStream pulls a
+        // frame on canvas mutation; an explicit requestFrame() guarantees the WebRTC
+        // video sender keeps emitting so the tile never freezes/blanks in background.
+        try {
+            const vt = placardStream && placardStream.getVideoTracks()[0];
+            if (vt && typeof vt.requestFrame === "function") vt.requestFrame();
+        } catch (_) { /* requestFrame not supported — captureStream fps covers it */ }
     }
-    draw();
+    // setInterval (unlike requestAnimationFrame) keeps firing in a backgrounded tab
+    // (throttled to ~1s, which is still enough to keep the encoder alive and the
+    // logo/name visible) instead of freezing to a blank tile.
     placardStream = canvas.captureStream(15);
     localVideoStream = new _LocalVideoStreamCtor(placardStream);
+    placardTimerId = setInterval(draw, 66);
+    draw();
     await call.startVideo(localVideoStream);
     console.log("[acs-join] placard video started");
 }
 
 function teardownPlacardVideo() {
-    if (placardRafId) {
-        try { cancelAnimationFrame(placardRafId); } catch (_) {}
-        placardRafId = null;
+    if (placardTimerId) {
+        try { clearInterval(placardTimerId); } catch (_) {}
+        placardTimerId = null;
     }
     const lvs = localVideoStream;
     localVideoStream = null;
@@ -410,6 +421,12 @@ function teardownMedia() {
     displayStream = null; displaySource = null;
     outboundDest = null; outboundLocalStream = null;
     wiredRemoteTracks.clear(); scheduledSources = []; playCursor = 0;
+    // Reset the half-duplex mute clock. teardownMedia() closes the audioCtx, so the
+    // next join() creates a fresh context whose clock restarts near 0. If we leave a
+    // stale (large) captureMutedUntil from the previous context here, the new context's
+    // currentTime stays below it for a very long time and selfTalking gets wedged True
+    // — silently dropping the mic so the avatar never hears questions after a rejoin.
+    captureMutedUntil = 0;
 }
 
 // Far-side audio (hear remote participants). The ACS/WebRTC client only exposes
@@ -575,6 +592,10 @@ async function join() {
         return;
     }
     joinBtn.disabled = true;
+    // Defensive: clear any stale half-duplex mute / playback cursor from a prior
+    // session so a fresh join always starts listening (a new audioCtx restarts the
+    // clock near 0, and a leftover captureMutedUntil would otherwise wedge the mic).
+    captureMutedUntil = 0; playCursor = 0;
 
     try {
         // Ensure the branding name (AVATAR_DISPLAY_NAME) has loaded before we
