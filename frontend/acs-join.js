@@ -49,6 +49,7 @@ function loadCallingSdk() {
             CallClient: sdk.CallClient,
             Features: sdk.Features,
             LocalAudioStream: sdk.LocalAudioStream,
+            LocalVideoStream: sdk.LocalVideoStream,
             AzureCommunicationTokenCredential: common.AzureCommunicationTokenCredential,
         };
     })();
@@ -70,6 +71,17 @@ let callAgent = null;
 // in ensureEnabled() so the participant name is never hardcoded.
 let avatarDisplayName = "Avatar";
 let _configReady = null;
+// Phase 2b Slice 2 (avatar face): when the server enables it, the joiner sends an
+// outgoing video tile so the avatar is a *visible* participant. The first
+// increment is a branded placard (logo + name + a "listening" pulse) drawn to a
+// canvas and sent via the ACS raw-video LocalVideoStream — the same path a live
+// animated-avatar track will use next.
+let avatarVideoEnabled = false;
+let _LocalVideoStreamCtor = null; // captured from the SDK at join() time
+let localVideoStream = null;      // ACS LocalVideoStream wrapping the placard canvas
+let placardStream = null;         // MediaStream from canvas.captureStream()
+let placardRafId = null;          // animation loop handle (also keeps frames flowing)
+let placardImg = null;            // brand logo image, loaded once from /brand/color.png
 
 // ───────── browser-side media bridge (client-side audio path) ─────────
 // Server-side Call Automation media streaming does not deliver Teams *meeting*
@@ -308,7 +320,81 @@ function startRemoteAudioCapture() {
     });
 }
 
+// ───────── outgoing video tile (Phase 2b Slice 2: avatar face) ─────────
+// Render a branded placard (logo + avatar name + a "listening" pulse) to a canvas
+// and send it as the call's outgoing video, so the avatar is a visible participant
+// tile instead of a faceless audio leg. We use the ACS Calling SDK's raw-video
+// LocalVideoStream (its constructor accepts a MediaStream), which is the exact
+// transport a live animated-avatar video track will use in the next increment.
+// The animation also guarantees the encoder keeps emitting frames (a static
+// canvas can otherwise stall the WebRTC video sender).
+function loadBrandImage() {
+    if (placardImg) return placardImg;
+    placardImg = new Image();
+    placardImg.crossOrigin = "anonymous";
+    placardImg.src = "/brand/color.png";
+    return placardImg;
+}
+
+async function startPlacardVideo() {
+    if (!call || !_LocalVideoStreamCtor) return;
+    if (localVideoStream) return; // already on
+    const name = avatarDisplayName || "Avatar";
+    const canvas = document.createElement("canvas");
+    canvas.width = 640;
+    canvas.height = 360;
+    const ctx = canvas.getContext("2d");
+    const img = loadBrandImage();
+    const t0 = performance.now();
+    function draw() {
+        const t = (performance.now() - t0) / 1000;
+        ctx.fillStyle = "#0b1020";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        if (img && img.complete && img.naturalWidth) {
+            const scale = Math.min(180 / img.naturalWidth, 1);
+            const w = img.naturalWidth * scale;
+            const h = img.naturalHeight * scale;
+            ctx.drawImage(img, (canvas.width - w) / 2, 64, w, h);
+        }
+        ctx.textAlign = "center";
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "600 34px -apple-system, 'Segoe UI', system-ui, sans-serif";
+        ctx.fillText(name, canvas.width / 2, 286);
+        // "listening" status with a gentle pulse (and frame keep-alive).
+        const r = 6 + 2 * Math.sin(t * 3);
+        ctx.beginPath();
+        ctx.fillStyle = "#22c55e";
+        ctx.arc(canvas.width / 2 - 64, 318, r, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = "rgba(255,255,255,.75)";
+        ctx.font = "400 18px -apple-system, 'Segoe UI', system-ui, sans-serif";
+        ctx.textAlign = "left";
+        ctx.fillText("listening", canvas.width / 2 - 48, 324);
+        placardRafId = requestAnimationFrame(draw);
+    }
+    draw();
+    placardStream = canvas.captureStream(15);
+    localVideoStream = new _LocalVideoStreamCtor(placardStream);
+    await call.startVideo(localVideoStream);
+    console.log("[acs-join] placard video started");
+}
+
+function teardownPlacardVideo() {
+    if (placardRafId) {
+        try { cancelAnimationFrame(placardRafId); } catch (_) {}
+        placardRafId = null;
+    }
+    const lvs = localVideoStream;
+    localVideoStream = null;
+    if (call && lvs && typeof call.stopVideo === "function") {
+        call.stopVideo(lvs).catch((e) => console.warn("[acs-join] stopVideo failed", e));
+    }
+    try { if (placardStream) placardStream.getTracks().forEach((t) => t.stop()); } catch (_) {}
+    placardStream = null;
+}
+
 function teardownMedia() {
+    teardownPlacardVideo();
     try { if (mediaWs) mediaWs.close(); } catch (_) {}
     try { if (captureNode) captureNode.disconnect(); } catch (_) {}
     try { if (captureSink) captureSink.disconnect(); } catch (_) {}
@@ -430,6 +516,7 @@ async function ensureEnabled() {
     }
     // Branding name comes from the server (AVATAR_DISPLAY_NAME) — never hardcoded.
     avatarDisplayName = (cfg.avatarDisplayName || "Avatar").trim();
+    avatarVideoEnabled = !!cfg.avatarVideoEnabled;
     return true;
 }
 
@@ -499,7 +586,8 @@ async function join() {
         const { token } = await tokRes.json();
 
         log("Loading the ACS Calling SDK…");
-        const { CallClient, Features, LocalAudioStream, AzureCommunicationTokenCredential } = await loadCallingSdk();
+        const { CallClient, Features, LocalAudioStream, LocalVideoStream, AzureCommunicationTokenCredential } = await loadCallingSdk();
+        _LocalVideoStreamCtor = LocalVideoStream;
 
         log("Initialising the ACS Calling SDK…");
         const callClient = new CallClient();
@@ -562,8 +650,14 @@ async function join() {
             log(`Call state: ${call.state}`);
             if (call.state === "Connected") {
                 await startBrowserMedia();
+                if (avatarVideoEnabled) {
+                    // Best-effort: a video failure must never break the audio leg.
+                    try { await startPlacardVideo(); }
+                    catch (e) { console.warn("[acs-join] placard video failed", e); }
+                }
             }
             if (call.state === "Disconnected") {
+                teardownPlacardVideo();
                 const r = call.callEndReason || {};
                 log(`Call ended (code ${r.code ?? "?"}, subCode ${r.subCode ?? "?"}). ${describeEndReason(r)}`);
                 leaveBtn.disabled = true;

@@ -133,6 +133,15 @@ ACS_REQUIRE_WAKE_PHRASE = os.getenv(
 ACS_FOLLOWUP_WINDOW_S = float(os.getenv("ACS_FOLLOWUP_WINDOW_S", "30"))
 # Seconds of inactivity before the participant leaves the call (0 disables).
 ACS_IDLE_TIMEOUT_S = float(os.getenv("ACS_IDLE_TIMEOUT_S", "0"))
+# Phase 2b Slice 2 (avatar face): when true, the browser joiner sends an outgoing
+# video stream so the avatar appears as a visible participant tile (not a faceless
+# audio participant). The first increment is a branded placard (logo + avatar name
+# + a "listening" pulse) rendered to a canvas and sent via the ACS Calling SDK's
+# raw-video LocalVideoStream — the same transport a live animated-avatar track will
+# use next. Default OFF so deployments behave exactly as before until opted in.
+ACS_AVATAR_VIDEO_ENABLED = os.getenv(
+    "ACS_AVATAR_VIDEO_ENABLED", "false"
+).strip().lower() in ("1", "true", "yes", "on")
 # Phase 2b Slice 1: the .NET/Windows Graph media bot connects to the
 # ``/ws/acs/audio`` bridge endpoint and speaks the AcsVoiceBridge protocol. That
 # path needs Voice Live only — NOT an ACS resource — so this flag enables the

@@ -20,6 +20,7 @@ from fastapi import APIRouter, Request, WebSocket
 from fastapi.responses import JSONResponse
 
 from ..config import (
+    ACS_AVATAR_VIDEO_ENABLED,
     ACS_CALLBACK_BASE_URL,
     ACS_ENABLED,
     ACS_ENDPOINT,
@@ -84,6 +85,8 @@ def build_acs_router() -> APIRouter:
             # Single branding knob (AVATAR_DISPLAY_NAME) so the browser joiner's
             # participant name is never hardcoded.
             "avatarDisplayName": AVATAR_DISPLAY_NAME,
+            # Phase 2b Slice 2: when true the joiner sends a branded video tile.
+            "avatarVideoEnabled": ACS_AVATAR_VIDEO_ENABLED,
         }
 
     @router.get("/api/acs/status")
