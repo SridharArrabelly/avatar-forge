@@ -194,3 +194,23 @@ output SEARCH_SERVICE_NAME string = searchServiceName
 output SEARCH_RESOURCE_GROUP string = searchResourceGroup
 output APPINSIGHTS_NAME string = appInsightsName
 output APPINSIGHTS_RESOURCE_GROUP string = appInsightsResourceGroup
+
+// Echo Bicep param defaults / values back so host-side scripts (postprovision
+// hook) and local `uv run` invocations see the same values that were baked
+// into the container. Otherwise a true greenfield clone (no .env) gets
+// AGENT_MODEL=""/EMBEDDING_DEPLOYMENT="" in the azd env, and the postprovision
+// scripts fail even though the matching Foundry deployments were created.
+output AGENT_MODEL string = agentModel
+output EMBEDDING_DEPLOYMENT string = embeddingDeployment
+output VOICELIVE_VOICE string = voiceLiveVoice
+output SR_MODEL string = srModel
+output RECOGNITION_LANGUAGE string = recognitionLanguage
+output AVATAR_NAME string = avatarName
+output CUSTOM_AVATAR_NAME string = customAvatarName
+output PHOTO_AVATAR_NAME string = photoAvatarName
+output AVATAR_DISPLAY_NAME string = avatarDisplayName
+output AVATAR_TAGLINE string = avatarTagline
+output AVATAR_BACKGROUND_IMAGE_URL string = avatarBackgroundImageUrl
+output IS_PHOTO_AVATAR string = isPhotoAvatar
+output IS_CUSTOM_AVATAR string = isCustomAvatar
+output AGENT_ID string = agentId
