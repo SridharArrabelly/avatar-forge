@@ -37,6 +37,17 @@ from .event_handlers import handle_event
 logger = logging.getLogger(__name__)
 
 
+# SR models that accept the `phrase_list` recognition-bias option. Voice Live
+# rejects the whole session.update if phrase_list is sent to any other model
+# (notably the web default "mai-transcribe-1"), so we only forward it for these.
+PHRASE_LIST_SUPPORTED_MODELS = frozenset({
+    "azure-speech",
+    "mai-transcribe",
+    "mai-transcribe-1.5",
+    "azure-fast-transcription",
+})
+
+
 # Override applied to the proactive opening response only.
 #
 # Why this is so directive: immediately after SESSION_UPDATED, the most
@@ -198,6 +209,10 @@ class VoiceSessionHandler:
         # Phrase hints to bias recognition toward domain proper nouns/tickers the
         # recognizer otherwise mis-hears (e.g. "MTN"). Merge any per-session list
         # with the global VOICE_PHRASE_LIST (which includes the avatar's name).
+        # IMPORTANT: phrase_list is only accepted by certain SR models. Passing it
+        # to an unsupported model (e.g. the web default "mai-transcribe-1") makes
+        # Voice Live reject the whole session.update -> SESSION_UPDATED never
+        # arrives and the session times out. So gate it on the supported set.
         phrase_list = list(config.get("phraseList") or []) + list(VOICE_PHRASE_LIST)
         # de-dupe (case-insensitively) while preserving order
         _seen: set[str] = set()
@@ -205,6 +220,12 @@ class VoiceSessionHandler:
             p for p in phrase_list
             if p and not (p.lower() in _seen or _seen.add(p.lower()))
         ]
+        if phrase_list and sr_model not in PHRASE_LIST_SUPPORTED_MODELS:
+            logger.info(
+                f"SR model {sr_model!r} does not support phrase_list; "
+                f"dropping {len(phrase_list)} phrase hint(s)"
+            )
+            phrase_list = []
         if phrase_list:
             logger.info(
                 f"Biasing recognition with {len(phrase_list)} phrase hint(s): "
