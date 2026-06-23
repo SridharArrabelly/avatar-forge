@@ -27,7 +27,6 @@ from ..config import (
     AGENT_NAME,
     AGENT_PROJECT_NAME,
     PROACTIVE_GREETING,
-    VOICE_PHRASE_LIST,
     VOICELIVE_API_VERSION,
 )
 from .builders import build_avatar_config, build_turn_detection, build_voice_config
@@ -35,17 +34,6 @@ from .catalog import get_meeting_catalog
 from .event_handlers import handle_event
 
 logger = logging.getLogger(__name__)
-
-
-# SR models that accept the `phrase_list` recognition-bias option. Voice Live
-# rejects the whole session.update if phrase_list is sent to any other model
-# (notably the web default "mai-transcribe-1"), so we only forward it for these.
-PHRASE_LIST_SUPPORTED_MODELS = frozenset({
-    "azure-speech",
-    "mai-transcribe",
-    "mai-transcribe-1.5",
-    "azure-fast-transcription",
-})
 
 
 # Override applied to the proactive opening response only.
@@ -206,35 +194,9 @@ class VoiceSessionHandler:
                 f"Normalized recognition language {recognition_language!r} -> "
                 f"{normalized_language!r} for SR model {sr_model!r}"
             )
-        # Phrase hints to bias recognition toward domain proper nouns/tickers the
-        # recognizer otherwise mis-hears (e.g. "MTN"). Merge any per-session list
-        # with the global VOICE_PHRASE_LIST (which includes the avatar's name).
-        # IMPORTANT: phrase_list is only accepted by certain SR models. Passing it
-        # to an unsupported model (e.g. the web default "mai-transcribe-1") makes
-        # Voice Live reject the whole session.update -> SESSION_UPDATED never
-        # arrives and the session times out. So gate it on the supported set.
-        phrase_list = list(config.get("phraseList") or []) + list(VOICE_PHRASE_LIST)
-        # de-dupe (case-insensitively) while preserving order
-        _seen: set[str] = set()
-        phrase_list = [
-            p for p in phrase_list
-            if p and not (p.lower() in _seen or _seen.add(p.lower()))
-        ]
-        if phrase_list and sr_model not in PHRASE_LIST_SUPPORTED_MODELS:
-            logger.info(
-                f"SR model {sr_model!r} does not support phrase_list; "
-                f"dropping {len(phrase_list)} phrase hint(s)"
-            )
-            phrase_list = []
-        if phrase_list:
-            logger.info(
-                f"Biasing recognition with {len(phrase_list)} phrase hint(s): "
-                f"{phrase_list}"
-            )
         input_audio_transcription = AudioInputTranscriptionOptions(
             model=sr_model,
             language=normalized_language,
-            phrase_list=phrase_list or None,
         )
 
         # Build noise/echo settings
