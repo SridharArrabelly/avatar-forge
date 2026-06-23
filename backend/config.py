@@ -131,6 +131,23 @@ ACS_REQUIRE_WAKE_PHRASE = os.getenv(
 # turn-taking). Only applies when ACS_REQUIRE_WAKE_PHRASE is True. 0 disables the
 # grace window (every turn then needs the wake phrase). Default 30s.
 ACS_FOLLOWUP_WINDOW_S = float(os.getenv("ACS_FOLLOWUP_WINDOW_S", "30"))
+# Phrase hints that bias speech recognition toward domain terms / proper nouns the
+# recognizer otherwise mis-hears (company names, tickers, the avatar's own name —
+# e.g. "MTN" being heard as "empty an"). Passed to Voice Live's
+# AudioInputTranscriptionOptions.phrase_list, so it applies to BOTH meeting legs
+# (browser joiner + Graph media bot) since they share one recognizer. The avatar's
+# brand name (AVATAR_DISPLAY_NAME) is included automatically; add more, comma- or
+# pipe-separated, via VOICE_PHRASE_LIST. Kept generic here — domain terms come from
+# the env, not source.
+VOICE_PHRASE_LIST = [
+    p.strip()
+    for p in (
+        os.getenv("AVATAR_DISPLAY_NAME", "").strip()
+        + ","
+        + os.getenv("VOICE_PHRASE_LIST", "").replace("|", ",")
+    ).split(",")
+    if p.strip()
+]
 # Seconds of inactivity before the participant leaves the call (0 disables).
 ACS_IDLE_TIMEOUT_S = float(os.getenv("ACS_IDLE_TIMEOUT_S", "0"))
 # Phase 2b Slice 2 (avatar face): when true, the browser joiner sends an outgoing

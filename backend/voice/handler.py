@@ -27,6 +27,7 @@ from ..config import (
     AGENT_NAME,
     AGENT_PROJECT_NAME,
     PROACTIVE_GREETING,
+    VOICE_PHRASE_LIST,
     VOICELIVE_API_VERSION,
 )
 from .builders import build_avatar_config, build_turn_detection, build_voice_config
@@ -194,9 +195,25 @@ class VoiceSessionHandler:
                 f"Normalized recognition language {recognition_language!r} -> "
                 f"{normalized_language!r} for SR model {sr_model!r}"
             )
+        # Phrase hints to bias recognition toward domain proper nouns/tickers the
+        # recognizer otherwise mis-hears (e.g. "MTN"). Merge any per-session list
+        # with the global VOICE_PHRASE_LIST (which includes the avatar's name).
+        phrase_list = list(config.get("phraseList") or []) + list(VOICE_PHRASE_LIST)
+        # de-dupe (case-insensitively) while preserving order
+        _seen: set[str] = set()
+        phrase_list = [
+            p for p in phrase_list
+            if p and not (p.lower() in _seen or _seen.add(p.lower()))
+        ]
+        if phrase_list:
+            logger.info(
+                f"Biasing recognition with {len(phrase_list)} phrase hint(s): "
+                f"{phrase_list}"
+            )
         input_audio_transcription = AudioInputTranscriptionOptions(
             model=sr_model,
             language=normalized_language,
+            phrase_list=phrase_list or None,
         )
 
         # Build noise/echo settings
