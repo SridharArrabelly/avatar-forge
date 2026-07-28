@@ -149,14 +149,30 @@ brand it "Nuru".
 |---|---|---|
 | `AVATAR_ENABLED` | `true` | Show the avatar at all. |
 | `AVATAR_OUTPUT_MODE` | `webrtc` | `webrtc` \| `websocket`. |
-| `IS_PHOTO_AVATAR` | `false` | Use a photo-realistic avatar (`PHOTO_AVATAR_NAME`). Mutually exclusive with custom. |
-| `IS_CUSTOM_AVATAR` | `false` | Use a custom avatar provisioned in your Speech resource (`CUSTOM_AVATAR_NAME`). Mutually exclusive with photo. |
+| `IS_PHOTO_AVATAR` | `false` | Render a photo-realistic avatar (`vasa-1`) instead of the standard video avatar. |
+| `IS_CUSTOM_AVATAR` | `false` | Use an avatar trained in your own Speech resource. A **modifier, not a separate type**: it combines with `IS_PHOTO_AVATAR` (see the combinations below). |
 | `AVATAR_NAME` | `Lisa-casual-sitting` | Standard avatar character (used when both flags are false). |
-| `CUSTOM_AVATAR_NAME` | — | Custom avatar **model** id; free-text, must match a model provisioned in your Speech resource. **Only valid when `IS_CUSTOM_AVATAR=true`** — pointing at a non-existent custom avatar breaks rendering. |
-| `PHOTO_AVATAR_NAME` | `Anika` | Photo-realistic character (used when `IS_PHOTO_AVATAR=true`). |
+| `CUSTOM_AVATAR_NAME` | — | Custom avatar **model** id; free-text, must match a model provisioned in your Speech resource. Used whenever `IS_CUSTOM_AVATAR=true` (custom video **or** custom photo); case is preserved and no style suffix is parsed. Pointing at a non-existent model breaks rendering. |
+| `PHOTO_AVATAR_NAME` | `Anika` | Prebuilt photo-realistic character. Used when `IS_PHOTO_AVATAR=true` and no custom name applies. |
 | `AVATAR_BACKGROUND_IMAGE_URL` | — | Optional background image behind the avatar. |
 | **`AVATAR_DISPLAY_NAME`** | — | **The single branding knob.** Sets the bold name shown top-left on the avatar stage **and** names the Teams bot. Purely cosmetic — does **not** select the avatar model. Unset: the bot uses `Avatar`; the stage label derives from the selected avatar model. |
 | `AVATAR_TAGLINE` | `Your Digital Assistant` | Italic tagline under the name in the stage identity lockup. Company-agnostic by default; set a branded value (e.g. `Your MTN Digital Assistant`) per deployment. Empty hides the tagline line. |
+
+### Avatar flag combinations
+
+`IS_PHOTO_AVATAR` and `IS_CUSTOM_AVATAR` are independent, so all four combinations are valid.
+
+| `IS_PHOTO_AVATAR` | `IS_CUSTOM_AVATAR` | Renders | Name taken from |
+|---|---|---|---|
+| `false` | `false` | Standard video avatar | `AVATAR_NAME` |
+| `false` | `true` | Custom video avatar | `CUSTOM_AVATAR_NAME` |
+| `true` | `false` | Prebuilt photo avatar (`vasa-1`) | `PHOTO_AVATAR_NAME` |
+| `true` | `true` | Custom photo avatar (`vasa-1` with `customized=true`) | `CUSTOM_AVATAR_NAME` |
+
+When `IS_CUSTOM_AVATAR=true` but `CUSTOM_AVATAR_NAME` is empty, the name falls back
+to `PHOTO_AVATAR_NAME` (photo mode) or `AVATAR_NAME` (video mode) instead of sending
+an empty character. That fallback only prevents a blank avatar; it does not select
+your custom model, so always set `CUSTOM_AVATAR_NAME` when you enable the flag.
 
 ---
 

@@ -392,7 +392,9 @@
                      contentArea (not the avatar stage) so it stays visible even
                      when the stage is hidden on disconnect. Clickable in the
                      "ended" state to restart the session. -->
-                <button id="stageStatus" class="stage-status hidden" type="button" aria-live="polite"></button>
+                <button id="stageStatus" class="stage-status hidden" type="button" title="Session status"></button>
+                <!-- Announcer for the pill above: a live region must stay in the a11y tree, and the pill itself is display:none between states. -->
+                <div id="stageStatusLive" class="sr-only" role="status" aria-live="polite"></div>
                 <!-- Avatar video (WebRTC) -->
                 <div id="avatarVideoContainer" class="avatar-container hidden">
                     <!-- Column sized to the avatar width: video on top, caption /

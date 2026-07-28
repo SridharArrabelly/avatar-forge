@@ -202,7 +202,11 @@ function applyServerDefaults(defaults) {
         if (el.type === 'checkbox') {
             el.checked = !!val;
         } else {
-            el.value = String(val);
+            const stringValue = String(val);
+            if (el.tagName === 'SELECT' && stringValue && !Array.from(el.options).some(option => option.value === stringValue)) {
+                el.add(new Option(stringValue, stringValue));
+            }
+            el.value = stringValue;
         }
         // Notify listeners (range displays, conditional fields).
         el.dispatchEvent(new Event('change', { bubbles: true }));
@@ -374,8 +378,9 @@ function updateAvatarScene() {
     if (!document.getElementById('avatarEnabled')?.checked) return;
 
     const isCustom = document.getElementById('isCustomAvatar')?.checked || false;
-    const avatarName = isCustom
-        ? document.getElementById('customAvatarName')?.value || ''
+    const customName = document.getElementById('customAvatarName')?.value || '';
+    const avatarName = (isCustom && customName)
+        ? customName
         : document.getElementById('photoAvatarName')?.value || 'Anika';
     const parts = avatarName.split('-');
     const character = parts[0].toLowerCase();
@@ -529,6 +534,14 @@ function gatherConfig() {
     const isPhotoAvatar = document.getElementById('isPhotoAvatar').checked;
     const isCustomAvatar = document.getElementById('isCustomAvatar').checked;
 
+    // Custom wins when named; an empty name falls through so it cannot blank the character.
+    const customAvatarName = document.getElementById('customAvatarName').value;
+    const selectedAvatarName = isCustomAvatar && customAvatarName
+        ? customAvatarName
+        : isPhotoAvatar
+            ? document.getElementById('photoAvatarName').value
+            : document.getElementById('avatarName').value;
+
     const voiceSpeed = parseFloat(document.getElementById('voiceSpeed').value) / 100;
 
     const config = {
@@ -543,11 +556,7 @@ function gatherConfig() {
         avatarEnabled: document.getElementById('avatarEnabled').checked,
         isPhotoAvatar: isPhotoAvatar,
         isCustomAvatar: isCustomAvatar,
-        avatarName: isCustomAvatar
-            ? document.getElementById('customAvatarName').value
-            : isPhotoAvatar
-                ? document.getElementById('photoAvatarName').value
-                : document.getElementById('avatarName').value,
+        avatarName: selectedAvatarName,
         avatarOutputMode: document.getElementById('avatarOutputMode').value,
         avatarBackgroundImageUrl: document.getElementById('avatarBackgroundImageUrl').value,
         useNS: document.getElementById('useNS').checked,
@@ -2358,6 +2367,7 @@ function toggleMicrophone() {
 function setConnectionState(state) {
     connectionState = state || null;
     const el = document.getElementById('stageStatus');
+    const live = document.getElementById('stageStatusLive');
     if (!el) return;
 
     const map = {
@@ -2373,11 +2383,13 @@ function setConnectionState(state) {
     if (!cfg || isDeveloperMode) {
         el.classList.add('hidden');
         el.classList.remove('clickable', 'warning', 'error');
+        if (live) live.textContent = '';
         el.onclick = null;
         return;
     }
 
     el.textContent = cfg.text;
+    if (live) live.textContent = cfg.text;
     el.classList.remove('warning', 'error', 'clickable');
     if (cfg.cls) el.classList.add(cfg.cls);
     el.classList.toggle('clickable', cfg.clickable);
