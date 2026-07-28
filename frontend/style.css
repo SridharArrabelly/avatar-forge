@@ -18,6 +18,8 @@
     --success: #22c55e;
     --success-dim: #22c55e15;
     --warning: #f59e0b;
+    /* For bubbles whose background is a fixed light tint in every theme. */
+    --text-on-tint: #0a0a0a;
     --radius: 8px;
     --radius-sm: 6px;
     --sidebar-width: 320px;
@@ -975,7 +977,7 @@ input[type="range"]::-webkit-slider-thumb {
 
 .message.user .message-content {
     background: #dbeafe;
-    color: var(--text-primary);
+    color: var(--text-on-tint);
     border-bottom-right-radius: 2px;
 }
 
@@ -987,7 +989,7 @@ input[type="range"]::-webkit-slider-thumb {
 
 .message.system .message-content {
     background: #fef08a;
-    color: var(--text-primary);
+    color: var(--text-on-tint);
     font-size: 14px;
     text-align: left;
     padding: 6px 12px;
@@ -1124,6 +1126,7 @@ input[type="range"]::-webkit-slider-thumb {
 
 /* Utility classes (no inline styles) */
 .hidden { display: none !important; }
+.sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; border: 0; }
 .flex-spacer { flex: 1; }
 .btn-faded { opacity: 0.5; }
 

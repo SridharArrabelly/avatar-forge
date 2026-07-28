@@ -2336,6 +2336,7 @@ function toggleMicrophone() {
 function setConnectionState(state) {
     connectionState = state || null;
     const el = document.getElementById('stageStatus');
+    const live = document.getElementById('stageStatusLive');
     if (!el) return;
 
     const map = {
@@ -2351,11 +2352,13 @@ function setConnectionState(state) {
     if (!cfg || isDeveloperMode) {
         el.classList.add('hidden');
         el.classList.remove('clickable', 'warning', 'error');
+        if (live) live.textContent = '';
         el.onclick = null;
         return;
     }
 
     el.textContent = cfg.text;
+    if (live) live.textContent = cfg.text;
     el.classList.remove('warning', 'error', 'clickable');
     if (cfg.cls) el.classList.add(cfg.cls);
     el.classList.toggle('clickable', cfg.clickable);
