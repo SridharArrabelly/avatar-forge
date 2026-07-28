@@ -372,8 +372,9 @@ function updateAvatarScene() {
     if (!document.getElementById('avatarEnabled')?.checked) return;
 
     const isCustom = document.getElementById('isCustomAvatar')?.checked || false;
-    const avatarName = isCustom
-        ? document.getElementById('customAvatarName')?.value || ''
+    const customName = document.getElementById('customAvatarName')?.value || '';
+    const avatarName = (isCustom && customName)
+        ? customName
         : document.getElementById('photoAvatarName')?.value || 'Anika';
     const parts = avatarName.split('-');
     const character = parts[0].toLowerCase();
@@ -527,6 +528,14 @@ function gatherConfig() {
     const isPhotoAvatar = document.getElementById('isPhotoAvatar').checked;
     const isCustomAvatar = document.getElementById('isCustomAvatar').checked;
 
+    // Custom wins when named; an empty name falls through so it cannot blank the character.
+    const customAvatarName = document.getElementById('customAvatarName').value;
+    const selectedAvatarName = isCustomAvatar && customAvatarName
+        ? customAvatarName
+        : isPhotoAvatar
+            ? document.getElementById('photoAvatarName').value
+            : document.getElementById('avatarName').value;
+
     const voiceSpeed = parseFloat(document.getElementById('voiceSpeed').value) / 100;
 
     const config = {
@@ -541,11 +550,7 @@ function gatherConfig() {
         avatarEnabled: document.getElementById('avatarEnabled').checked,
         isPhotoAvatar: isPhotoAvatar,
         isCustomAvatar: isCustomAvatar,
-        avatarName: isPhotoAvatar
-            ? document.getElementById('photoAvatarName').value
-            : isCustomAvatar
-                ? document.getElementById('customAvatarName').value
-                : document.getElementById('avatarName').value,
+        avatarName: selectedAvatarName,
         avatarOutputMode: document.getElementById('avatarOutputMode').value,
         avatarBackgroundImageUrl: document.getElementById('avatarBackgroundImageUrl').value,
         useNS: document.getElementById('useNS').checked,
