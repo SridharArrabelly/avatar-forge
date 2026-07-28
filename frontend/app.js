@@ -196,7 +196,11 @@ function applyServerDefaults(defaults) {
         if (el.type === 'checkbox') {
             el.checked = !!val;
         } else {
-            el.value = String(val);
+            const stringValue = String(val);
+            if (el.tagName === 'SELECT' && stringValue && !Array.from(el.options).some(option => option.value === stringValue)) {
+                el.add(new Option(stringValue, stringValue));
+            }
+            el.value = stringValue;
         }
         // Notify listeners (range displays, conditional fields).
         el.dispatchEvent(new Event('change', { bubbles: true }));
@@ -537,10 +541,10 @@ function gatherConfig() {
         avatarEnabled: document.getElementById('avatarEnabled').checked,
         isPhotoAvatar: isPhotoAvatar,
         isCustomAvatar: isCustomAvatar,
-        avatarName: isCustomAvatar
-            ? document.getElementById('customAvatarName').value
-            : isPhotoAvatar
-                ? document.getElementById('photoAvatarName').value
+        avatarName: isPhotoAvatar
+            ? document.getElementById('photoAvatarName').value
+            : isCustomAvatar
+                ? document.getElementById('customAvatarName').value
                 : document.getElementById('avatarName').value,
         avatarOutputMode: document.getElementById('avatarOutputMode').value,
         avatarBackgroundImageUrl: document.getElementById('avatarBackgroundImageUrl').value,
