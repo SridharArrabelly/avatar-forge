@@ -158,6 +158,13 @@ brand it "Nuru".
 | **`AVATAR_DISPLAY_NAME`** | — | **The single branding knob.** Sets the bold name shown top-left on the avatar stage **and** names the Teams bot. Purely cosmetic — does **not** select the avatar model. Unset: the bot uses `Avatar`; the stage label derives from the selected avatar model. |
 | `AVATAR_TAGLINE` | `Your Digital Assistant` | Italic tagline under the name in the stage identity lockup. Company-agnostic by default; set a branded value (e.g. `Your MTN Digital Assistant`) per deployment. Empty hides the tagline line. |
 
+> **Default vs. shipped default.** The Default column is the backend's fallback when
+> a variable is **unset**. The values Avatar Forge actually ships with are different:
+> both [`.env.example`](../.env.example) and the `azd` parameters
+> ([`infra/main.parameters.json`](../infra/main.parameters.json)) set
+> `IS_PHOTO_AVATAR=true` and `PHOTO_AVATAR_NAME=Simone`, so a stock local run or
+> deploy renders the **Simone photo avatar**, not `Lisa-casual-sitting`.
+
 ### Avatar flag combinations
 
 `IS_PHOTO_AVATAR` and `IS_CUSTOM_AVATAR` are independent, so all four combinations are valid.
