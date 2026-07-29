@@ -71,6 +71,8 @@ param meetingBotEnabled string = 'false'
 param acsAudioSampleRate string = ''
 @description('"true"/"false". In-call avatar only answers after a wake phrase.')
 param acsRequireWakePhrase string = ''
+@description('"true"/"false". In-call avatar sends an outgoing video tile (visible participant).')
+param acsAvatarVideoEnabled string = ''
 
 var acsEnabled = toLower(enableAcs) == 'true'
 
@@ -277,6 +279,7 @@ module app 'modules/containerApp.bicep' = {
     meetingBotEnabled: meetingBotEnabled
     acsAudioSampleRate: acsAudioSampleRate
     acsRequireWakePhrase: acsRequireWakePhrase
+    acsAvatarVideoEnabled: acsAvatarVideoEnabled
   }
 }
 

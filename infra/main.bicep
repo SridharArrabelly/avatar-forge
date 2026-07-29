@@ -92,6 +92,8 @@ param meetingBotEnabled string = 'false'
 param acsAudioSampleRate string = ''
 @description('"true"/"false". In-call avatar only answers after a wake phrase.')
 param acsRequireWakePhrase string = ''
+@description('"true"/"false". In-call avatar sends an outgoing video tile so it is a visible participant.')
+param acsAvatarVideoEnabled string = ''
 
 // ───────── Model deployment (used only when creating Foundry) ─────────
 param modelName string = 'gpt-5.4'
@@ -168,6 +170,7 @@ module resources 'resources.bicep' = {
     meetingBotEnabled: meetingBotEnabled
     acsAudioSampleRate: acsAudioSampleRate
     acsRequireWakePhrase: acsRequireWakePhrase
+    acsAvatarVideoEnabled: acsAvatarVideoEnabled
   }
 }
 

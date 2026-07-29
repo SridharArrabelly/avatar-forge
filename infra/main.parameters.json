@@ -56,6 +56,7 @@
     "acsDataLocation": { "value": "${ACS_DATA_LOCATION=United States}" },
     "meetingBotEnabled":   { "value": "${MEETING_BOT_ENABLED=false}" },
     "acsAudioSampleRate":  { "value": "${ACS_AUDIO_SAMPLE_RATE=}" },
-    "acsRequireWakePhrase":{ "value": "${ACS_REQUIRE_WAKE_PHRASE=}" }
+    "acsRequireWakePhrase":{ "value": "${ACS_REQUIRE_WAKE_PHRASE=}" },
+    "acsAvatarVideoEnabled":{ "value": "${ACS_AVATAR_VIDEO_ENABLED=}" }
   }
 }

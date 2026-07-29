@@ -62,6 +62,9 @@ param acsAudioSampleRate string = ''
 @description('"true"/"false" string. When "true", the in-call avatar only answers after a wake phrase so she never talks over humans.')
 param acsRequireWakePhrase string = ''
 
+@description('"true"/"false" string. When "true", the in-call avatar sends an outgoing video tile so it is a visible participant instead of a faceless audio leg.')
+param acsAvatarVideoEnabled string = ''
+
 @description('Placeholder image used on first provision; azd replaces it during `azd deploy`.')
 param containerImage string = 'mcr.microsoft.com/k8se/quickstart:latest'
 
@@ -82,7 +85,8 @@ var meetingBotOn = toLower(meetingBotEnabled) == 'true'
 var meetingBotEnv = concat(
   meetingBotOn ? [ { name: 'MEETING_BOT_ENABLED', value: 'true' } ] : [],
   !empty(acsAudioSampleRate) ? [ { name: 'ACS_AUDIO_SAMPLE_RATE', value: acsAudioSampleRate } ] : [],
-  !empty(acsRequireWakePhrase) ? [ { name: 'ACS_REQUIRE_WAKE_PHRASE', value: acsRequireWakePhrase } ] : []
+  !empty(acsRequireWakePhrase) ? [ { name: 'ACS_REQUIRE_WAKE_PHRASE', value: acsRequireWakePhrase } ] : [],
+  !empty(acsAvatarVideoEnabled) ? [ { name: 'ACS_AVATAR_VIDEO_ENABLED', value: acsAvatarVideoEnabled } ] : []
 )
 
 var botEnabled = !empty(botAppId)
