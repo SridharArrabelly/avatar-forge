@@ -227,10 +227,18 @@ var foundryEndpointEffective = createFoundry ? foundry!.outputs.accountEndpoint 
 var foundryProjectEndpointEffective = createFoundry ? foundry!.outputs.projectEndpoint : existingFoundryProjectEndpoint
 var searchEndpointEffective = createSearch ? search!.outputs.endpoint : 'https://${existingSearchServiceName}.search.windows.net/'
 
+// Container App names are capped at 32 characters, must not contain '--' and must end
+// in an alphanumeric. The 'ca-' prefix plus the 13-char resourceToken consume 17, so the
+// environment segment is truncated to the remaining budget (keeping the token, and thus
+// uniqueness, intact) and any trailing '-' left by that cut is removed.
+var caEnvBudget = 32 - length('${abbrs.containerApp}-') - length('-${resourceToken}')
+var caEnvSegment = take(environmentName, caEnvBudget)
+var caEnvSegmentClean = endsWith(caEnvSegment, '-') ? take(caEnvSegment, length(caEnvSegment) - 1) : caEnvSegment
+
 module app 'modules/containerApp.bicep' = {
   name: 'app'
   params: {
-    name: '${abbrs.containerApp}-${environmentName}-${resourceToken}'
+    name: toLower('${abbrs.containerApp}-${caEnvSegmentClean}-${resourceToken}')
     location: location
     tags: union(tags, { 'azd-service-name': 'web' })
     containerAppsEnvironmentId: containerAppsEnv.outputs.id
