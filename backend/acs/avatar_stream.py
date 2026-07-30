@@ -42,6 +42,9 @@ logger = logging.getLogger(__name__)
 # Sentinel pushed onto the feed queue to unblock the reader at shutdown.
 _EOF = object()
 
+# s16 mono — the only audio format this decoder emits.
+_BYTES_PER_SAMPLE = 2
+
 
 class _QueueReader(io.RawIOBase):
     """File-like adapter turning pushed byte chunks into a blocking read stream.
@@ -251,7 +254,14 @@ class AvatarStreamDecoder:
             return
         # PyAV >= 9 returns a list of frames; older returns one or None.
         for af in out if isinstance(out, list) else ([out] if out else []):
-            pcm = bytes(af.planes[0])
+            # Slice to af.samples: PyAV allocates plane buffers with alignment
+            # padding, so bytes(af.planes[0]) hands back ~64 samples of stale
+            # memory past the end of every chunk. Appending that junk put a
+            # step at each ~64 ms chunk boundary — an audible tick at the chunk
+            # rate — and inflated the stream by ~4%, so the voice drifted about
+            # a second behind the lip-sync over a single answer.
+            valid = af.samples * _BYTES_PER_SAMPLE
+            pcm = bytes(memoryview(af.planes[0])[:valid])
             if not pcm:
                 continue
             self.audio_frames += 1
