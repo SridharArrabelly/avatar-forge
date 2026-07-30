@@ -52,14 +52,16 @@ _ACTIVE_CALLS: set[str] = set()
 # waiting out `turnDetectionSilenceMs` of silence on EVERY question. Semantic
 # end-of-utterance detection lets it commit as soon as the sentence is complete,
 # which is the difference between a natural reply and one that lands a beat late.
-# The silence window stays as the fallback for trailing-off speech, trimmed to
-# 400ms; raise it again if people who pause mid-sentence get cut off.
+# The silence window is only the FALLBACK for speech that trails off without a
+# clean sentence boundary, so it is deliberately NOT overridden here — the call
+# inherits TURN_DETECTION_SILENCE_MS along with every other channel. Shaving it
+# buys ~100ms on the minority of turns where semantics do not fire, at the cost
+# of cutting off anyone who pauses mid-sentence. In a boardroom, people pause.
 _IN_CALL_CONFIG = {
     "avatarEnabled": False,
     "enableProactive": False,
     "turnDetectionType": "azure_semantic_vad",
     "eouDetectionType": "semantic_detection_v1",
-    "turnDetectionSilenceMs": 400,
     "enableBargeIn": True,
     "useEC": True,
     "useNS": True,
@@ -76,11 +78,15 @@ def _in_call_config(avatar_video: bool) -> dict:
     from the app's own UI defaults so the meeting face is the same avatar the web
     app shows — one source of truth, no separate knob to drift.
     """
+    defaults = get_ui_defaults()
     config = dict(_IN_CALL_CONFIG)
+    # Read per-session, not at import, so TURN_DETECTION_SILENCE_MS stays a live
+    # knob and the in-call turn boundary can never silently diverge from the web
+    # and Teams-tab channels.
+    config["turnDetectionSilenceMs"] = defaults.get("turnDetectionSilenceMs", 500)
     if not avatar_video:
         return config
 
-    defaults = get_ui_defaults()
     config.update(
         {
             "avatarEnabled": True,

@@ -130,7 +130,7 @@ Applied when `DEVELOPER_MODE=false`; each also has a matching control in develop
 | `USE_NOISE_SUPPRESSION` | `true` | Audio pre-processing. |
 | `USE_ECHO_CANCELLATION` | `true` | Audio pre-processing. |
 | `TURN_DETECTION_TYPE` | `azure_semantic_vad` | `server_vad` \| `azure_semantic_vad`. |
-| `TURN_DETECTION_SILENCE_MS` | `500` | Silence (ms) before the user's turn ends. Lower = snappier. |
+| `TURN_DETECTION_SILENCE_MS` | `500` | Silence (ms) before the user's turn ends. Applies to **every channel**, including in-call. With `EOU_DETECTION_TYPE` on, this is only the fallback for speech that trails off without a clean sentence boundary — lowering it is snappier but cuts off people who pause mid-sentence. |
 | `ENABLE_BARGE_IN` | `true` | Let the user interrupt the avatar by speaking. Drives both client and server (`interrupt_response`) — keep in sync. |
 | `REMOVE_FILLER_WORDS` | `true` | VAD ignores "um"/"uh"/… so small noises don't cancel a reply. |
 | `EOU_DETECTION_TYPE` | `semantic_detection_v1` | `none` \| `semantic_detection_v1` \| `semantic_detection_v1_multilingual`. |
