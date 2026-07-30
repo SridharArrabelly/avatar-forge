@@ -53,28 +53,36 @@ bot and play them out together.
 
 ## 3. End-to-end data flow
 
+```mermaid
+flowchart LR
+    MT["<b>Teams meeting</b><br/><i>in:</i> participants speak<br/><i>out:</i> the avatar's voice + camera tile"]
+
+    subgraph NET[".NET meeting bot · Microsoft.Skype.Bots.Media"]
+        direction TB
+        AS["AudioSocket"]
+        VS["VideoSocket<br/><b>← Slice 2A</b>"]
+    end
+
+    subgraph PY["Python backend — the unchanged brain"]
+        direction TB
+        BR["AcsVoiceBridge"]
+        VH["VoiceSessionHandler"]
+        DEC["avatar_stream<br/>fMP4 demux → H.264 decode → NV12<br/><b>← Slice 2A</b>"]
+        BR --- VH
+        BR --- DEC
+    end
+
+    VL["Azure Voice Live<br/><b>ONE session</b> — audio and video<br/><i>from the SAME synthesis</i>"]
+    FA["Foundry agent<br/>AI Search RAG + Bing news"]
+
+    MT <== "mixed room audio in<br/>voice + camera tile out" ==> NET
+    AS <-- "wss · AudioMetadata + AudioData(PCM16)<br/>both directions, + StopAudio for barge-in" --> BR
+    VS <-- "wss · VideoData<br/>NV12 frames<br/><b>← Slice 2A</b>" --> DEC
+    VH <-- "RESPONSE_AUDIO_DELTA<br/>response.video.delta · fMP4 / H.264" --> VL
+    VL <--> FA
 ```
-        ┌──────────────────────── Teams meeting ────────────────────────┐
-        │  participants speak ───────────────►  Nuru (bot) camera tile   │
-        └──────▲──────────────────────────────────────────────┬─────────┘
-               │ MIXED room audio (NV/PCM16)                   │ NV12 video + PCM16 audio
-               │                                               │  (Nuru's camera + voice)
-   ┌───────────┴───────────────────────────────────────────────▼──────────────┐
-   │  .NET meeting bot  (Windows host, Microsoft.Skype.Bots.Media)             │
-   │   AudioSocket  ── inbound PCM16 ─► bridge        bridge ─► AudioSocket.Send│
-   │   VideoSocket  ◄───────────────────────────────  bridge ─► VideoSocket.Send│ ← Slice 2A
-   └───────────┬───────────────────────────────────────────────▲──────────────┘
-               │  wss://…/ws/acs/audio  (VoiceLiveBridgeClient ⇄ BrowserVoiceBridge)
-               │  up:  AudioMetadata, AudioData(PCM16, silent)
-               │  down: AudioData(PCM16)  +  VideoData(NV12,w,h)  ← Slice 2A   +  StopAudio
-   ┌───────────▼───────────────────────────────────────────────────────────────┐
-   │  Python backend (unchanged brain)                                          │
-   │   AcsVoiceBridge ─► VoiceSessionHandler ─► Azure Voice Live (one session)   │
-   │                                              │  Foundry agent (RAG + Bing)  │
-   │   answer audio  ◄── RESPONSE_AUDIO_DELTA ─────┤                             │
-   │   avatar video  ◄── response.video.delta ─────┘  (H264) → decode → NV12 ───►│ ← Slice 2A
-   └────────────────────────────────────────────────────────────────────────────┘
-```
+
+Both seam arrows are the **same socket**, `wss://…/ws/acs/audio`.
 
 The **only** new arrows are the two marked *Slice 2A*: the avatar video produced by the
 same Voice Live session, decoded to NV12 in Python, sent down the existing bridge socket

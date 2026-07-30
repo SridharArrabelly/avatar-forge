@@ -32,14 +32,33 @@ Azure Web App / Linux Container App. You may *edit* the C# anywhere; you must
 
 ## Architecture
 
-```
-Teams meeting ──mixed audio──▶ [Skype.Bots.Media AudioSocket]
-                                        │ PCM16 16 kHz
-                                        ▼
-                               [VoiceLiveBridgeClient]  ──WSS──▶  Python /ws/acs/audio
-                                        ▲                          (AcsVoiceBridge ▸ VoiceSessionHandler
-                                        │ PCM16 (Nuru's answer)     ▸ Voice Live ▸ Foundry RAG+news)
-                               [AudioSocket.Send] ──audio──▶ Teams meeting
+```mermaid
+flowchart LR
+    MT["<b>Teams meeting</b><br/><i>in:</i> mixed room audio<br/><i>out:</i> the avatar's answer + camera tile"]
+
+    subgraph NET[".NET bot on a Windows host · a media pump, no answering logic"]
+        direction TB
+        AS["Skype.Bots.Media<br/>AudioSocket"]
+        VS["Skype.Bots.Media<br/>VideoSocket"]
+        CL["VoiceLiveBridgeClient"]
+        AS --- CL
+        VS --- CL
+    end
+
+    subgraph PY["Python — /ws/acs/audio <i>(already built)</i>"]
+        direction TB
+        BR["AcsVoiceBridge"]
+        VH["VoiceSessionHandler"]
+        DEC["avatar_stream<br/>fMP4 → NV12"]
+        BR --- VH
+        BR --- DEC
+    end
+
+    CORE["Azure Voice Live<br/>+ Foundry agent (RAG + news)"]
+
+    MT <== "mixed audio in<br/>voice + lip-synced tile out" ==> NET
+    CL <-- "wss · AudioMetadata + AudioData(PCM16 16 kHz) up<br/>AudioData + StopAudio (barge-in) + VideoData(NV12) down" --> BR
+    VH <--> CORE
 ```
 
 The seam is the **already-built** `/ws/acs/audio` endpoint. The bot just speaks its

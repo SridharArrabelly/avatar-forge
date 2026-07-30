@@ -10,7 +10,36 @@ Requires: [channel A](a-web.md) deployed.
 
 ---
 
-## 1. What you get
+## 1. How it works
+
+Teams renders **the same page as channel A** in an iframe. That is the entire
+channel — which is why it adds a Teams surface for **zero extra Azure resources**.
+The app package is just a manifest telling Teams which URL to frame.
+
+```mermaid
+flowchart LR
+    U(["User in Teams"])
+
+    PKG["Teams app package<br/>manifest.json + icons<br/><i>uploaded by a person</i>"]
+
+    subgraph T["Microsoft Teams client"]
+        TAB["Personal tab (iframe)<br/><b>the SAME frontend as channel A</b><br/>+ Teams JS SDK"]
+    end
+
+    APP["FastAPI backend<br/><i>Azure Container Apps</i><br/><b>unchanged from channel A</b>"]
+    CORE["Azure Voice Live + Foundry agent"]
+
+    U --> TAB
+    PKG -. "declares contentUrl<br/>→ your existing app URL" .-> TAB
+    TAB <== "PCM16 over WSS<br/>+ avatar video" ==> APP
+    APP <--> CORE
+```
+
+The Teams JS SDK is loaded **only** when running inside Teams, so channel A is
+unaffected. Nothing new is provisioned in Azure — the only new artefact is the
+`.zip` someone uploads.
+
+## 2. What you get
 
 The avatar available inside Teams, using the Teams client's own microphone and
 speaker. Same voice, same grounding, same agent — no second deployment.
@@ -18,7 +47,7 @@ speaker. Same voice, same grounding, same agent — no second deployment.
 The Teams JS SDK is only loaded when running inside Teams, so the standalone web
 app is completely unaffected.
 
-## 2. What deploys
+## 3. What deploys
 
 **No Azure resources.** Only a Teams app package:
 
@@ -32,7 +61,7 @@ your deployed URL and IDs, and produces an installable `.zip`.
 If `AVATAR_DISPLAY_NAME` is set, it names the tab and bot — the single branding
 knob. See [`../configuration.md`](../configuration.md).
 
-## 3. Manual / admin steps
+## 4. Manual / admin steps
 
 | Step | Who | If blocked |
 | --- | --- | --- |
@@ -44,7 +73,7 @@ knob. See [`../configuration.md`](../configuration.md).
 recommended stopping point when admin access is limited. Full detail:
 [`../admin-checklist.md`](../admin-checklist.md).
 
-## 4. How to verify
+## 5. How to verify
 
 1. In Teams → **Apps → Manage your apps → Upload a custom app** → select the zip
 2. Open the app; the avatar stage should load
@@ -54,7 +83,7 @@ The on-stage text composer is **always hidden inside Teams** by design (the tab
 is voice-first). That is expected behaviour, not a fault — see `ENABLE_TEXT_INPUT`
 in [`../configuration.md`](../configuration.md).
 
-## 5. Cost & teardown
+## 6. Cost & teardown
 
 **No incremental cost** — it reuses channel A's deployment entirely.
 

@@ -358,30 +358,53 @@ pipeline → (3) keep the browser path (`/acs-join.html`) as the interim/fallbac
 
 ---
 
-ACS Call Automation has **no "join a Teams meeting by URL" API**. So the join happens in
-**two steps**:
+ACS Call Automation has **no "join a Teams meeting by URL" API**, so the browser does the
+joining. Note what changed since this was first written: the original design also had the
+*server* attach to the call with `connect_call(...)` media streaming — that path is
+**superseded**. Live testing proved ACS server-side media streaming does **not** deliver
+audio from a Teams *meeting* (7,500+ inbound frames, every one silent). The code is still
+in the tree but is unused by the meeting joiner. **All media for this path is browser-side:**
 
-1. **Browser joins the meeting** — `/acs-join.html` loads the **ACS Calling Web SDK**
-   (from a CDN — no Node toolchain is added to the server) and joins the meeting as an
-   **anonymous interop guest**. Anonymous join is governed by the **meeting lobby**, so it
-   needs **no Teams-admin consent**. This yields a `ServerCallId`.
-2. **Server attaches the voice bridge** — the page posts the `ServerCallId` to
-   `POST /api/acs/call`; the FastAPI server calls ACS `connect_call(...)` with
-   **bidirectional audio media streaming** (MIXED — the whole-room mix) over a WebSocket
-   the server hosts (`/ws/acs/audio`). That socket is bridged to the existing Voice Live
-   session (`AcsVoiceBridge` ↔ `VoiceSessionHandler`): meeting audio → Voice Live →
-   Foundry agent → spoken answer back into the call.
+1. **Browser joins the meeting** — `/acs-join.html` loads the vendored **ACS Calling Web
+   SDK** (no Node toolchain on the server) and joins as an **anonymous interop guest**.
+   Anonymous join is governed by the **meeting lobby**, so it needs **no Teams-admin
+   consent**.
+2. **Browser carries the media** — it captures the local microphone, streams PCM16 at
+   24 kHz over **`/ws/acs/browser`** to `BrowserVoiceBridge`, and plays the answer back
+   into the call through a custom `LocalAudioStream`. The avatar's face arrives as fMP4
+   over the same socket and is painted onto a canvas published as `LocalVideoStream`.
 
+```mermaid
+flowchart LR
+    MT["<b>Teams meeting</b><br/><i>the operator is in the room</i>"]
+
+    subgraph BR["Browser — /acs-join.html"]
+        direction TB
+        SDK["ACS Calling Web SDK<br/><i>anonymous interop guest</i>"]
+        MIC["getUserMedia<br/><b>local mic only</b>"]
+        OUT["LocalAudioStream + LocalVideoStream<br/><i>the call's outgoing A/V</i>"]
+    end
+
+    subgraph PY["Python backend"]
+        direction TB
+        WSB["/ws/acs/browser<br/>BrowserVoiceBridge"]
+        VH["VoiceSessionHandler"]
+        WSB --- VH
+    end
+
+    CORE["Azure Voice Live + Foundry agent"]
+
+    MT <== "join by link (lobby applies)<br/>voice + camera tile out" ==> SDK
+    MT -. "heard only via the operator's speaker" .-> MIC
+    MIC <-- "PCM16 24 kHz up over wss<br/>answer PCM16 + avatar fMP4 down" --> WSB
+    OUT --- SDK
+    VH <--> CORE
 ```
-Teams meeting ──(anonymous join, lobby)──► ACS Calling Web SDK (browser /acs-join.html)
-                                                  │ ServerCallId
-                                                  ▼
-                                    POST /api/acs/call → connect_call(media_streaming)
-                                                  │
-              wss://…/ws/acs/audio  ◄────────────┘   (16-bit PCM mono, 24 kHz, MIXED)
-                      │
-              AcsVoiceBridge ◄──► VoiceSessionHandler ◄──► Voice Live + Foundry agent
-```
+
+> **The limitation this diagram makes obvious.** The only audio source is the operator's
+> own microphone, so on a headset the avatar hears **only the operator** — Teams client
+> isolation means a browser can never tap other participants' streams. Hearing the whole
+> room needs the Graph media bot: [`docs/channels/d-in-call-media-bot.md`](../docs/channels/d-in-call-media-bot.md).
 
 ## Acceptance criteria → mechanism
 

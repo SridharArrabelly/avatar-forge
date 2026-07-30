@@ -8,13 +8,42 @@ is the only channel that needs no administrator involvement at all.
 
 ---
 
-## 1. What you get
+## 1. How it works
+
+The browser does **only** audio I/O and video rendering. Every Voice Live SDK call
+runs server-side. The one thing worth noticing: the avatar's **video never transits
+the backend** — it is a direct WebRTC peer connection to Azure, negotiated through
+the server.
+
+```mermaid
+flowchart LR
+    U(["User<br/><i>speaks · listens · watches</i>"])
+
+    subgraph BR["Browser — frontend/"]
+        direction TB
+        MIC["Mic capture → PCM16"]
+        PLAY["Audio playback +<br/>avatar video render"]
+    end
+
+    APP["FastAPI backend<br/><i>Azure Container Apps</i><br/>owns the Voice Live session"]
+    CORE["Azure Voice Live + Foundry agent<br/>AI Search corpus · Bing news"]
+
+    U <--> BR
+    BR <== "PCM16 over WSS<br/>question up · answer down" ==> APP
+    APP <--> CORE
+    CORE -. "avatar video · WebRTC peer-to-peer<br/><b>never transits the backend</b>" .-> PLAY
+```
+
+No Teams, no bot, no meeting: the whole channel is the browser, the container app,
+and the two Azure services behind it. Internals: [`../architecture.md`](../architecture.md).
+
+## 2. What you get
 
 A browser page where the user speaks, the avatar listens, and it answers aloud
 with a lip-synced face — grounded in meeting minutes (AI Search) and curated news
 (Bing Custom Search) through the Foundry agent.
 
-## 2. What deploys
+## 3. What deploys
 
 The default `azd up`, with **no flags set**:
 
@@ -37,7 +66,7 @@ azd up
 Configuration reference: [`../configuration.md`](../configuration.md).
 Deployment mechanics: [`../deployment.md`](../deployment.md).
 
-## 3. Manual / admin steps
+## 4. Manual / admin steps
 
 | Step | Who |
 | --- | --- |
@@ -49,7 +78,7 @@ Deployment mechanics: [`../deployment.md`](../deployment.md).
 **No Entra admin. No Teams admin.** See
 [`../admin-checklist.md`](../admin-checklist.md).
 
-## 4. How to verify
+## 5. How to verify
 
 ```powershell
 # the app answers
@@ -63,7 +92,7 @@ hear a spoken answer with a moving face.
 If the avatar appears but never answers, check
 [`../auth.md`](../auth.md) — the agent path requires Entra ID, not an API key.
 
-## 5. Cost & teardown
+## 6. Cost & teardown
 
 The container app scales to a low floor but the Foundry and Search resources bill
 continuously. To stop paying entirely:

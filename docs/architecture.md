@@ -7,16 +7,37 @@ for deploying it see [deployment.md](deployment.md).
 
 ## System overview
 
-```
-┌─────────────────────────┐         ┌─────────────────────────────┐         ┌──────────────────┐         ┌──────────────────────────────┐
-│    Browser (Frontend)   │◄──WS───►│   Python Server (FastAPI)   │◄──SDK──►│ Azure Voice Live │◄───────►│    Foundry Agent Service     │
-│                         │         │                             │         │     Service      │ agent_  │     (your Foundry agent)     │
-│  • Audio capture (mic)  │         │  • Session management       │         └──────────────────┘ config  │  • Instructions (variant)    │
-│  • Audio playback       │         │  • Voice Live SDK calls     │                                       │  • gpt-5.4 deployment        │
-│  • Avatar video         │◄─WebRTC (peer-to-peer video)──────────────────────────────┘                  │  • Azure AI Search tool      │
-│  • Settings / chat UI   │         │  • Event relay              │                                      │  • Grounding w/ Bing Custom  │
-│  • Teams tab + bot       │         │  • Meeting catalogue inject │                                      └──────────────────────────────┘
-└─────────────────────────┘         └─────────────────────────────┘
+The channel-level view ("one brain, several front doors") is in the
+[root README](../README.md#architecture); each channel's own edge diagram is on its
+[channel page](channels/README.md). This page is the **inside of the brain** — the part
+every channel shares.
+
+```mermaid
+flowchart LR
+    EDGE["<b>Channel edge</b><br/>browser · Teams tab · media bot<br/><i>mic capture · audio playback · video render</i>"]
+
+    subgraph Server["Python backend — FastAPI on Azure Container Apps"]
+        direction TB
+        WS["WebSocket endpoints<br/>/ws · /ws/acs/audio · /ws/acs/browser"]
+        H["VoiceSessionHandler<br/>one Voice Live session per call"]
+        EV["Event relay<br/>+ meeting-catalogue injection"]
+        BOT["POST /api/messages<br/>Teams chat bot · text only"]
+        WS --- H
+        H --- EV
+    end
+
+    VLS["Azure Voice Live<br/>STT · TTS · avatar synthesis"]
+    AGENT["Foundry agent<br/>instructions · gpt-5.4 · tool routing"]
+    SEARCH["Azure AI Search<br/>document corpus"]
+    NEWS["Grounding with<br/>Bing Custom Search"]
+
+    EDGE <== "PCM16 over WSS<br/>question up · answer down" ==> WS
+    EDGE <-. "avatar video · WebRTC peer-to-peer<br/><b>never transits the server</b>" .-> VLS
+    H <-- "Voice Live SDK<br/><b>server-side only</b>" --> VLS
+    VLS -- "agent_config" --> AGENT
+    BOT -- "text" --> AGENT
+    AGENT --> SEARCH
+    AGENT --> NEWS
 ```
 
 **Key design.** The Python backend is a bridge between the browser and the Azure
@@ -137,7 +158,7 @@ Everything the end user sees is anchored to the avatar:
   mic, always visible while the avatar is on screen: greyed when idle, red and
   actionable while the avatar speaks. Tapping it truncates the avatar mid-answer via
   the same interrupt path as voice barge-in (`response.cancel()` **and**
-  `output_audio_buffer.clear()` server-side — see [below](#interrupt-truncation)).
+  `output_audio_buffer.clear()` server-side — see [below](#interrupt-and-truncation)).
 - **Thinking indicator** — shows between the user's turn and the avatar's first
   words, with rotating captions and a failsafe timeout.
 - **Connection & permission states** — a status pill (and toasts) surface connecting,
@@ -159,7 +180,7 @@ The UI is themeable via CSS custom properties and ships a **dark variant** follo
 the OS `prefers-color-scheme` (with an `applyTheme(light|dark|system)` hook); all
 animations respect `prefers-reduced-motion`.
 
-### Interrupt / truncation
+### Interrupt and truncation
 
 Voice barge-in works because the server VAD config in
 [`backend/voice/builders.py`](../backend/voice/builders.py) (`interrupt_response`,
@@ -188,14 +209,15 @@ avatar-forge/
 │   │   ├── catalog.py             # Meeting catalogue fetch from AI Search (injected at session start)
 │   │   ├── functions.py           # Built-in tool implementations (get_time, get_weather, calculate)
 │   │   └── auth.py                # DefaultAzureCredential + caching wrapper
-│   └── bot/                       # Teams conversational bot (Phase 2a)
-│       ├── app.py                 # M365 Agents SDK app + POST /api/messages route
-│       ├── agent_runtime.py       # Foundry-agent bridge (reuses the voice agent)
-│       └── cards.py               # Adaptive Card + deep link back to the tab
+│   ├── bot/                       # Teams conversational bot (Phase 2a)
+│   │   ├── app.py                 # M365 Agents SDK app + POST /api/messages route
+│   │   ├── agent_runtime.py       # Foundry-agent bridge (reuses the voice agent)
+│   │   └── cards.py               # Adaptive Card + deep link back to the tab
 │   └── acs/                       # In-call audio participant (Phase 2b, issue #27; opt-in)
 │       ├── client.py              # ACS Call Automation + Identity clients, connect_call, media options
-│       ├── bridge.py              # AcsVoiceBridge: ACS media WS <-> VoiceSessionHandler
-│       └── routes.py              # /api/acs/{config,status,token,call,callback} + /ws/acs/audio
+│       ├── bridge.py              # AcsVoiceBridge / BrowserVoiceBridge <-> VoiceSessionHandler
+│       ├── avatar_stream.py       # fMP4 demux + H.264 decode -> NV12 frames for the media bot
+│       └── routes.py              # /api/acs/{config,status,token,call,callback} + /ws/acs/{audio,browser}
 │
 ├── frontend/                      # Static client assets (served at /)
 │   ├── index.html                 # Avatar stage: video, identity lockup, composer, stop, mic, captions

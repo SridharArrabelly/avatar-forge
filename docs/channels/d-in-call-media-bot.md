@@ -18,7 +18,57 @@ must come from one synthesis).
 
 ---
 
-## 1. What you get
+## 1. How it works
+
+Teams ⇄ **.NET media relay on a Windows VM** ⇄ WebSocket ⇄ **Python brain on ACA**
+⇄ Voice Live + Foundry agent. The .NET side contains **no answering logic** — it is
+a media pump.
+
+Why the split: `Microsoft.Graph.Communications.Calls.Media` carries a native Windows
+media stack, so it **must** run on a Windows Server guest OS. The brain stays in
+Python where the rest of the product lives, and the seam between them is plain
+PCM/NV12 over a WebSocket.
+
+```mermaid
+flowchart LR
+    MT["<b>Microsoft Teams meeting</b><br/>participants + the avatar's camera tile"]
+
+    subgraph VM["Windows VM · .NET media relay, no answering logic"]
+        direction TB
+        SIG["Graph Calling SDK<br/>join + signalling · :9441"]
+        MED["Skype.Bots.Media<br/>Audio + Video sockets · :8445"]
+        SIG --- MED
+    end
+
+    subgraph ACA["Azure Container Apps — the Python brain"]
+        direction TB
+        WSA["/ws/acs/audio<br/>AcsVoiceBridge"]
+        WSB["/ws/acs/browser<br/>BrowserVoiceBridge"]
+        VH["VoiceSessionHandler"]
+        DEC["avatar_stream<br/>fMP4 → NV12 (PyAV)"]
+        WSA --- VH
+        WSB --- VH
+        VH --- DEC
+    end
+
+    CORE["Azure Voice Live<br/>+ Foundry agent<br/>AI Search · Bing news"]
+
+    MT <== "mixed room audio up<br/>voice + camera tile down" ==> MED
+    MED <-- "wss · PCM16 up<br/>PCM16 + NV12 down" --> WSA
+    VH <--> CORE
+
+    BRJ["<b>Browser joiner</b> — acs-join.html<br/><i>fallback: no VM, no Teams policy</i><br/><b>hears only the operator's mic</b>"]
+    MT -. "operator's mic only" .-> BRJ
+    BRJ <-. "wss · PCM16 + fMP4" .-> WSB
+```
+
+The two paths differ **only at the edge** — both end at the same
+`VoiceSessionHandler`, so turn-taking, barge-in and grounding behave identically.
+The design records explain the decisions:
+[d-design-media-bot.md](d-design-media-bot.md) and
+[d-design-avatar-video.md](d-design-avatar-video.md).
+
+## 2. What you get
 
 Two join paths, sharing one brain:
 
@@ -30,15 +80,7 @@ Two join paths, sharing one brain:
 The media bot is the definition of done. The browser joiner is a genuinely useful
 fallback when the admin path is blocked — it ships value with no VM at all.
 
-**Architecture in one line:** Teams ⇄ .NET media bot on a Windows VM ⇄ WebSocket
-⇄ Python backend on ACA ⇄ Voice Live + Foundry agent. The .NET side contains **no
-answering logic**; it is a media relay.
-
-Why the split: `Microsoft.Graph.Communications.Calls.Media` carries a native
-Windows media stack, so it **must** run on a Windows Server guest OS. The brain
-stays in Python where the rest of the product lives.
-
-## 2. What deploys
+## 3. What deploys
 
 **One deployment.** The container side and the Windows host both come from `azd up`
 when the `in-call` profile is selected:
@@ -77,7 +119,7 @@ rather than a failure partway through provisioning.
 
 Independent of `ENABLE_ACS` — the media bot does not require an ACS resource.
 
-## 3. Manual / admin steps
+## 4. Manual / admin steps
 
 Summary; the authoritative list with "who must do it" is in
 [`../admin-checklist.md`](../admin-checklist.md).
@@ -96,7 +138,7 @@ rebuilds. Worth saying when you ask.
 
 The bot needs **no Teams license** in the tenant.
 
-## 4. How to verify
+## 5. How to verify
 
 ```powershell
 # host is up
@@ -131,7 +173,7 @@ the port-8445 restart race, and the single assumption (that the Voice Live avata
 stream is *continuous*, so idle means digital silence rather than no data) that
 caused four separate defects.
 
-## 5. Cost & teardown
+## 6. Cost & teardown
 
 **The VM runs about $140/month** and is by far the dominant cost of this channel.
 It does not scale to zero.

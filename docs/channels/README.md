@@ -47,6 +47,28 @@ comparison in [e-in-call-headless.md](e-in-call-headless.md#comparison) and keep
 one. They are numbered separately only so each can be documented and deployed
 independently while the comparison is open.
 
+```mermaid
+flowchart LR
+    subgraph Ladder["The ladder — each step builds on the last"]
+        direction LR
+        A["<b>A</b> · Web<br/>admin: <b>none</b>"]
+        B["<b>B</b> · Teams personal tab<br/>admin: upload a package<br/><i>zero new Azure resources</i>"]
+        C["<b>C</b> · Teams chat bot<br/>admin: Entra consent"]
+        A --> B --> C
+    end
+
+    subgraph Rivals["Live in-call presence — pick ONE, then retire the other"]
+        direction LR
+        D["<b>D</b> · Graph media bot<br/>Windows VM · <b>built &amp; working</b><br/>admin: <b>Teams access policy</b>"]
+        E["<b>E</b> · Headless browser<br/><i>placeholder</i><br/>admin: TBD"]
+    end
+
+    A -- "in-call needs A deployed<br/><i>(but not B or C)</i>" --> Rivals
+```
+
+Note what the arrow into the rivals box starts from: **A**, not C. In-call presence
+needs the backend, not the chat bot — you can deploy D without ever installing C.
+
 ---
 
 ## Pick your path
@@ -104,15 +126,40 @@ Deployment mechanics: [`../deployment.md`](../deployment.md).
 
 ---
 
-## Every channel page has the same five sections
+## Every channel page has the same six sections
 
 So you can compare them without re-reading prose:
 
-1. **What you get** — the user-visible capability
-2. **What deploys** — resources and flags
-3. **Manual / admin steps** — what automation *cannot* do, and who must do it
-4. **How to verify** — the exact commands that prove it works
-5. **Cost & teardown** — what it costs to leave running, and how to stop paying
+1. **How it works** — an architecture diagram of *that channel's edge*, and why it
+   is shaped that way
+2. **What you get** — the user-visible capability
+3. **What deploys** — resources and flags
+4. **Manual / admin steps** — what automation *cannot* do, and who must do it
+5. **How to verify** — the exact commands that prove it works
+6. **Cost & teardown** — what it costs to leave running, and how to stop paying
+
+*(Channel E is a placeholder and does not follow the contract yet — it has a
+proposed architecture and pre-registered comparison criteria instead.)*
+
+### Where architecture lives, and why it is split three ways
+
+A reasonable question is whether each channel should carry its own full design and
+architecture. It should not — because **all five channels share one core**, and five
+copies of the same Voice Live/Foundry pipeline would drift apart within a month. So
+the split is by *what changes*:
+
+| Tier | Answers | Lives in | Scope |
+| --- | --- | --- | --- |
+| **Core architecture** | How does answering work? | [`../architecture.md`](../architecture.md) | Written **once**. Shared by every channel. |
+| **Channel edge** | How does traffic get in and out *for this channel*? | §1 of each channel page | The **delta only** — the core is a single node in the diagram. |
+| **Design record** | *Why* is it this shape, and what was rejected? | `*-design-*.md` | Only where a real decision was made. |
+
+That last row is deliberate: **A, B and C have no design records and should not get
+one.** Nothing was decided — B is the web app in an iframe, C is the Bot Framework
+doing what the Bot Framework does. Writing "design documents" for them would be
+ceremony, and ceremony is what makes people stop reading documentation. D has two
+records because D had two genuinely hard decisions (the .NET/Windows split, and
+audio/video from one synthesis). E will earn one when it is built.
 
 ---
 

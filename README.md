@@ -9,22 +9,49 @@ browser only handles audio I/O and avatar video.
 
 ## Architecture
 
-```
-┌─────────────────────────┐         ┌─────────────────────────────┐         ┌──────────────────┐         ┌──────────────────────────────┐
-│    Browser (Frontend)   │◄──WS───►│   Python Server (FastAPI)   │◄──SDK──►│ Azure Voice Live │◄───────►│    Foundry Agent Service     │
-│                         │         │                             │         │     Service      │ agent_  │     (your Foundry agent)     │
-│  • Audio capture (mic)  │         │  • Session management       │         └──────────────────┘ config  │  • Instructions (variant)    │
-│  • Audio playback       │         │  • Voice Live SDK calls     │                                       │  • gpt-5.4 deployment        │
-│  • Avatar video         │◄─WebRTC (peer-to-peer video)──────────────────────────────┘                  │  • Azure AI Search tool      │
-│  • Settings / chat UI   │         │  • Event relay              │                                      │  • Grounding w/ Bing Custom  │
-│  • Teams tab + bot       │         │  • Meeting catalogue inject │                                      └──────────────────────────────┘
-└─────────────────────────┘         └─────────────────────────────┘
+**One brain, several front doors.** Every channel shares the same backend, Voice Live
+session, Foundry agent and grounding — only the edge differs.
+
+```mermaid
+flowchart LR
+    subgraph Doors["Front doors — how people reach the avatar"]
+        direction TB
+        A["<b>A</b> · Web browser"]
+        B["<b>B</b> · Teams personal tab"]
+        C["<b>C</b> · Teams chat bot"]
+        D["<b>D</b> · In-call media bot"]
+        E["<b>E</b> · In-call headless"]
+    end
+
+    subgraph Brain["One brain — Python / FastAPI on Azure Container Apps"]
+        direction TB
+        API["Session + media bridge"]
+        VL["Azure Voice Live<br/>speech in · speech out · avatar"]
+        AG["Foundry agent<br/>prompt · model · tool routing"]
+        API <--> VL
+        VL <--> AG
+    end
+
+    subgraph Ground["Grounding — where the answers come from"]
+        direction TB
+        S["Azure AI Search<br/>your document corpus"]
+        N["Bing Custom Search<br/>curated news domains"]
+    end
+
+    A --> API
+    B --> API
+    C --> API
+    D --> API
+    E -.-> API
+    AG --> S
+    AG --> N
 ```
 
-The Python backend bridges the browser and Azure Voice Live, binding each session to
-an existing Foundry agent via `agent_config = { agent_name, project_name }`. The agent
-owns the system prompt, model, and tools so RAG + grounding resolve server-side. Full
-detail in **[docs/architecture.md](docs/architecture.md)**.
+The Python backend bridges the edge and Azure Voice Live, binding each session to an
+existing Foundry agent via `agent_config = { agent_name, project_name }`. The agent owns
+the system prompt, model, and tools so RAG + grounding resolve server-side. Internals in
+**[docs/architecture.md](docs/architecture.md)**; each channel's own edge diagram is on
+its [channel page](docs/channels/README.md).
 
 ## Channel support
 
