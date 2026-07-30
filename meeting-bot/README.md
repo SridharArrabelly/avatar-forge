@@ -260,6 +260,43 @@ This mirrors how third-party meeting bots join customer tenants. Two facts must 
   latency. This needs the Teams manifest uploaded (`--enable-calling`), a tenant meeting
   policy allowing bots, and a real meeting — see the runbook steps 7–8.
 
+## Traps that cost real debugging time
+
+Three failures here look like something they are not. Each is recorded with the symptom
+you will actually see, because the symptom points the wrong way.
+
+**1. `Could not load file or assembly 'Microsoft.Skype.Internal.Media.H264NetCore'` —
+for a file that is plainly sitting in the folder.** The app publishes *self-contained*,
+and a self-contained host builds its trusted-assembly list purely from `deps.json`. The
+`CopySkypeNativeMedia` target copies the Skype media DLLs as **content**, not as package
+references, so they never appear in `deps.json` and the media platform's dynamic
+`Assembly.Load` cannot resolve them — even though the bytes are right there. Fixed by an
+`AssemblyLoadContext.Default.Resolving` hook at the very top of `Program.cs` that probes
+`AppContext.BaseDirectory`. It must stay the first executable statement, before any media
+code runs. Note `Ijwhost.dll` must be present alongside them: these are mixed-mode
+(C++/CLI) images and without it they fail to load *and* make a correct fix look broken.
+
+**2. `Failed to bind ...:8445: address already in use`, reported as a media-platform
+initialization failure.** It is a restart race, not a media fault — the previous process
+still holds the media port. Stop the service, poll
+`Get-NetTCPConnection -LocalPort 8445 -State Listen` until it is clear, then start.
+
+**3. Playout counters are the fastest diagnosis for in-call media.** `CallHandler` logs
+periodically:
+
+| counter | meaning if non-zero / rising |
+| --- | --- |
+| `underruns` | the bridge is not keeping up with the 50 fps drain. A silent frame is now sent to keep the stream contiguous — early builds skipped the slot instead, which left a hole in the waveform and was audible as a **steady tick** once the avatar made the stream continuous. |
+| `placeholder` | no real frame was available, so the solid-colour tile went out. Sustained non-zero means the Python video path is not delivering. |
+| `mismatched` | the platform negotiated a size different from the configured one. Real frames are sent with a format derived from the frame itself, so this is informational — but a build that *dropped* mismatched frames showed the avatar tile appearing and then going blank. |
+| `queued` | outbound backlog. The video queue is capped at `MaxQueuedVideoFrames`; the **oldest** frames are dropped so the face stays close to the voice rather than drifting behind it. |
+
+> **The single assumption that caused two separate production bugs:** with the avatar
+> enabled, the Voice Live stream is *continuous* — roughly 16 video deltas/second and
+> near-continuous audio for the whole session, with idle stretches being exact digital
+> silence rather than an absence of data. Any logic that infers "she is speaking" from
+> "a chunk arrived" is wrong. Gate on measured speech energy instead.
+
 ## Cost / honesty note
 
 Per the ADR in `docs/teams-meeting-bot.md`, this breaks the pure-Python / Linux-ACA

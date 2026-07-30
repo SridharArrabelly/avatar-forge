@@ -162,9 +162,17 @@ function openMediaSocket() {
 // scheduled chunks play gap-free instead of underrunning into clicks/breakups.
 const PLAYBACK_LEAD = 0.25; // seconds of cushion ahead of the play clock
 const CAPTURE_TAIL = 0.4;   // extra mic-mute time after playback drains (anti-echo)
+// Peak amplitude (0..1) above which a chunk counts as *speech* rather than the
+// avatar's idle silence. See the half-duplex note in playPcmChunk.
+const SPEECH_PEAK = 0.01;
 function playPcmChunk(int16) {
     if (!audioCtx || !outboundDest) return;
     const f32 = pcm16ToFloat(int16);
+    let peak = 0;
+    for (let i = 0; i < f32.length; i++) {
+        const a = f32[i] < 0 ? -f32[i] : f32[i];
+        if (a > peak) peak = a;
+    }
     const buf = audioCtx.createBuffer(1, f32.length, MEDIA_SAMPLE_RATE);
     buf.copyToChannel(f32, 0);
     const node = audioCtx.createBufferSource();
@@ -179,7 +187,13 @@ function playPcmChunk(int16) {
     // Half-duplex: while Nuru is speaking (and for a short tail afterwards), the
     // mic would otherwise capture her own voice from the Teams-client speaker and
     // feed it back as a new "question". Suppress capture until playback drains.
-    captureMutedUntil = playCursor + CAPTURE_TAIL;
+    //
+    // Arm this on ACTUAL SPEECH, not merely on "a chunk arrived". With the avatar
+    // enabled our PCM comes from the avatar's muxed AAC track, which streams
+    // CONTINUOUSLY for the whole session (she idles on camera between turns) — so
+    // "a chunk arrived" is true forever, which pinned captureMutedUntil ahead of
+    // the clock and wedged the mic shut: she never heard a single question.
+    if (peak >= SPEECH_PEAK) captureMutedUntil = playCursor + CAPTURE_TAIL;
     scheduledSources.push(node);
     node.onended = () => {
         const i = scheduledSources.indexOf(node);
@@ -456,12 +470,15 @@ function drawAvatarFrame(ctx, canvas) {
         return false; // stream idle between turns -> show the placard
     }
 
-    // Cover-fit: fill the tile, centre-crop the overflow. Bias the crop upward
-    // (a quarter, not half) because a talking head sits above centre.
-    const scale = Math.max(canvas.width / v.videoWidth, canvas.height / v.videoHeight);
+    // Contain-fit: show the WHOLE frame. The avatar renders SQUARE (512x512); the
+    // tile is wider, so cover-fit would centre-crop the overflow and lop off the
+    // top and bottom of her head. Brand-coloured bars either side are much better
+    // than a decapitated close-up. Bias the letterbox slightly upward so the eyes
+    // sit near the optical centre.
+    const scale = Math.min(canvas.width / v.videoWidth, canvas.height / v.videoHeight);
     const w = v.videoWidth * scale;
     const h = v.videoHeight * scale;
-    ctx.drawImage(v, (canvas.width - w) / 2, (canvas.height - h) / 4, w, h);
+    ctx.drawImage(v, (canvas.width - w) / 2, (canvas.height - h) / 2, w, h);
     return true;
 }
 
@@ -486,8 +503,11 @@ async function startPlacardVideo() {
     if (localVideoStream) return; // already on
     const name = avatarDisplayName || "Avatar";
     const canvas = document.createElement("canvas");
+    // 4:3 rather than 16:9. The avatar frame is square, so a wider tile just means
+    // bigger empty bars once we contain-fit it; 4:3 is a legitimate webcam aspect
+    // and leaves her face filling 75% of the width instead of 56%.
     canvas.width = 640;
-    canvas.height = 360;
+    canvas.height = 480;
     const ctx = canvas.getContext("2d");
     const img = loadBrandImage();
     const t0 = performance.now();
@@ -517,22 +537,25 @@ async function startPlacardVideo() {
             const scale = Math.min(180 / img.naturalWidth, 1);
             const w = img.naturalWidth * scale;
             const h = img.naturalHeight * scale;
-            ctx.drawImage(img, (canvas.width - w) / 2, 64, w, h);
+            ctx.drawImage(img, (canvas.width - w) / 2, canvas.height * 0.18, w, h);
         }
+        // Placard text is positioned proportionally so the layout survives a change
+        // of tile aspect ratio (it was hand-tuned for 640x360, now 640x480).
+        const H = canvas.height;
         ctx.textAlign = "center";
         ctx.fillStyle = "#ffffff";
         ctx.font = "600 34px -apple-system, 'Segoe UI', system-ui, sans-serif";
-        ctx.fillText(name, canvas.width / 2, 286);
+        ctx.fillText(name, canvas.width / 2, H * 0.79);
         // "listening" status with a gentle pulse (and frame keep-alive).
         const r = 6 + 2 * Math.sin(t * 3);
         ctx.beginPath();
         ctx.fillStyle = "#22c55e";
-        ctx.arc(canvas.width / 2 - 64, 318, r, 0, Math.PI * 2);
+        ctx.arc(canvas.width / 2 - 64, H * 0.883, r, 0, Math.PI * 2);
         ctx.fill();
         ctx.fillStyle = "rgba(255,255,255,.75)";
         ctx.font = "400 18px -apple-system, 'Segoe UI', system-ui, sans-serif";
         ctx.textAlign = "left";
-        ctx.fillText("listening", canvas.width / 2 - 48, 324);
+        ctx.fillText("listening", canvas.width / 2 - 48, H * 0.9);
         keepFrameAlive();
     }
     // setInterval (unlike requestAnimationFrame) keeps firing in a backgrounded tab

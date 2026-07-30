@@ -186,6 +186,22 @@ public sealed class MeetingBotService : IDisposable
         }
     }
 
+    /// <summary>
+    /// Leave every active call. Operators hang the bot up from a shell, often in a
+    /// different session from the one that started it, so requiring them to have
+    /// kept the callId around is a needless way to strand the bot in a meeting.
+    /// Returns the ids that were left.
+    /// </summary>
+    public async Task<IReadOnlyList<string>> LeaveAllAsync()
+    {
+        var ids = _handlers.Keys.ToList();
+        foreach (var id in ids)
+        {
+            await LeaveAsync(id).ConfigureAwait(false);
+        }
+        return ids;
+    }
+
     private static readonly HttpClient _http = new();
 
     /// <summary>

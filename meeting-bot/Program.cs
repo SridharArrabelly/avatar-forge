@@ -1,5 +1,39 @@
 using AvatarForge.MeetingBot.Bot;
 using AvatarForge.MeetingBot.Configuration;
+using System.Runtime.Loader;
+
+// ── Side-by-side resolver for the Skype media SDK's managed helper assemblies ──
+//
+// Microsoft.Skype.Bots.Media ships Microsoft.Skype.Internal.Media.H264NetCore.dll
+// and ...AudioLibNetCore.dll under <pkg>\src\net6.0\ as *content*, not as package
+// references. The CopySkypeNativeMedia target in MeetingBot.csproj drops them next
+// to the app, but because they are not references they never appear in
+// AvatarForge.MeetingBot.deps.json — and for a self-contained app the host builds
+// its trusted-assembly list purely from deps.json. The media platform loads them
+// dynamically by name during MediaPlatform.Initialize, so the load failed with
+//   "Could not load file or assembly 'Microsoft.Skype.Internal.Media.H264NetCore,
+//    Version=1.26.0.94 ...'. The system cannot find the file specified."
+// even though the file sits right there in the app directory.
+//
+// The native DLLs (NativeMedia.dll, skypert.dll, ...) are unaffected: P/Invoke
+// probes the app directory directly. Only managed assemblies need this hook.
+//
+// Registered before anything else so it is in place well ahead of media init.
+AssemblyLoadContext.Default.Resolving += (context, name) =>
+{
+    if (string.IsNullOrEmpty(name.Name)) return null;
+    var candidate = Path.Combine(AppContext.BaseDirectory, name.Name + ".dll");
+    if (!File.Exists(candidate)) return null;
+    try
+    {
+        return context.LoadFromAssemblyPath(candidate);
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"[assembly-resolve] {name.Name}: {ex.Message}");
+        return null;
+    }
+};
 
 var builder = WebApplication.CreateBuilder(args);
 

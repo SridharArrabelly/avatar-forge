@@ -25,7 +25,7 @@ public sealed class JoinController : ControllerBase
     }
 
     public sealed record JoinRequest(string JoinUrl, string? DisplayName);
-    public sealed record LeaveRequest(string CallId);
+    public sealed record LeaveRequest(string? CallId);
 
     [HttpPost("join")]
     public async Task<IActionResult> Join([FromBody] JoinRequest req)
@@ -46,13 +46,22 @@ public sealed class JoinController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// Hang up. <c>callId</c> is optional: with no body (or no callId) the bot
+    /// leaves every call it is in. Operators hang the bot up from a shell, often
+    /// not the one that started it, and requiring them to have kept the callId
+    /// around is a needless way to strand the bot in a live meeting.
+    /// </summary>
     [HttpPost("leave")]
-    public async Task<IActionResult> Leave([FromBody] LeaveRequest req)
+    public async Task<IActionResult> Leave([FromBody] LeaveRequest? req = null)
     {
-        if (string.IsNullOrWhiteSpace(req.CallId))
-            return BadRequest(new { error = "callId is required" });
-        await _bot.LeaveAsync(req.CallId);
-        return Ok(new { left = req.CallId });
+        if (req is null || string.IsNullOrWhiteSpace(req.CallId))
+        {
+            var left = await _bot.LeaveAllAsync();
+            return Ok(new { left });
+        }
+        await _bot.LeaveAsync(req.CallId!);
+        return Ok(new { left = new[] { req.CallId } });
     }
 
     [HttpGet("health")]

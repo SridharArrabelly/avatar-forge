@@ -45,6 +45,10 @@ public sealed class CallHandler : IAsyncDisposable
 
     // 20 ms of 16 kHz mono PCM16 = 16000 * 0.02 * 2 bytes = 640 bytes.
     private const int FrameBytes = 640;
+    // A pre-allocated silent frame used to fill playout underruns so the outbound
+    // stream stays contiguous (see PlayoutLoopAsync).
+    private static readonly byte[] Silence = new byte[FrameBytes];
+    private long _underruns;
 
     // ── Slice 2A — outbound avatar video (only used when EnableVideo) ──
     // Real NV12 frames from Voice Live (forwarded by Python as VideoData) land
@@ -56,6 +60,14 @@ public sealed class CallHandler : IAsyncDisposable
     private volatile bool _videoActive;        // set from VideoSendStatusChanged
     private byte[]? _placeholderNv12;            // cached solid-colour frame
     private VideoFormat? _activeVideoFormat;     // negotiated send format
+    private long _videoFramesSent;
+    private long _videoUnderruns;
+    private long _videoFormatMismatch;
+    private long _videoDropped;
+    // Python decimates to the bot's playout fps, so producer and consumer match on
+    // average. Cap the queue anyway: if the producer ever runs ahead, an unbounded
+    // queue turns into unbounded lip-sync lag (and ~345 KB per frame of memory).
+    private const int MaxQueuedVideoFrames = 8;
 
     public CallHandler(ICall call, BotOptions options, ILoggerFactory loggerFactory)
     {
@@ -186,15 +198,36 @@ public sealed class CallHandler : IAsyncDisposable
                 continue;
             }
 
-            if (_flush) { carry.Clear(); continue; }
+            if (_flush) { carry.Clear(); }
 
             while (carry.Count < FrameBytes && _playout.TryDequeue(out var chunk))
                 carry.AddRange(chunk);
 
-            if (carry.Count < FrameBytes) continue; // not enough buffered yet
-
-            var frame = carry.GetRange(0, FrameBytes).ToArray();
-            carry.RemoveRange(0, FrameBytes);
+            // Underrun handling — this is what stops the audible ticking.
+            //
+            // Previously an underrun did `continue`, which SKIPPED the 20 ms slot
+            // entirely and left a hole in the outbound stream. Every hole is a
+            // waveform discontinuity, i.e. an audible click. That was invisible
+            // before the avatar was enabled (audio only ever flowed during speech,
+            // so gaps were genuine silence between turns), but the avatar's muxed
+            // stream is CONTINUOUS — measured: video deltas at ~16/s and audio for
+            // 28.6s out of a 30s capture, with the idle stretches being digital
+            // silence. A continuous stream that jitters around the 50 frames/sec
+            // drain rate underruns constantly, producing the reported steady tick.
+            //
+            // Sending an explicit silent frame instead keeps the stream contiguous
+            // and the media timestamps monotonic, so there is nothing to click.
+            byte[] frame;
+            if (carry.Count >= FrameBytes)
+            {
+                frame = carry.GetRange(0, FrameBytes).ToArray();
+                carry.RemoveRange(0, FrameBytes);
+            }
+            else
+            {
+                frame = Silence;
+                System.Threading.Interlocked.Increment(ref _underruns);
+            }
 
             try
             {
@@ -203,10 +236,10 @@ public sealed class CallHandler : IAsyncDisposable
                 ts += FrameTicks;
                 var buffer = new AudioSendBuffer(frame, AudioFormat.Pcm16K, ts);
                 audioSocket.Send(buffer);
-                if (System.Threading.Interlocked.Increment(ref _framesSent) % 100 == 1)
+                if (System.Threading.Interlocked.Increment(ref _framesSent) % 500 == 1)
                     _logger.LogInformation(
-                        "Playout: sent {Count} frames (audioSendActive={Active})",
-                        _framesSent, _audioSendActive);
+                        "Playout: sent {Count} frames (audioSendActive={Active}, underruns={Underruns}, queued={Queued})",
+                        _framesSent, _audioSendActive, _underruns, _playout.Count);
             }
             catch (Exception ex)
             {
@@ -250,6 +283,10 @@ public sealed class CallHandler : IAsyncDisposable
         _bridge.VideoReceived += frame =>
         {
             _videoQueue.Enqueue(frame);
+            // Bound the backlog: drop the OLDEST frames, never the newest, so the
+            // face stays close to the audio rather than drifting further behind.
+            while (_videoQueue.Count > MaxQueuedVideoFrames && _videoQueue.TryDequeue(out _))
+                System.Threading.Interlocked.Increment(ref _videoDropped);
             return Task.CompletedTask;
         };
 
@@ -277,14 +314,34 @@ public sealed class CallHandler : IAsyncDisposable
             var format = _activeVideoFormat ?? VideoFormat.NV12_640x360_15Fps;
 
             byte[] nv12;
-            if (_videoQueue.TryDequeue(out var real) &&
-                real.Width == format.Width && real.Height == format.Height)
+            if (_videoQueue.TryDequeue(out var real))
             {
                 nv12 = real.Nv12;
+                // Never discard a real frame because it does not match the format
+                // the platform said it preferred. That is what made the avatar
+                // appear and then vanish mid-meeting: the platform raises
+                // VideoSendStatusChanged with a PreferredVideoSourceFormat, we
+                // adopted it, and from that moment EVERY frame Python produced
+                // (fixed at VideoWidth x VideoHeight) failed the equality check and
+                // was dropped in favour of the solid placeholder — a blank tile.
+                // The frame itself is the source of truth: describe it accurately
+                // and send it.
+                if (real.Width != format.Width || real.Height != format.Height)
+                {
+                    format = MeetingBotService.VideoFormatFor(real.Width, real.Height, fps);
+                    if (System.Threading.Interlocked.Increment(ref _videoFormatMismatch) % 150 == 1)
+                    {
+                        _logger.LogWarning(
+                            "Avatar frames are {W}x{H} but the platform prefers {PW}x{PH}; sending the real frame at its own size ({Count} so far).",
+                            real.Width, real.Height, _activeVideoFormat?.Width, _activeVideoFormat?.Height,
+                            _videoFormatMismatch);
+                    }
+                }
             }
             else
             {
                 nv12 = GetPlaceholder(format.Width, format.Height);
+                System.Threading.Interlocked.Increment(ref _videoUnderruns);
             }
 
             try
@@ -293,6 +350,13 @@ public sealed class CallHandler : IAsyncDisposable
                 long ts = sw.Elapsed.Ticks;
                 var buffer = new VideoSendBuffer(nv12, format, ts);
                 videoSocket.Send(buffer);
+                if (System.Threading.Interlocked.Increment(ref _videoFramesSent) % 300 == 1)
+                {
+                    _logger.LogInformation(
+                        "Video: sent {Count} frames at {W}x{H} (queued={Queued}, placeholder={Underruns}, mismatched={Mismatch})",
+                        _videoFramesSent, format.Width, format.Height,
+                        _videoQueue.Count, _videoUnderruns, _videoFormatMismatch);
+                }
             }
             catch (Exception ex)
             {

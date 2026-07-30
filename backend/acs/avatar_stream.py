@@ -279,25 +279,34 @@ class AvatarStreamDecoder:
         return b"".join(bytes(p) for p in out.planes)
 
     def _build_graph(self, av, frame):
+        """Fit the square avatar frame into the negotiated tile WITHOUT cropping.
+
+        The avatar renders square (512x512) while the meeting tile is 16:9. The
+        first implementation centre-cropped to the target aspect, which threw away
+        44% of the picture and decapitated her on screen — the head filled the
+        frame, so any vertical crop cut the top of the head and the chin.
+
+        Instead: scale the whole frame down to fit, then pad out to exactly the
+        negotiated size. Emitting precisely ``VideoFormatFor``'s dimensions is a
+        hard requirement of the media platform, so the pad is what guarantees it.
+        """
         src_w, src_h = frame.width, frame.height
-        target_ar = self.width / self.height
-        crop_w, crop_h = src_w, int(round(src_w / target_ar))
-        if crop_h > src_h:
-            crop_h = src_h
-            crop_w = int(round(src_h * target_ar))
-        crop_w -= crop_w % 2
-        crop_h -= crop_h % 2
-        x = (src_w - crop_w) // 2
-        # Bias the crop upward: on a talking head the face sits above centre, so
-        # a strictly centred crop clips the top of the head.
-        y = max(0, (src_h - crop_h) // 4)
+        # Scale to fit inside the target box, preserving aspect (even dimensions
+        # are required by yuv/nv12 chroma subsampling).
+        scale = min(self.width / src_w, self.height / src_h)
+        fit_w = max(2, int(src_w * scale) & ~1)
+        fit_h = max(2, int(src_h * scale) & ~1)
+        pad_x = (self.width - fit_w) // 2
+        pad_y = (self.height - fit_h) // 2
 
         graph = av.filter.Graph()
         chain = [
             graph.add_buffer(template=None, width=src_w, height=src_h,
                              format=frame.format.name, time_base=frame.time_base),
-            graph.add("crop", f"{crop_w}:{crop_h}:{x}:{y}"),
-            graph.add("scale", f"{self.width}:{self.height}"),
+            graph.add("scale", f"{fit_w}:{fit_h}"),
+            # Letterbox onto the brand's dark background (#0b1020) rather than pure
+            # black, so the tile matches the placard the browser joiner paints.
+            graph.add("pad", f"{self.width}:{self.height}:{pad_x}:{pad_y}:0x0B1020"),
             graph.add("format", "nv12"),
             graph.add("buffersink"),
         ]
@@ -306,7 +315,8 @@ class AvatarStreamDecoder:
         graph.configure()
         logger.info(
             f"[avatar] video filter: {src_w}x{src_h} "
-            f"-> crop {crop_w}x{crop_h}+{x}+{y} -> scale {self.width}x{self.height} nv12"
+            f"-> scale {fit_w}x{fit_h} -> pad {self.width}x{self.height}"
+            f"+{pad_x}+{pad_y} nv12"
         )
         return graph
 

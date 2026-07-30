@@ -141,6 +141,12 @@ Invoke-RestMethod "$bot/api/leave" -Method POST -ContentType "application/json" 
   -Body (@{ callId = "<callId>" } | ConvertTo-Json)
 ```
 
+Lost the `callId`? Omit it and the bot leaves every call it is in:
+
+```powershell
+Invoke-RestMethod "$bot/api/leave" -Method POST -ContentType "application/json" -Body "{}"
+```
+
 ### 4. The test that matters
 
 Have **someone else** (or a second device) ask the question. If she answers *that* voice,
