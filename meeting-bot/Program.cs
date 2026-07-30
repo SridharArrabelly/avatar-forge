@@ -66,7 +66,7 @@ builder.Services.AddControllers();
 builder.Services.AddSingleton<MeetingBotService>();
 
 // ── Kestrel ──
-// Two public surfaces (see docs/teams-meeting-bot.md §8):
+// Two public surfaces (see docs/channels/d-design-media-bot.md):
 //   - HTTPS signaling/webhook + operator API on SignalingPort
 //   - the media platform binds its own TLS media port (MediaPort) internally
 // Both require the publicly-trusted cert (CertificateThumbprint) on a Windows

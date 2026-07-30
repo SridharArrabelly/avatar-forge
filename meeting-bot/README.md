@@ -64,9 +64,9 @@ flowchart LR
 The seam is the **already-built** `/ws/acs/audio` endpoint. The bot just speaks its
 wire protocol (`AudioMetadata` → base64-PCM16 `AudioData` frames; inbound
 `AudioData` to play, `StopAudio` for barge-in). The only Python-side requirement for
-The audio leg is two env flags: `MEETING_BOT_ENABLED=true` (serves `/ws/acs/audio` without an
+the audio leg is two env flags: `MEETING_BOT_ENABLED=true` (serves `/ws/acs/audio` without an
 ACS resource) and `ACS_AUDIO_SAMPLE_RATE=16000` (matches the media platform). Both are
-already set on the deployed app and wired through bicep.
+set through bicep when you deploy the in-call profile.
 
 ## Project layout
 
@@ -77,10 +77,37 @@ already set on the deployed app and wired through bicep.
 | `Bot/MeetingBot.cs` | Owns the `ICommunicationsClient`; `JoinMeetingAsync` / `LeaveAsync`. |
 | `Bot/CallHandler.cs` | Per-call media plumbing: AudioSocket ⇄ bridge. |
 | `Bot/AuthenticationProvider.cs` | App-only Graph token (MSAL) + inbound validation. |
-| `Bridge/VoiceLiveBridgeClient.cs` | **The Python contract.** WS client speaking the AcsVoiceBridge protocol. Unit-tested, no media-SDK deps. |
-| `Http/JoinController.cs` | Operator API: `POST /api/join`, `POST /api/leave`. |
+| `Bot/JoinInfo.cs` | Parses the classic `meetup-join` link into thread id, organizer and tenant. |
+| `Bridge/VoiceLiveBridgeClient.cs` | **The Python contract.** WS client speaking the AcsVoiceBridge protocol. No media-SDK dependency, so it is testable anywhere. |
+| `Http/JoinController.cs` | Operator API: `POST /api/join`, `POST /api/leave`, `GET /api/stats`, `GET /api/health`. |
 | `Http/CallingController.cs` | Bot Framework calling webhook (`POST /api/calling`). |
-| *(moved)* | The host template now lives at `infra/modules/meetingBotHost.bicep` and deploys with `azd up`. |
+| `Http/HttpInterop.cs` | Adapters between ASP.NET Core and the Graph SDK's HTTP types. |
+| `tests/BridgeContract.Tests/` | Contract tests for the Python seam — see below. |
+| `scripts/setup-host.ps1` | 4-stage Windows host setup: Prep, Cert, Build, Run. |
+
+The Azure side is **not** here: the host template lives at
+`infra/modules/meetingBotHost.bicep` and deploys with `azd up`.
+
+## Tests
+
+The wire protocol is the only part of this system that can be tested without live
+Azure resources, and it is also the easiest to break silently — the two sides are
+written in different languages and agree only by convention, with deliberately
+asymmetric casing (the bot sends `kind`/`audioData`, Python replies with
+`Kind`/`AudioData`). "Tidy up" either side and the bot still connects, the meeting
+still looks healthy, and the avatar simply never speaks.
+
+```powershell
+cd meeting-bot\tests\BridgeContract.Tests
+dotnet test
+```
+
+Eight tests cover the metadata handshake, outbound PCM16 framing and the silent
+flag, inbound audio, `StopAudio` barge-in, `VideoData` with its dimensions, and
+that one malformed frame does not kill the receive loop for the rest of the
+meeting. They run on **any** OS: the suite link-compiles
+`Bridge/VoiceLiveBridgeClient.cs` instead of referencing `MeetingBot.csproj`,
+which would drag in the Windows-only native media stack.
 
 ## Configuration
 
@@ -111,7 +138,7 @@ Set via `appsettings.json` or environment (`Bot__*`). **Never commit the secret.
 > diagnosis if genuine callbacks are ever rejected, then turn it back on. It logs a
 > warning on every notification while disabled.
 
-> **The avatar's video face (now built end to end).** With
+> **The avatar's video face.** With
 > `Bot__EnableVideo=true` the bot adds an outbound NV12 `VideoSocket` and appears as a
 > **camera tile**. The frames come from Python: the bridge runs its Voice Live session in
 > avatar/`websocket` mode, decodes the resulting stream and forwards real `VideoData`
@@ -180,8 +207,12 @@ Testing it in a real meeting is a separate runbook:
 ## Host setup — `scripts/setup-host.ps1`
 
 A 4-stage helper drives the Windows host. Stage `Prep` can run remotely via
-`az vm run-command`; the rest need the repo on the VM (RDP in), because they involve
-interactive cert issuance and a private git clone.
+`az vm run-command`; the rest need the repo on the VM, because they involve
+interactive certificate issuance and a build.
+
+RDP in as the local administrator the template created — `MEETING_BOT_ADMIN_USERNAME`
+(default `avatarbot`) with the `MEETING_BOT_ADMIN_PASSWORD` you set before `azd up`.
+The address is the VM's FQDN on port 3389, which the NSG already allows.
 
 ```powershell
 # On the VM, from a clone of this repo:
@@ -205,16 +236,13 @@ The `Run` stage takes no defaults for the identity arguments on purpose: a
 plausible-but-wrong app id fails deep inside the Graph media stack with an
 unhelpful error, so the script would rather refuse to start.
 
-> Note: this is a **private** repo, so the Build stage needs git auth on the VM
-> (e.g. a PAT or `gh auth login`).
-
 ## Runbook
 
 Steps 1–6 bring a host from nothing to serving. Steps 7–8 are the Teams-side work.
 
 1. **Provision the host + calling registration** (`azd up` does this when the in-call
    profile is selected):
-   ```pwsh
+   ```powershell
    uv run python scripts/set_profile.py --profile in-call
    azd env set MEETING_BOT_APP_ID <calling-bot-entra-app-id>
    azd env set MEETING_BOT_APP_TENANT_ID <its-home-tenant-id>
@@ -280,9 +308,10 @@ This mirrors how third-party meeting bots join customer tenants. Two facts must 
 
 ## What is verified
 
-- **`VoiceLiveBridgeClient` — the Python contract — is unit-tested** (metadata,
-  outbound `AudioData`, inbound `AudioData` dispatch, `StopAudio` barge-in all pass
-  a round-trip against a mock server).
+- **The Python contract is covered by tests** — `dotnet test` in
+  `tests/BridgeContract.Tests` exercises the metadata handshake, outbound framing,
+  inbound audio, `StopAudio` barge-in and `VideoData` against a stand-in for the
+  Python bridge running on a real socket.
 - `infra/modules/meetingBotHost.bicep` compiles clean (`az bicep build`).
 - **The media-SDK code builds, publishes and runs on a Windows host** — the bot starts
   as a Windows service, initializes the Real-Time Media platform, binds HTTPS with a

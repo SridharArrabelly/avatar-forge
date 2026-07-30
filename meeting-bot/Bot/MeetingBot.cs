@@ -260,7 +260,7 @@ public sealed class MeetingBotService : IDisposable
     /// <see cref="BotOptions.EnableVideo"/> is set, an outbound NV12 VideoSocket
     /// is added so Nuru can render a synced avatar camera tile (the avatar video face); when
     /// it is unset the session is byte-for-byte the audio-only session.
-    /// See docs/teams-meeting-bot.md §10 and docs/teams-avatar-video.md.
+    /// See docs/channels/d-design-media-bot.md and docs/channels/d-design-avatar-video.md.
     /// </summary>
     private ILocalMediaSession CreateLocalMediaSession()
     {

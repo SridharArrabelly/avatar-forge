@@ -241,9 +241,10 @@ avatar-forge/
 │
 ├── meeting-bot/                   # Channel D — .NET/Windows Graph media bot (separate host)
 │   ├── Bot/                       # MeetingBot, CallHandler, AuthenticationProvider
-│   ├── Bridge/                    # VoiceLiveBridgeClient — the Python contract, unit-tested
+│   ├── Bridge/                    # VoiceLiveBridgeClient — the Python contract
 │   ├── Http/                      # JoinController (operator API), CallingController (Graph webhook)
 │   ├── Configuration/BotOptions.cs
+│   ├── tests/                     # Contract tests for the Python seam (dotnet test, any OS)
 │   ├── scripts/setup-host.ps1     # 4-stage Windows host setup: Prep, Cert, Build, Run
 │   └── README.md                  # Build, configuration, and the traps that cost debugging time
 │

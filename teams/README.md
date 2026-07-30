@@ -1,11 +1,14 @@
 # Avatar Forge — Microsoft Teams app (tab + conversational bot)
 
-> **This folder is the packaging for two channels.** For *what to deploy and why*,
-> start at the channel hub — this file covers the mechanics of building the package.
+> **This folder is the Teams *packaging* for every Teams-facing channel.** For *what to
+> deploy and why*, start at the channel hub — this file covers the mechanics of building
+> the package.
 >
 > - **Channel B — Teams personal tab** → [`docs/channels/b-teams-tab.md`](../docs/channels/b-teams-tab.md)
 > - **Channel C — Teams conversational bot** → [`docs/channels/c-teams-chat-bot.md`](../docs/channels/c-teams-chat-bot.md)
-> - Manual/admin steps for both → [`docs/admin-checklist.md`](../docs/admin-checklist.md)
+> - **Channel D — in-call media bot**: its *runtime* lives in [`meeting-bot/`](../meeting-bot/), but its
+>   manifest flags are built here → [`docs/channels/d-in-call-media-bot.md`](../docs/channels/d-in-call-media-bot.md)
+> - Manual/admin steps → [`docs/admin-checklist.md`](../docs/admin-checklist.md)
 
 This folder packages the Avatar Forge web app as a **Microsoft Teams app** with two
 surfaces in **one package**: a personal **tab** that embeds the web UI (channel B) and
@@ -17,8 +20,10 @@ sideloadable with **no Teams-admin access required**.
 - **Conversational bot** ([jump down](#channel-c--conversational-bot-issue-53)):
   a bot that answers via the same Foundry agent and deep-links back into the tab.
 
-The avatar joining a **live call** is channel D and is **not** built from this folder —
-see [In-call media](#in-call-media-issue-27--documented-elsewhere) at the bottom.
+The avatar joining a **live call** is channel D. Its *runtime* — a .NET media bot on its
+own Windows host — is **not** built from this folder (see `meeting-bot/`), but D's
+**Teams surface is**: two opt-in flags here add its manifest entries. See
+[In-call media](#in-call-media-issue-27--documented-elsewhere) at the bottom.
 
 Start with the tab walkthrough, then the bot section if you're enabling it.
 
@@ -270,8 +275,9 @@ the tab and the bot.
 # In-call media (issue #27) — documented elsewhere
 
 The avatar joining the **call itself** — hearing every participant and answering aloud
-with a lip-synced camera tile — is **channel D**, and it is not packaged from this
-folder. It runs as a separate .NET media bot on a Windows host.
+with a lip-synced camera tile — is **channel D**. Its runtime is a separate .NET media
+bot on a Windows host and is **not** packaged from this folder. Its **Teams surface**
+is, via the two opt-in flags below.
 
 | What you want | Where it lives |
 | --- | --- |
@@ -281,12 +287,20 @@ folder. It runs as a separate .NET media bot on a Windows host.
 | The bot's own code, build and traps | [`meeting-bot/README.md`](../meeting-bot/README.md) |
 | Running a live test | [`docs/testing-meetings.md`](../docs/testing-meetings.md) |
 
-The **only** thing this folder contributes to channel D is the `--enable-calling` flag,
-which sets `supportsCalling: true` in the manifest:
+This folder contributes exactly two things to channel D, both opt-in and both
+manifest-only:
+
+| Flag | Manifest effect | What it gives you |
+| --- | --- | --- |
+| `--enable-calling` | `bots[0].supportsCalling: true` | Lets the app be invoked as a calling bot in meetings |
+| `--enable-companion` | keeps `configurableTabs` | The in-meeting control panel (side panel / stage) |
 
 ```powershell
 uv run python teams/build_package.py --hostname <host> --bot-id <MEETING_BOT_APP_ID> --enable-calling
 ```
+
+Both default to **off**, so a package built without them is byte-identical to the
+channel C chat-only shape.
 
 Note the bot id: a calling manifest must name the **calling** bot's app registration, not
 the chat bot's. They are different Entra apps (an app can back only one Azure Bot), so a

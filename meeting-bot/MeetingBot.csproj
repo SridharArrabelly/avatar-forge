@@ -4,7 +4,7 @@
     Avatar-Forge Teams meeting media bot (channel D, issue #27 — audio leg).
 
     This is the *thin .NET/Windows media relay* described in
-    docs/teams-meeting-bot.md. It is deliberately "dumb": it joins a Teams
+    docs/channels/d-design-media-bot.md. It is deliberately "dumb": it joins a Teams
     meeting, grabs the MIXED participant audio via the Graph Real-Time Media
     Platform (Microsoft.Skype.Bots.Media, Windows-only), and forwards raw PCM16
     over a WebSocket to the *unchanged* Python backend's /ws/acs/audio endpoint

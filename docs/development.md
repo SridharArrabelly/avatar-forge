@@ -116,6 +116,23 @@ to confirm tool routing after editing prompts or switching `AGENT_MODEL`. The ro
 test checklist + model-shootout results live in
 [`prompts/agent/routing-test-questions.md`](../prompts/agent/routing-test-questions.md).
 
+## Automated tests
+
+Everything above is a *smoke test* — it needs live Azure resources. The one part of
+the system with genuine offline tests is the media bot's wire protocol, because it is
+the only seam that doesn't touch the cloud:
+
+```powershell
+cd meeting-bot\tests\BridgeContract.Tests
+dotnet test
+```
+
+Eight tests lock the contract between the .NET media bot and
+[`backend/acs/bridge.py`](../backend/acs/bridge.py). They need the .NET SDK but **not**
+Windows and **not** the media SDK — the suite link-compiles the one client class rather
+than referencing the bot project. Run them after touching either side of that protocol;
+a mismatch there is silent in production, so nothing else will catch it.
+
 ## (Re)register the Foundry agent
 
 After editing the prompts in [`prompts/agent/`](../prompts/agent/) or changing

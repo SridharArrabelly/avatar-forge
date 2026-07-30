@@ -126,6 +126,39 @@ Deployment mechanics: [`../deployment.md`](../deployment.md).
 
 ---
 
+## Where each channel lives in the repo
+
+There is **no one-folder-per-channel rule**, and trying to read the tree that way
+will mislead you. Two things break the pattern:
+
+- **`teams/` is shared by B, C and D.** It holds one manifest template and one
+  builder; flags decide which channel's package comes out. It is *Teams packaging*,
+  not "the tab channel".
+- **C has no folder of its own.** Its runtime is a module inside the existing
+  backend, which is exactly why it needs no new host.
+
+| Channel | Runtime code | Teams package | Infra module |
+| --- | --- | --- | --- |
+| **A** web | `backend/`, `frontend/` | — | base `infra/` |
+| **B** tab | `frontend/teams.js` (same app) | `teams/` → `staticTabs` | *(none — reuses A)* |
+| **C** chat bot | `backend/bot/` — in-process at `POST /api/messages` | `teams/` → `bots` entry | `modules/botService.bicep` |
+| **D** in-call | `meeting-bot/` (.NET, own Windows host) + `backend/acs/` (bridge) + `frontend/acs-join.js`, `companion.js` | `teams/` → `supportsCalling`, `configurableTabs` *(optional)* | `modules/meetingBotHost.bicep` |
+| **E** headless | *(not built)* | — | — |
+
+One manifest, three progressive shapes — the build flags are the difference:
+
+| `teams/build_package.py` flags | Manifest keys kept | Channel |
+| --- | --- | --- |
+| `--hostname X` | `staticTabs` only | **B** |
+| `+ --bot-id <guid>` | `bots`, `supportsCalling=false` | **C** |
+| `+ --enable-calling` | `bots`, `supportsCalling=true` | **D** invocable in a call |
+| `+ --enable-companion` | `configurableTabs` | **D** meeting control panel |
+
+Omitted keys are *dropped from the package*, so a channel you did not opt into
+cannot appear in Teams. Details: [`../../teams/README.md`](../../teams/README.md).
+
+---
+
 ## Every channel page has the same six sections
 
 So you can compare them without re-reading prose:

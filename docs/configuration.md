@@ -278,7 +278,7 @@ it serves the media bot **without** provisioning an ACS resource. See
 | `ACS_CONNECTION_STRING` | — | Alternative to `ACS_ENDPOINT` + managed identity (includes endpoint + key). Takes precedence when set; simplest for local/dev. Enables channel D. |
 | `ACS_CALLBACK_BASE_URL` | — | Public HTTPS base URL ACS uses for call-event callbacks and the media WebSocket. Defaults to the app's own external ingress; set for local dev behind a Dev Tunnel/ngrok. |
 | `ACS_AUDIO_SAMPLE_RATE` | `24000` | PCM sample rate (Hz) for the ACS↔Voice Live bridge. `24000` matches Voice Live (no resample); `16000` also valid. |
-| `ACS_WAKE_PHRASES` | `hey nuru,nuru` | Comma-separated, case-insensitive phrases that invoke a spoken answer (turn-taking, so she never talks over the room). |
+| `ACS_WAKE_PHRASES` | *(derived from `AVATAR_DISPLAY_NAME`)* | Comma-separated, case-insensitive phrases that invoke a spoken answer (turn-taking, so it never talks over the room). Defaults to `hey <name>,<name>` lower-cased, so the wake word follows whatever you named the assistant — set this only to override. |
 | `ACS_REQUIRE_WAKE_PHRASE` | `true` | Require a wake phrase before answering (half-duplex). Set `false` in a 1:1 test meeting to answer every turn. |
 | `ACS_IDLE_TIMEOUT_S` | `0` | Leave the call after N seconds of inactivity (`0` disables). |
 | `ACS_FOLLOWUP_WINDOW_S` | `30` | Seconds after an answer during which a follow-up needs **no** wake phrase, so a real back-and-forth doesn't require saying the name every turn. |
