@@ -177,8 +177,7 @@ public sealed class MeetingBotService : IDisposable
     }
 
     /// <summary>Leave / end a joined call.</summary>
-    public async Task LeaveAsync(string callId)
-    {
+    public async Task LeaveAsync(string callId)    {
         if (_handlers.Remove(callId, out var handler))
         {
             try { await handler.Call.DeleteAsync().ConfigureAwait(false); }
@@ -202,8 +201,14 @@ public sealed class MeetingBotService : IDisposable
         return ids;
     }
 
-    private static readonly HttpClient _http = new();
+    /// <summary>
+    /// Live playout health for every active call, surfaced via
+    /// <c>GET /api/stats</c>. This is how you tell WHY in-call audio or video is
+    /// wrong without having to reproduce it.
+    /// </summary>
+    public IReadOnlyList<object> Stats() => _handlers.Values.Select(h => h.Stats).ToList();
 
+    private static readonly HttpClient _http = new();
     /// <summary>
     /// Resolve a SHORT Teams meeting link's numeric join meeting id to the
     /// classic join URL via Graph <c>onlineMeetings</c>. App-only Graph requires

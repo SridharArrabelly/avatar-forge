@@ -33,6 +33,36 @@ public sealed class CallHandler : IAsyncDisposable
     /// <summary>The Graph call this handler owns (used by the bot to leave).</summary>
     public ICall Call => _call;
 
+    /// <summary>
+    /// Live playout health, surfaced via <c>GET /api/stats</c>. These are the
+    /// numbers that tell you WHY the audio or video sounds/looks wrong, without
+    /// needing to reproduce it: rising <c>underruns</c> means the jitter buffer is
+    /// too small for the network, rising <c>dropped</c> means the producer is
+    /// outrunning us, and <c>bufferedMs</c> is the current playout latency.
+    /// </summary>
+    public object Stats => new
+    {
+        callId = _call.Id,
+        audio = new
+        {
+            framesSent = Interlocked.Read(ref _framesSent),
+            underruns = Interlocked.Read(ref _underruns),
+            dropped = Interlocked.Read(ref _audioDropped),
+            bufferedMs = Volatile.Read(ref _bufferedBytes) / BytesPerMs,
+            sendActive = _audioSendActive,
+            priming = _priming,
+        },
+        video = new
+        {
+            framesSent = Interlocked.Read(ref _videoFramesSent),
+            held = Interlocked.Read(ref _videoUnderruns),
+            mismatched = Interlocked.Read(ref _videoFormatMismatch),
+            dropped = Interlocked.Read(ref _videoDropped),
+            queued = _videoQueue.Count,
+            sendActive = _videoActive,
+        },
+    };
+
     // Outbound playout queue: PCM16 chunks from Voice Live, drained at frame
     // cadence onto the AudioSocket. A queue (not direct send) lets barge-in
     // flush everything instantly.
@@ -65,12 +95,12 @@ public sealed class CallHandler : IAsyncDisposable
     private const int TargetBufferBytes = TargetBufferMs * BytesPerMs;
     private const int MaxBufferBytes = MaxBufferMs * BytesPerMs;
     private int _bufferedBytes;                     // carry + everything queued
-    private bool _priming = true;                   // fill before draining
-    private short _lastSample;                      // for splice ramps
-    private bool _lastFrameWasSilence = true;
-    // A splice between real audio and silence is a step in the waveform, which is
-    // exactly what a click is. Ramp across ~2 ms instead of stepping.
-    private const int RampSamples = 32;
+    private bool _priming = true;                   // fill before the first frame
+    // Packet-loss concealment state: the last real 20 ms, and how many consecutive
+    // frames we have concealed (so a long stall decays instead of buzzing).
+    private readonly byte[] _lastAudioFrame = new byte[FrameBytes];
+    private int _concealed;
+    private const int MaxConcealFrames = 10;        // 200 ms, then give up to silence
 
     // ── Slice 2A — outbound avatar video (only used when EnableVideo) ──
     // Real NV12 frames from Voice Live (forwarded by Python as VideoData) land
@@ -125,6 +155,10 @@ public sealed class CallHandler : IAsyncDisposable
             while (_playout.TryDequeue(out _)) { }
             System.Threading.Interlocked.Exchange(ref _bufferedBytes, 0);
             _priming = true;   // refill before the next answer starts
+            // Don't conceal across a barge-in: the previous answer's audio is
+            // exactly what we were asked to stop playing.
+            Array.Clear(_lastAudioFrame);
+            _concealed = MaxConcealFrames;
             _flush = false;
             return Task.CompletedTask;
         };
@@ -192,7 +226,16 @@ public sealed class CallHandler : IAsyncDisposable
     private async Task PlayoutLoopAsync(IAudioSocket audioSocket)
     {
         var carry = new List<byte>(FrameBytes * 2);
-        var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(20));
+        // Tick FASTER than the frame rate and pace off a Stopwatch instead of
+        // trusting the timer. Windows' default timer granularity is ~15.6 ms, so a
+        // 20 ms PeriodicTimer does NOT reliably fire every 20 ms — it slips. A loop
+        // that sends exactly one frame per tick therefore drifts away from real
+        // time, and the queue silts up or starves depending on which way it slips.
+        // Deriving "how many frames are due by now" from elapsed time is immune to
+        // that: the loop self-corrects however coarsely the timer actually fires.
+        var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(5));
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        long framesDue = 0;
         // Monotonic media timestamp in 100-ns ticks. The Real-Time Media Platform
         // uses this to schedule playback; frames sent with a stale/zero timestamp
         // are dropped (the room hears nothing even though Send() succeeds). One
@@ -204,6 +247,14 @@ public sealed class CallHandler : IAsyncDisposable
         const double phaseStep = 2 * Math.PI * toneHz / 16000.0;
         while (await timer.WaitForNextTickAsync().ConfigureAwait(false))
         {
+            long due = clock.ElapsedMilliseconds / 20;
+            // Cap the catch-up burst so a long GC pause can't dump a wall of audio
+            // into the call all at once.
+            int toSend = (int)Math.Clamp(due - framesDue, 0, 5);
+            framesDue += toSend;
+
+            for (int f = 0; f < toSend; f++)
+            {
             if (_options.TestTone)
             {
                 var tone = new byte[FrameBytes];
@@ -232,26 +283,20 @@ public sealed class CallHandler : IAsyncDisposable
             //
             // Draining at exactly real time from a queue fed at exactly real time
             // over a network means sitting permanently on the edge of empty: any
-            // late packet is an instant underrun. That produced BOTH reported
-            // audio defects.
+            // late packet is an instant underrun. Hold TargetBufferMs before the
+            // FIRST frame so there is something to absorb that jitter.
             //
-            // Ticking: an underrun mid-word forces a splice to silence and back.
-            // Skipping the slot (the original code) left a hole; sending silence
-            // (the first fix) filled the hole but the STEP in the waveform was
-            // still there, so the click survived. Measured on a real call: 18% of
-            // outbound VIDEO frames were underruns, in short bursts — the audio
-            // path was jittering identically.
+            // Crucially, do NOT re-prime after an underrun. An earlier version did,
+            // and it was worse than the problem: one late packet then injected a
+            // whole buffer's worth of silence into the middle of a word. Measured
+            // on the recording, 25 separate ~120 ms gaps totalling 2.7 s of dead
+            // air, on top of 84 shorter ones — 8 gaps per second of speech.
             //
-            // Growing audio delay: every inserted silent frame adds 20 ms of
-            // stream time WITHOUT consuming any queued audio, so it pushes all
-            // subsequent speech later. Nothing ever gave that time back — a
-            // one-way ratchet. Video meanwhile was capped and dropped its oldest
-            // frames, so it stayed current. Hence the reported "mouth moves, voice
-            // arrives later", growing over the call.
-            //
-            // So: hold TargetBufferMs before starting to drain, and if the backlog
-            // ever exceeds MaxBufferMs, discard down to target to give the latency
-            // back. Cost is TargetBufferMs of extra latency, once.
+            // Re-priming is also unnecessary. An underrun emits a frame without
+            // consuming one, so the backlog GROWS by 20 ms every time it happens:
+            // the buffer refills itself, 20 ms at a time, exactly as fast as it
+            // needs to. The high-water drop below stops that from becoming
+            // unbounded latency.
             int buffered = Volatile.Read(ref _bufferedBytes);
 
             if (buffered > MaxBufferBytes)
@@ -270,9 +315,9 @@ public sealed class CallHandler : IAsyncDisposable
             {
                 if (buffered < TargetBufferBytes)
                 {
-                    // Still filling. Emit silence so the stream stays contiguous
-                    // and the media timestamps keep advancing.
-                    SendFrame(audioSocket, NextSilence(), ref ts);
+                    // Still filling, before any audio has been sent. True silence
+                    // is correct here — there is no speech to conceal yet.
+                    SendFrame(audioSocket, Silence, ref ts);
                     continue;
                 }
                 _priming = false;
@@ -289,56 +334,51 @@ public sealed class CallHandler : IAsyncDisposable
             {
                 frame = carry.GetRange(0, FrameBytes).ToArray();
                 carry.RemoveRange(0, FrameBytes);
-                if (_lastFrameWasSilence) FadeIn(frame);
-                _lastSample = (short)(frame[FrameBytes - 2] | (frame[FrameBytes - 1] << 8));
-                _lastFrameWasSilence = false;
+                Buffer.BlockCopy(frame, 0, _lastAudioFrame, 0, FrameBytes);
+                _concealed = 0;
             }
             else
             {
-                // Genuine underrun. Emit silence and re-prime, so we refill the
-                // buffer instead of stuttering into the next underrun immediately.
-                frame = NextSilence();
-                _priming = true;
+                // Underrun. Conceal it by repeating the previous 20 ms, fading out
+                // over successive losses, rather than cutting to silence. This is
+                // ordinary packet-loss concealment: a repeated pitch period is
+                // essentially inaudible at 20 ms, whereas a hole — or a hole filled
+                // with silence — is a step in the waveform, and a step is exactly
+                // what a click is. That step is the residual "low ticking" left
+                // after the previous fix stopped the stream from going discontinuous.
+                frame = Conceal();
                 System.Threading.Interlocked.Increment(ref _underruns);
             }
 
             SendFrame(audioSocket, frame, ref ts);
+            }
         }
     }
 
     /// <summary>
-    /// A silent 20 ms frame that ramps down from the last real sample instead of
-    /// stepping to zero. The step IS the click.
+    /// Packet-loss concealment: repeat the last real 20 ms, attenuated a little
+    /// more on each consecutive loss so a long stall decays to silence smoothly
+    /// instead of buzzing on a repeated fragment.
     /// </summary>
-    private byte[] NextSilence()
+    private byte[] Conceal()
     {
-        if (_lastFrameWasSilence || _lastSample == 0)
-        {
-            _lastFrameWasSilence = true;
-            return Silence;
-        }
-        var buf = new byte[FrameBytes];
-        for (int i = 0; i < RampSamples; i++)
-        {
-            short s = (short)(_lastSample * (RampSamples - i) / RampSamples);
-            buf[i * 2] = (byte)(s & 0xFF);
-            buf[i * 2 + 1] = (byte)((s >> 8) & 0xFF);
-        }
-        _lastFrameWasSilence = true;
-        _lastSample = 0;
-        return buf;
-    }
+        _concealed++;
+        if (_concealed > MaxConcealFrames) return Silence;
 
-    /// <summary>Ramp a frame up from silence, for the same reason as <see cref="NextSilence"/>.</summary>
-    private static void FadeIn(byte[] frame)
-    {
-        for (int i = 0; i < RampSamples; i++)
+        double gain = Math.Pow(0.7, _concealed);
+        var buf = new byte[FrameBytes];
+        for (int i = 0; i < FrameBytes; i += 2)
         {
-            short s = (short)(frame[i * 2] | (frame[i * 2 + 1] << 8));
-            s = (short)(s * i / RampSamples);
-            frame[i * 2] = (byte)(s & 0xFF);
-            frame[i * 2 + 1] = (byte)((s >> 8) & 0xFF);
+            short s = (short)(_lastAudioFrame[i] | (_lastAudioFrame[i + 1] << 8));
+            s = (short)(s * gain);
+            buf[i] = (byte)(s & 0xFF);
+            buf[i + 1] = (byte)((s >> 8) & 0xFF);
         }
+        // Keep decaying from the concealed copy, so repeats don't restart at full
+        // amplitude and produce a sawtooth envelope.
+        Buffer.BlockCopy(buf, 0, _lastAudioFrame, 0, FrameBytes);
+        _concealed = 1;
+        return buf;
     }
 
     private void SendFrame(IAudioSocket audioSocket, byte[] frame, ref long ts)

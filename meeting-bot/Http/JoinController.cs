@@ -47,6 +47,15 @@ public sealed class JoinController : ControllerBase
     }
 
     /// <summary>
+    /// Live playout counters for every active call. Poll this DURING a call to
+    /// diagnose audio/video glitches: rising <c>underruns</c> means the jitter
+    /// buffer is too small for the link, rising <c>dropped</c> means the producer
+    /// is outrunning playout, and <c>bufferedMs</c> is the current added latency.
+    /// </summary>
+    [HttpGet("stats")]
+    public IActionResult Stats() => Ok(new { calls = _bot.Stats() });
+
+    /// <summary>
     /// Hang up. <c>callId</c> is optional: with no body (or no callId) the bot
     /// leaves every call it is in. Operators hang the bot up from a shell, often
     /// not the one that started it, and requiring them to have kept the callId
