@@ -28,14 +28,20 @@ Required environment variables (see ``.env.example``):
     SEARCH_INDEX_NAME         Azure AI Search index to expose to the agent
     AGENT_NAME                Name of the Foundry agent to create / version (e.g. ``MtnAvatarAgent``)
     AGENT_MODEL               Model deployment name to bind to the agent (e.g. ``gpt-5.4``)
-    BING_CONNECTION_NAME      Name of the Grounding-with-Bing-Custom-Search connection in the project
-    BING_CUSTOM_CONFIG_NAME   Bing Custom Search configuration (instance) name — the curated
+    BING_CONNECTION_NAME      OPTIONAL. Grounding-with-Bing-Custom-Search connection in the project.
+                              Leave unset to build a search-only agent; add it later and re-run.
+    BING_CUSTOM_CONFIG_NAME   OPTIONAL. Bing Custom Search configuration (instance) name — the curated
                               allow-list of sites that the tool is restricted to.
 
 Auth: uses ``DefaultAzureCredential`` - run ``az login`` first.
 
 Usage:
     uv run python scripts/setup_foundry_agent.py
+
+Exit codes:
+    0  agent created with every configured tool
+    3  agent created, but the OPTIONAL web/news tool was left out (degraded, not failed)
+    1  nothing usable was created — see the error text
 """
 
 from __future__ import annotations
@@ -57,8 +63,14 @@ from azure.ai.projects.models import (
     PromptAgentDefinition,
     Reasoning,
 )
+from azure.core.exceptions import ResourceNotFoundError
 from azure.identity import DefaultAzureCredential
 from dotenv import load_dotenv
+
+# Exit code meaning "the agent exists and works, but an OPTIONAL tool was left
+# out". Distinct from 0 (fully wired) and from 1 (nothing usable was created) so
+# the azd postprovision hook can report DEGRADED without claiming failure.
+EXIT_DEGRADED = 3
 
 # Prompt content lives under <repo>/prompts/. See prompts/README.md for layout
 # and editing conventions. The design rationale comments below explain WHY the
@@ -161,12 +173,15 @@ def load_settings() -> dict:
         # allow-list of sites the web tool is restricted to.
         "bing_custom_config_name": (os.getenv("BING_CUSTOM_CONFIG_NAME") or "").strip() or None,
     }
-    # Bing is OPTIONAL: if BING_CONNECTION_NAME / BING_CUSTOM_CONFIG_NAME are
-    # unset (e.g. a greenfield deploy that provisioned Foundry + AI Search but
-    # no Grounding-with-Bing-Custom-Search resource, which must be configured
-    # out of band in the Bing Custom Search portal), the agent is still created
-    # with the AI Search (board/meeting minutes) tool alone. The web/news tool
-    # is added once Bing is configured and the script is re-run.
+    # Bing is OPTIONAL, in both of the ways it can be absent: the vars may be
+    # unset (a greenfield deploy that provisioned Foundry + AI Search but no
+    # Grounding-with-Bing-Custom-Search resource, which is configured out of
+    # band in the Bing Custom Search portal), OR they may name a connection that
+    # does not exist in this project — which is what happens whenever a .env is
+    # copied between environments. Either way the agent is still created with
+    # the AI Search (board/meeting minutes) tool alone, and the script exits
+    # EXIT_DEGRADED so callers can say "degraded" instead of "failed". The
+    # web/news tool is added once Bing is configured and the script is re-run.
     required = (
         "project_endpoint",
         "search_connection_name",
@@ -288,8 +303,14 @@ def _model_supports_reasoning(model: str) -> bool:
     return False
 
 
-def create_agent(project: AIProjectClient, settings: dict):
+def create_agent(project: AIProjectClient, settings: dict) -> tuple[object, bool]:
     """Create a new version of the Foundry agent.
+
+    Returns ``(agent, web_tool_enabled)``. ``web_tool_enabled`` is False when the
+    optional Grounding-with-Bing-Custom-Search tool was left out — either because
+    it was not configured or because the named connection does not exist. The
+    agent is still fully usable in that case; it just answers from the indexed
+    documents alone.
 
     Reasoning effort (`AGENT_REASONING_EFFORT`) is OPTIONAL. Behavior by model:
 
@@ -319,17 +340,51 @@ def create_agent(project: AIProjectClient, settings: dict):
                                                     AGENT_REASONING_EFFORT unset
                                                     (gpt-4.x reject it).
     """
-    azs_connection = project.connections.get(settings["search_connection_name"])
+    # The AI Search connection is REQUIRED: it is the agent's corpus. An agent
+    # without it would answer from model priors alone, which is worse than not
+    # deploying at all — so this fails fast with an actionable message rather
+    # than a raw SDK traceback.
+    try:
+        azs_connection = project.connections.get(settings["search_connection_name"])
+    except ResourceNotFoundError:
+        sys.exit(
+            f"ERROR: AI Search connection {settings['search_connection_name']!r} was not found "
+            "in this Foundry project.\n"
+            "  This connection is REQUIRED — it is what the agent answers from.\n"
+            "  Fix: create it in the Foundry portal, or point SEARCH_CONNECTION_NAME at the\n"
+            "  existing connection, then re-run:\n"
+            "      uv run python scripts/setup_foundry_agent.py"
+        )
 
+    # The web tool is OPTIONAL in two distinct ways, and BOTH must degrade
+    # gracefully: the vars may be unset, *or* they may name a connection that
+    # does not exist in this project (the common case when .env is copied from
+    # another environment, or when Bing is deliberately deferred). Only the
+    # first used to be tolerated, so a stale name silently cost you the agent.
     bing_connection_id = None
     bing_custom_config_name = settings.get("bing_custom_config_name")
-    if settings.get("bing_connection_name") and bing_custom_config_name:
-        bing_connection = project.connections.get(settings["bing_connection_name"])
-        bing_connection_id = bing_connection.id
-        print(
-            f"Web tool: bing_custom_search (connection {settings['bing_connection_name']!r}, "
-            f"configuration {bing_custom_config_name!r})."
-        )
+    bing_connection_name = settings.get("bing_connection_name")
+    web_tool_enabled = False
+
+    if bing_connection_name and bing_custom_config_name:
+        try:
+            bing_connection = project.connections.get(bing_connection_name)
+        except ResourceNotFoundError:
+            print(
+                f"WARNING: Grounding-with-Bing-Custom-Search connection {bing_connection_name!r} "
+                "was not found in this project.\n"
+                "         Creating the agent WITHOUT the web/news tool — it will answer from the\n"
+                "         indexed board/meeting minutes only. This is a degraded but working agent.\n"
+                "         To enable the web tool later: add the connection in the Foundry portal,\n"
+                "         set BING_CONNECTION_NAME + BING_CUSTOM_CONFIG_NAME, and re-run this script."
+            )
+        else:
+            bing_connection_id = bing_connection.id
+            web_tool_enabled = True
+            print(
+                f"Web tool: bing_custom_search (connection {bing_connection_name!r}, "
+                f"configuration {bing_custom_config_name!r})."
+            )
     else:
         print(
             "Web tool: DISABLED — BING_CONNECTION_NAME / BING_CUSTOM_CONFIG_NAME not set. "
@@ -387,7 +442,7 @@ def create_agent(project: AIProjectClient, settings: dict):
         description=AGENT_DESCRIPTION,
     )
     print(f"Agent created (id: {agent.id}, name: {agent.name}, version: {agent.version})")
-    return agent
+    return agent, web_tool_enabled
 
 
 def main() -> int:
@@ -396,7 +451,15 @@ def main() -> int:
         endpoint=settings["project_endpoint"],
         credential=DefaultAzureCredential(),
     )
-    create_agent(project, settings)
+    _agent, web_tool_enabled = create_agent(project, settings)
+    if not web_tool_enabled:
+        print(
+            "\nAgent is READY but DEGRADED: no web/news tool, so it answers from the indexed\n"
+            "documents only. Add a Grounding-with-Bing-Custom-Search connection to the Foundry\n"
+            "project, set BING_CONNECTION_NAME + BING_CUSTOM_CONFIG_NAME, then re-run:\n"
+            "    uv run python scripts/setup_foundry_agent.py"
+        )
+        return EXIT_DEGRADED
     return 0
 
 

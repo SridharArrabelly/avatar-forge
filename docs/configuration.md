@@ -62,8 +62,8 @@ agent-creation time; the runtime backend never talks to Bing directly.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `BING_CONNECTION_NAME` | `groundingwithbingcustquraml` | Foundry connection for Grounding with Bing Custom Search (the agent's only external tool). |
-| `BING_CUSTOM_CONFIG_NAME` | `mtn-avatar-search` | Bing Custom Search configuration name — the curated domain allow-list the web tool is restricted to. |
+| `BING_CONNECTION_NAME` | *(unset — web tool disabled)* | **Optional.** Foundry connection for Grounding with Bing Custom Search (the agent's only external tool). Leave unset for a search-only agent; naming a connection that doesn't exist skips the tool with a warning rather than failing. |
+| `BING_CUSTOM_CONFIG_NAME` | *(unset — web tool disabled)* | **Optional.** Bing Custom Search configuration name — the curated domain allow-list the web tool is restricted to. Required only alongside `BING_CONNECTION_NAME`. |
 | `AGENT_MODEL` | `gpt-5.4` | Foundry model deployment the agent runs on. Recommended: `gpt-5.4` + `AGENT_REASONING_EFFORT=none` (best tool routing; 30/30 on the harness). `gpt-5.4-mini` is a cheaper fallback; `gpt-4.1-mini` is the documented baseline. See [architecture.md](architecture.md#tool-calling-accuracy). |
 | `AGENT_REASONING_EFFORT` | `none` | Reasoning effort. **Model-dependent:** `gpt-4.x`/`gpt-4o` reject it (leave **unset** — they 400, manifesting as a silently non-speaking avatar); `gpt-5.x` accept `none\|low\|medium\|high\|xhigh`; o-series accept `low\|medium\|high`. For voice latency the validated value is `none` (real reasoning adds 4–5s to first token). The script also selects the prompt variant from this. |
 | `AI_SEARCH_TOP_K` | `8` | Chunks pulled from the meeting-minutes index per turn. |

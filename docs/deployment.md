@@ -158,11 +158,16 @@ azd env set SEARCH_INDEX_NAME     your-existing-index-name
 azd env set APPINSIGHTS_NAME           your-appi-prod
 azd env set APPINSIGHTS_RESOURCE_GROUP rg-shared-observability
 
-# (optional) Pin the agent / search / bing names the container reads at runtime
+# (optional) Pin the agent / search names the container reads at runtime
 azd env set AGENT_NAME              MtnAvatarAgent
 azd env set SEARCH_CONNECTION_NAME  aisearch-connection
-azd env set BING_CONNECTION_NAME    groundingwithbingcustquraml
-azd env set BING_CUSTOM_CONFIG_NAME mtn-avatar-search
+
+# (optional) Enable the web/news tool — ONLY if you have already created a
+# Grounding-with-Bing-Custom-Search connection in your Foundry project.
+# Leave both unset for a working search-only agent; add them later and re-run
+# `uv run python scripts/setup_foundry_agent.py` to switch the tool on.
+azd env set BING_CONNECTION_NAME    <your-bing-grounding-connection>
+azd env set BING_CUSTOM_CONFIG_NAME <your-bing-custom-config>
 
 # 6. Provision + deploy
 azd up
@@ -263,8 +268,39 @@ For **greenfield** (template provisions Foundry + Search) the `postprovision` ho
 - `scripts/setup_aisearch_index.py` — chunks + embeds every `data/*.docx` and builds
   the AI Search index. **Drop documents into `data/` BEFORE `azd up`** — otherwise the
   hook prints a warning and you must run it manually after adding files.
-- `scripts/setup_foundry_agent.py` — registers the Foundry agent (`AGENT_NAME`) with
-  the AI Search + Grounding-with-Bing-Custom-Search tools.
+- `scripts/setup_foundry_agent.py` — registers the Foundry agent (`AGENT_NAME`) with the
+  AI Search tool, plus the Grounding-with-Bing-Custom-Search tool **if** it is configured.
+
+### The web tool is optional, and the deploy tells you which state you got
+
+The agent needs two things, and they fail differently on purpose:
+
+| | Missing means | Result |
+|---|---|---|
+| **AI Search connection** | the agent has no corpus | **Fatal.** Nothing usable is created. |
+| **Bing connection** | no open-web/news grounding | **Degraded.** The agent is created and answers from your indexed documents. |
+
+The Bing tool is skipped — with a warning, not an error — both when
+`BING_CONNECTION_NAME` / `BING_CUSTOM_CONFIG_NAME` are unset *and* when they name a
+connection that doesn't exist in your project. That second case is the common one: it
+happens whenever a `.env` is copied from another environment. So you can deploy today
+without Bing and add it later.
+
+Every deploy ends with a **`--- Data plane ---`** block stating what actually exists:
+
+```text
+--- Data plane ---
+  Search index : built
+  Agent        : ready, WEB TOOL OFF - answers from indexed documents only.
+```
+
+If the agent could not be created at all, the hook **exits non-zero** so a broken deploy
+can never look successful. Your Azure resources are still fine — only the data-plane
+step needs re-running; nothing needs re-provisioning.
+
+To add the web tool later: create a Grounding-with-Bing-Custom-Search connection in the
+Foundry project, `azd env set BING_CONNECTION_NAME` + `BING_CUSTOM_CONFIG_NAME`, then
+re-run the agent script below.
 
 For **brownfield** (BYO) the hook skips both — your existing agent and index are reused.
 Make sure your `AGENT_NAME` / `AGENT_PROJECT_NAME` / `SEARCH_CONNECTION_NAME` /
@@ -272,9 +308,10 @@ Make sure your `AGENT_NAME` / `AGENT_PROJECT_NAME` / `SEARCH_CONNECTION_NAME` /
 `azd env set` before `azd provision`).
 
 You can always rerun them manually (point your local `.env` at the deployed endpoints
-via `azd env get-values`):
+via `azd env get-values`). All three are idempotent:
 
 ```powershell
+azd hooks run postprovision                      # both steps, in order
 uv run python scripts/setup_aisearch_index.py     # rebuild the index
 uv run python scripts/setup_foundry_agent.py      # re-register the agent + tools
 ```

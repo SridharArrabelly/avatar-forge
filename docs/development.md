@@ -118,9 +118,17 @@ test checklist + model-shootout results live in
 
 ## Automated tests
 
-Everything above is a *smoke test* — it needs live Azure resources. The one part of
-the system with genuine offline tests is the media bot's wire protocol, because it is
-the only seam that doesn't touch the cloud:
+Everything above is a *smoke test* — it needs live Azure resources. Two checks run
+fully offline:
+
+```powershell
+uv run python scripts/test_agent_tool_wiring.py
+```
+
+Proves the agent's **required vs optional** tools degrade correctly: a missing AI Search
+connection is fatal (it is the corpus), while a missing — or wrongly named — Bing
+connection only disables the web tool. Needs no Azure and no credentials. Run it after
+touching `setup_foundry_agent.py`.
 
 ```powershell
 cd meeting-bot\tests\BridgeContract.Tests
