@@ -1,4 +1,4 @@
-"""ACS HTTP + WebSocket endpoints (issue #27, Phase 2b).
+"""ACS HTTP + WebSocket endpoints (channel D, issue #27).
 
 All endpoints are additive and gated on ``ACS_ENABLED``. When ACS is not
 configured every endpoint returns 503 and the rest of the app is unaffected.
@@ -8,7 +8,8 @@ Endpoints:
   POST /api/acs/token     -> mint an ACS VoIP token for the browser joiner
   POST /api/acs/call      -> attach media to a joined call (ServerCallId -> connect_call)
   POST /api/acs/callback  -> ACS Call Automation event webhook (CloudEvents)
-  WS   /ws/acs/audio      -> ACS bidirectional media stream <-> Voice Live
+  WS   /ws/acs/audio      -> the .NET Graph media bot <-> Voice Live (hears the room)
+  WS   /ws/acs/browser    -> the browser joiner <-> Voice Live (hears the operator only)
 """
 
 from __future__ import annotations
@@ -44,7 +45,8 @@ logger = logging.getLogger(__name__)
 # keeps per-process session state.
 _ACTIVE_CALLS: set[str] = set()
 
-# Config for the in-call Voice Live session. Audio-only (no avatar/WebRTC, D2),
+# Config for the in-call Voice Live session. Audio-only on the Voice Live socket
+# (the avatar's picture is decoded separately and pushed as video frames),
 # no proactive greeting (she must not announce herself over the room on connect),
 # semantic VAD + barge-in so she yields to humans.
 #
@@ -126,14 +128,14 @@ def build_acs_router() -> APIRouter:
 
     @router.get("/api/acs/config")
     async def acs_config():
-        """Tell the joiner page whether Phase 2b is enabled."""
+        """Tell the joiner page whether channel D is enabled."""
         return {
             "enabled": ACS_ENABLED,
             "endpoint": ACS_ENDPOINT,
             # Single branding knob (AVATAR_DISPLAY_NAME) so the browser joiner's
             # participant name is never hardcoded.
             "avatarDisplayName": AVATAR_DISPLAY_NAME,
-            # Phase 2b Slice 2: when true the joiner sends a branded video tile.
+            # Avatar face: when true the joiner sends a branded video tile.
             "avatarVideoEnabled": ACS_AVATAR_VIDEO_ENABLED,
             # ...and when THIS is true that tile carries the live lip-synced
             # avatar (streamed over the media socket) instead of the placard.

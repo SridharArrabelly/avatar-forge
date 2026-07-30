@@ -102,7 +102,7 @@ public sealed class CallHandler : IAsyncDisposable
     private int _concealed;
     private const int MaxConcealFrames = 10;        // 200 ms, then give up to silence
 
-    // ── Slice 2A — outbound avatar video (only used when EnableVideo) ──
+    // ── Outbound avatar video (only used when EnableVideo) ──
     // Real NV12 frames from Voice Live (forwarded by Python as VideoData) land
     // here; the playout loop drains them at frame cadence. While none have
     // arrived yet — or whenever the queue runs dry — the loop sends a static
@@ -166,7 +166,7 @@ public sealed class CallHandler : IAsyncDisposable
         // 4. Wire the Graph AudioSocket (inbound + outbound).
         WireAudioSocket();
 
-        // 5. Slice 2A: if the avatar face is enabled, wire the outbound VideoSocket
+        // 5. If the avatar face is enabled, wire the outbound VideoSocket
         //    and start pumping NV12 frames (real ones from Voice Live, else a
         //    placeholder). Audio is never blocked on this.
         if (_options.EnableVideo)
@@ -403,7 +403,7 @@ public sealed class CallHandler : IAsyncDisposable
     }
 
     /// <summary>
-    /// Wires the call's outbound video socket (Slice 2A). Real avatar NV12 frames
+    /// Wires the call's outbound video socket. Real avatar NV12 frames
     /// arrive from the bridge (<c>VideoData</c>) and are queued; a playout loop
     /// pushes them — or a placeholder — into the call as a camera tile. Only
     /// called when <see cref="BotOptions.EnableVideo"/> is set.
@@ -616,7 +616,7 @@ internal sealed class AudioSendBuffer : Microsoft.Skype.Bots.Media.AudioMediaBuf
 
 /// <summary>
 /// Minimal NV12 <see cref="Microsoft.Skype.Bots.Media.VideoMediaBuffer"/> wrapper
-/// (Slice 2A). Adapts a managed NV12 byte[] into the unmanaged buffer the media
+/// Adapts a managed NV12 byte[] into the unmanaged buffer the media
 /// platform sends as the bot's outbound camera tile, mirroring the
 /// <see cref="AudioSendBuffer"/> pattern. <paramref name="timestamp"/> is the
 /// 100 ns reference clock the platform uses to pace the video stream.

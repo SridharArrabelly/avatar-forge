@@ -1,9 +1,9 @@
 /*
- * Nuru meeting control panel (issue #27, Phase 2b — optional Companion surface).
+ * Nuru meeting control panel (channel D, issue #27 — optional Companion surface).
  *
  * This is the DURABLE companion surface: a "meeting control panel", NOT a
  * decorative avatar face. It is the in-meeting front door to the proven ACS
- * audio participant (the Phase 2b spine):
+ * audio participant (the in-call media spine):
  *   - shows whether Nuru is currently live in a call (polls /api/acs/status),
  *   - launches the existing ACS joiner (acs-join.html) in a SEPARATE window so
  *     the ACS Calling leg runs OUTSIDE the Teams meeting webview (avoids a second
@@ -51,7 +51,7 @@ function setLive(state) {
     liveText.textContent = {
         live: `${avatarName} is in the call`,
         off: `${avatarName} is not in the call yet`,
-        disabled: "Phase 2b is not enabled on this deployment",
+        disabled: "In-call media is not enabled on this deployment",
         unknown: "Checking…",
     }[state] || "Checking…";
     bringBtn.disabled = state === "disabled";

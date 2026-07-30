@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a sideloadable Microsoft Teams app package (scope 1A).
+"""Build a sideloadable Microsoft Teams app package.
 
 Substitutes the templated values in ``manifest.template.json`` and zips the
 resulting ``manifest.json`` together with the two icons **at the zip root**
@@ -18,7 +18,7 @@ Inputs (CLI flag overrides env var):
     --app-id   / TEAMS_APP_ID        Optional. Stable GUID. Defaults to a deterministic
                                      uuid5 derived from the hostname so rebuilds match.
     --bot-id   / TEAMS_BOT_ID        Optional. Azure Bot / Entra app GUID. When omitted the
-                                     build is tab-only (Phase 1) — the additive `bots` entry
+                                     build is tab-only (channel B) — the additive `bots` entry
                                      is dropped so the Tab package always builds.
     --name     / TEAMS_APP_NAME      Optional. Assistant persona / display name shown in Teams
                                      (default "Avatar"; pass e.g. "Nuru" for a branded build).
@@ -82,7 +82,7 @@ def _resolve_bot_id(raw: str | None) -> str:
     """Validate the bot id (the Azure Bot / Entra app GUID) used in the manifest.
 
     Optional: when omitted, the build produces a **tab-only** package (the
-    Phase 1 behaviour) by dropping the ``bots`` entry — the bot is purely
+    channel B behaviour) by dropping the ``bots`` entry — the bot is purely
     additive and must never gate the always-working Tab. When supplied it must
     be the Microsoft App ID (GUID) of the Azure Bot registration (issue #53).
     """
@@ -138,7 +138,7 @@ def _resolve_names(raw_name: str | None, raw_full: str | None) -> dict[str, str]
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Build the Teams app package (scope 1A).")
+    parser = argparse.ArgumentParser(description="Build the Teams app package.")
     parser.add_argument("--hostname", default=os.getenv("TEAMS_HOSTNAME"))
     parser.add_argument("--version", default=os.getenv("TEAMS_APP_VERSION", "1.0.0"))
     parser.add_argument("--app-id", default=os.getenv("TEAMS_APP_ID"))
@@ -149,16 +149,16 @@ def main(argv: list[str] | None = None) -> int:
         "--enable-companion",
         action="store_true",
         default=_env_flag("TEAMS_ENABLE_COMPANION"),
-        help="Include the optional Phase 2b meeting control panel (configurableTabs). "
-        "Off by default — the package is then identical to the Phase 1/2a build.",
+        help="Include the optional channel D meeting control panel (configurableTabs). "
+        "Off by default — the package is then identical to the tab-only/chat-only build.",
     )
     parser.add_argument(
         "--enable-calling",
         action="store_true",
         default=_env_flag("TEAMS_ENABLE_CALLING"),
         help="Mark the bot as a Teams calling bot (supportsCalling=true) for the "
-        "Phase 2b (#27) in-call media bot. Off by default — the package is then "
-        "identical to the Phase 2a chat-only build. Requires a --bot-id and a "
+        "channel D (#27) in-call media bot. Off by default — the package is then "
+        "identical to the channel C chat-only build. Requires a --bot-id and a "
         "tenant policy that allows calling bots in meetings.",
     )
     args = parser.parse_args(argv)
@@ -195,19 +195,19 @@ def main(argv: list[str] | None = None) -> int:
     except json.JSONDecodeError as e:
         sys.exit(f"error: rendered manifest is not valid JSON: {e}")
 
-    # Tab-only build: drop the additive bot so the package matches Phase 1 and
+    # Tab-only build: drop the additive bot so the package matches channel B and
     # never gates the always-working Tab. The bot is opt-in via --bot-id.
     if not bot_id:
         manifest.pop("bots", None)
 
-    # Phase 2b (#27): mark the bot as a calling bot so it can join meeting media.
-    # Opt-in — default leaves supportsCalling=false (the Phase 2a chat-only shape).
+    # Channel D (#27): mark the bot as a calling bot so it can join meeting media.
+    # Opt-in — default leaves supportsCalling=false (the channel C chat-only shape).
     if bot_id and args.enable_calling:
         for bot in manifest.get("bots", []):
             bot["supportsCalling"] = True
 
-    # The Phase 2b meeting control panel (configurableTabs) is opt-in. When not
-    # enabled the entry is dropped so the package is byte-for-byte the Phase 1/2a
+    # The channel D meeting control panel (configurableTabs) is opt-in. When not
+    # enabled the entry is dropped so the package is byte-for-byte the tab-only/chat-only
     # shape — the optional Companion never gates the always-working Tab/bot.
     if not args.enable_companion:
         manifest.pop("configurableTabs", None)

@@ -156,7 +156,7 @@ app.include_router(ws.router)
 # Teams bot messaging endpoint (issue #53). Mounted before the static SPA so
 # POST /api/messages is handled by the bot, not the catch-all frontend mount.
 app.include_router(build_bot_router())
-# Teams in-call media participant (issue #27, Phase 2b). Additive + opt-in: every
+# Teams in-call media participant (channel D, issue #27). Additive + opt-in: every
 # ACS endpoint returns 503 when ACS is not configured, so this never changes a
 # non-ACS deploy. Mounted before the static SPA so /api/acs/* + /ws/acs/* resolve.
 app.include_router(build_acs_router())

@@ -43,8 +43,8 @@ builder.Host.UseWindowsService();
 
 // ── Configuration ──
 // Bind Bot:* from appsettings + environment. AppSecret should come from the
-// environment (Bot__AppSecret) — never appsettings.json. In the avatar-forge
-// MngEnv setup it is the azd env value BOT_CLIENT_SECRET.
+// environment (Bot__AppSecret) — never appsettings.json. The host setup script
+// writes it from the azd env value BOT_CLIENT_SECRET.
 builder.Services.Configure<BotOptions>(builder.Configuration.GetSection(BotOptions.SectionName));
 
 // Allow the standard env var BOT_CLIENT_SECRET to populate Bot:AppSecret.

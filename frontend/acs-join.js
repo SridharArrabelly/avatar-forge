@@ -1,5 +1,5 @@
 /*
- * Browser joiner for the in-call avatar (issue #27, Phase 2b — D5 option A1).
+ * Browser joiner for the in-call avatar (channel D, issue #27).
  *
  * This is the one piece that cannot run server-side: ACS Call Automation has no
  * "join Teams meeting by URL" API, so a client-side ACS Calling SDK must join the
@@ -71,7 +71,7 @@ let callAgent = null;
 // in ensureEnabled() so the participant name is never hardcoded.
 let avatarDisplayName = "Avatar";
 let _configReady = null;
-// Phase 2b Slice 2 (avatar face): when the server enables it, the joiner sends an
+// Avatar face: when the server enables it, the joiner sends an
 // outgoing video tile so the avatar is a *visible* participant. The first
 // increment is a branded placard (logo + name + a "listening" pulse) drawn to a
 // canvas and sent via the ACS raw-video LocalVideoStream — the same path a live
@@ -482,7 +482,7 @@ function drawAvatarFrame(ctx, canvas) {
     return true;
 }
 
-// ───────── outgoing video tile (Phase 2b Slice 2: avatar face) ─────────
+// ───────── outgoing video tile (avatar face) ─────────
 // Render a branded placard (logo + avatar name + a "listening" pulse) to a canvas
 // and send it as the call's outgoing video, so the avatar is a visible participant
 // tile instead of a faceless audio leg. We use the ACS Calling SDK's raw-video

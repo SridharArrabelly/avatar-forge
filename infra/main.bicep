@@ -66,7 +66,7 @@ param avatarBackgroundImageUrl string = ''
 param srModel string = 'mai-transcribe-1'
 param recognitionLanguage string = 'auto'
 
-// ───────── Teams bot (issue #53, Phase 2a) ─────────
+// ───────── Teams bot (channel C, issue #53) ─────────
 @description('Bot Entra app client id (Microsoft App ID). Leave empty to skip bot provisioning. Surfaces as TEAMS_BOT_ID.')
 param botAppId string = ''
 @description('Bot app tenant id (single-tenant). Defaults to the deployment tenant when empty.')
@@ -81,10 +81,10 @@ param teamsAppId string = ''
 @description('Foundry agent id override. Empty resolves the agent by AGENT_NAME.')
 param agentId string = ''
 
-// ───────── Phase 2b in-call media (#27) ─────────
+// ───────── channel D in-call media (#27) ─────────
 @description('Deployment profile from `scripts/set_profile.py` — one of "web", "teams-tab", "teams-chat", "in-call". Drives which optional channels deploy. Empty keeps the pre-profile behaviour (explicit flags only).')
 param deployProfile string = ''
-@description('Enable Phase 2b ACS Call Automation media participant ("true"/"false"). When not "true" (default), no ACS resource is created and the deployment behaves exactly as today.')
+@description('Enable channel D ACS Call Automation media participant ("true"/"false"). When not "true" (default), no ACS resource is created and the deployment behaves exactly as today.')
 param enableAcs string = 'false'
 @description('ACS data residency geography (NOT an Azure region), e.g. "United States", "Europe", "Africa".')
 param acsDataLocation string = 'United States'
@@ -97,7 +97,7 @@ param acsRequireWakePhrase string = ''
 @description('"true"/"false". In-call avatar sends an outgoing video tile so it is a visible participant.')
 param acsAvatarVideoEnabled string = ''
 
-// ───────── Phase 2b Windows media host (#27) ─────────
+// ───────── channel D Windows media host (#27) ─────────
 // Deployed only for the in-call channel. Requires its own Entra app — an app can
 // back only ONE Azure Bot resource, so this cannot reuse botAppId.
 @description('"true"/"false". Provision the Windows media host + calling bot registration. Implied by deployProfile="in-call".')
@@ -210,7 +210,7 @@ module resources 'resources.bicep' = {
   }
 }
 
-// ───────── Phase 2b: Windows media host + calling bot registration ─────────
+// ───────── channel D: Windows media host + calling bot registration ─────────
 // Conditional and additive. Only instantiated for the in-call channel.
 module meetingBotHost 'modules/meetingBotHost.bicep' = if (deployHost) {
   name: 'meeting-bot-host'
@@ -259,10 +259,10 @@ output BOT_MESSAGING_ENDPOINT string = resources.outputs.botMessagingEndpoint
 output TEAMS_BOT_ID string = botAppId
 output TEAMS_APP_ID string = teamsAppId
 
-// Phase 2b in-call media (#27). Empty unless enableAcs=true.
+// Channel D in-call media (#27). Empty unless enableAcs=true.
 output ACS_ENDPOINT string = resources.outputs.acsEndpoint
 
-// Phase 2b Windows media host. Empty strings unless the in-call channel deployed.
+// Channel D Windows media host. Empty strings unless the in-call channel deployed.
 output DEPLOY_PROFILE string = deployProfile
 output MEETING_BOT_HOST_DEPLOYED string = deployHost ? 'true' : 'false'
 output MEETING_BOT_FQDN string = deployHost ? meetingBotHost.outputs.publicFqdn : ''

@@ -1,4 +1,4 @@
-"""ACS client factories and media-streaming option builders (Phase 2b).
+"""ACS client factories and media-streaming option builders (channel D).
 
 The Call Automation and Identity SDKs are **synchronous** and the FastAPI app is
 async, so the one-shot control calls (mint a token, ``connect_call``) are run in a
@@ -6,7 +6,7 @@ thread via ``asyncio.to_thread`` by the callers in ``routes.py``.
 
 All imports of ``azure.communication.*`` are lazy so the module imports cleanly
 (and the app boots) even if the optional ACS SDKs are not installed or ACS is
-disabled — mirroring the additive guardrail used by the Phase 2a bot.
+disabled — mirroring the additive guardrail used by the channel C bot.
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 
 def acs_configured() -> bool:
-    """True when Phase 2b is configured (endpoint or connection string present)."""
+    """True when channel D is configured (endpoint or connection string present)."""
     return ACS_ENABLED
 
 

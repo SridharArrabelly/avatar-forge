@@ -285,4 +285,4 @@ The deployed Container App HTTPS URL is both the Teams tab `contentUrl` and the 
 messaging endpoint (`/api/messages`). Building the package, the Azure Bot registration,
 sideloading, and the bot identity steps are all in [`teams/README.md`](../teams/README.md).
 The bot infra is **opt-in**: if no bot app id is supplied, the deploy behaves exactly
-like the tab-only Phase 1.
+like the tab-only channel B.

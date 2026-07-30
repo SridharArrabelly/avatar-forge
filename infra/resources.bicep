@@ -59,8 +59,8 @@ param botDisplayName string = 'Avatar Forge'
 param teamsAppId string = ''
 param agentId string = ''
 
-// ───────── Phase 2b in-call media (#27) ─────────
-@description('Enable Phase 2b ACS Call Automation media participant ("true"/"false"). When not "true" (default), no ACS resource is created and the container behaves as today.')
+// ───────── channel D in-call media (#27) ─────────
+@description('Enable channel D ACS Call Automation media participant ("true"/"false"). When not "true" (default), no ACS resource is created and the container behaves as today.')
 param enableAcs string = 'false'
 @description('ACS data residency geography (NOT an Azure region), e.g. "United States", "Europe", "Africa".')
 param acsDataLocation string = 'United States'
@@ -202,8 +202,8 @@ module foundryRoleForSearch 'modules/foundryRoleForSearch.bicep' = if (createSea
   }
 }
 
-// ───────── Phase 2b in-call media (#27) ─────────
-// Only provisioned when Phase 2b is explicitly enabled. Additive + conditional,
+// ───────── channel D in-call media (#27) ─────────
+// Only provisioned when channel D is explicitly enabled. Additive + conditional,
 // mirroring the botService opt-in: a deploy with enableAcs=false never creates ACS.
 module acs 'modules/communicationServices.bicep' = if (acsEnabled) {
   name: 'acs'
@@ -283,7 +283,7 @@ module app 'modules/containerApp.bicep' = {
   }
 }
 
-// ───────── Teams bot (issue #53, Phase 2a) ─────────
+// ───────── Teams bot (channel C, issue #53) ─────────
 // Only provisioned when a bot app id is supplied. The messaging endpoint is the
 // Container App HTTPS URL + /api/messages.
 module botService 'modules/botService.bicep' = if (!empty(botAppId)) {

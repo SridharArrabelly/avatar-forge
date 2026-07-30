@@ -116,6 +116,10 @@ matched to `MODEL_NAME` (an invalid pair fails the deployment).
 | `DEVELOPER_MODE` | `false` | `true` exposes the settings panel, live transcript, and per-event debug logging. `false` (production) auto-starts an avatar-only experience. |
 | `MEETING_CATALOG_TTL_S` | `900` | Seconds the backend caches the meeting catalogue it fetches from AI Search and injects at session start ([`backend/voice/catalog.py`](../backend/voice/catalog.py)). |
 | `APPLICATIONINSIGHTS_CONNECTION_STRING` | — | App Insights connection string for telemetry. |
+| `LOG_LEVEL` | `INFO` | Root logging level (`DEBUG`, `INFO`, `WARNING`, …). `DEVELOPER_MODE=true` already raises per-event detail; use this to quieten or deepen logs independently. |
+| `HOST` | `0.0.0.0` | Interface the server binds to. Leave as-is in a container. |
+| `PORT` | `3000` | Port the server listens on. The container image and `targetPort` in Bicep both assume `3000`; change both together or ingress breaks. |
+| `VOICELIVE_API_VERSION` | `2026-01-01-preview` | Voice Live REST/WebSocket API version. Pin only to work around a regression — the code is written against this version. |
 
 ---
 
@@ -213,23 +217,45 @@ mode. Captions are **off** by default; suggested prompts, the on-stage composer
 
 ---
 
-## Teams conversational bot (Phase 2a, issue #53)
+## Teams conversational bot (channel C, issue #53)
 
 Only needed when hosting the Teams bot. The bot reuses the same Foundry agent
 (`AGENT_NAME` / `PROJECT_ENDPOINT`) for answers. Bot identity comes from the Azure
 Bot registration + its Entra app — see [`teams/README.md`](../teams/README.md) for
 the portal/CLI steps. If `TEAMS_BOT_ID` / `BOT_APP_ID` is unset, the bot infra is
-skipped and the deploy behaves exactly like Phase 1 (tab-only).
+skipped and the deploy behaves exactly like channel B (tab-only).
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTID` | — | Bot app client id (Microsoft 365 Agents SDK convention). |
+| `BOT_APP_ID` | — | **The one you set.** `azd env set BOT_APP_ID <id>` — the chat bot's Entra app (client) id. Provisions `botService.bicep` and populates the `CONNECTIONS__*` values below. Unset ⇒ the bot infra is skipped entirely. |
+| `BOT_APP_PASSWORD` | — | That app's client secret. Stored as an ACA secret by infra, never as a plain env var. |
+| `BOT_APP_TENANT_ID` | *(deployment tenant)* | Tenant of the bot's Entra app. |
+| `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTID` | — | Bot app client id (Microsoft 365 Agents SDK convention). **Set for you by infra** from `BOT_APP_ID`; the backend reads this name first. |
 | `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTSECRET` | — | Bot app client secret (stored as an ACA secret by infra). |
 | `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__TENANTID` | — | Tenant id of the bot's Entra app. |
 | `TEAMS_BOT_ID` | — | The bot's Microsoft App ID (GUID). Also fills `{{BOT_ID}}` in the manifest via [`teams/build_package.py`](../teams/build_package.py). |
 | `TEAMS_APP_ID` | — | The Teams app (manifest) id; used to build deep links from the bot back into the personal tab. Match the id used to build the package. |
 | `TEAMS_TAB_ENTITY_ID` | `avatarForgeHome` | The static-tab entity id the bot deep-links to. |
 | `BOT_RUN_TIMEOUT_S` | `60` | Max seconds a grounded Foundry run executes in the background before a "took too long" reply. Answers are delivered as a proactive message (ack-then-background-run), so this is **not** bound by the Teams ~15s turn window. |
+
+---
+
+## Teams app package *(build only)*
+
+Read by [`teams/build_package.py`](../teams/build_package.py) when it templates
+`manifest.template.json` into an uploadable zip. Every one has an equivalent command-line
+flag, which wins over the variable — see [`teams/README.md`](../teams/README.md).
+
+| Variable | Flag | Default | Purpose |
+|---|---|---|---|
+| `TEAMS_HOSTNAME` | `--hostname` | — | **Required.** Host of the deployed app (`<name>.azurecontainerapps.io`, no scheme). Becomes every URL in the manifest. |
+| `TEAMS_APP_NAME` | `--name` | `Avatar` | Short name shown in Teams — the assistant's persona name. Pass your `AVATAR_DISPLAY_NAME` here so the package matches the web app. |
+| `TEAMS_APP_FULL_NAME` | `--full-name` | `<name> — Azure Voice Live Avatar` | Long name shown on the app's detail page. |
+| `TEAMS_APP_VERSION` | `--version` | `1.0.0` | Manifest version. Teams refuses a re-upload unless this increases. |
+| `TEAMS_APP_ID` | `--app-id` | *(uuid5 of the hostname)* | Manifest app id (GUID). Derived deterministically from the hostname when unset, so rebuilds match. |
+| `TEAMS_BOT_ID` | `--bot-id` | — | Bot app id to embed. **Omit to build a tab-only package** — Teams rejects an upload whose bot is not registered in your tenant. |
+| `TEAMS_ENABLE_CALLING` | `--enable-calling` | `false` | Sets `supportsCalling: true`. Pair with the **calling** bot's id (`MEETING_BOT_APP_ID`), not the chat bot's. |
+| `TEAMS_ENABLE_COMPANION` | `--enable-companion` | `false` | Adds the in-meeting side panel / stage tabs. Off keeps the package identical to the tab-only shape. |
 
 ## Teams in-call avatar (channel D, issue #27)
 
@@ -248,13 +274,30 @@ it serves the media bot **without** provisioning an ACS resource. See
 |---|---|---|
 | `ENABLE_ACS` | `false` | **azd/infra only.** When `true`, provisions the conditional `communicationServices.bicep` and passes `ACS_ENDPOINT` to the container. |
 | `ACS_DATA_LOCATION` | `United States` | **azd/infra only.** Data residency geography for the ACS resource. |
-| `ACS_ENDPOINT` | — | ACS resource endpoint (`https://<acs>.communication.azure.com/`). Set automatically by infra; enables Phase 2b. Auth via the container's managed identity (needs a role on the ACS resource). |
-| `ACS_CONNECTION_STRING` | — | Alternative to `ACS_ENDPOINT` + managed identity (includes endpoint + key). Takes precedence when set; simplest for local/dev. Enables Phase 2b. |
+| `ACS_ENDPOINT` | — | ACS resource endpoint (`https://<acs>.communication.azure.com/`). Set automatically by infra; enables channel D. Auth via the container's managed identity (needs a role on the ACS resource). |
+| `ACS_CONNECTION_STRING` | — | Alternative to `ACS_ENDPOINT` + managed identity (includes endpoint + key). Takes precedence when set; simplest for local/dev. Enables channel D. |
 | `ACS_CALLBACK_BASE_URL` | — | Public HTTPS base URL ACS uses for call-event callbacks and the media WebSocket. Defaults to the app's own external ingress; set for local dev behind a Dev Tunnel/ngrok. |
 | `ACS_AUDIO_SAMPLE_RATE` | `24000` | PCM sample rate (Hz) for the ACS↔Voice Live bridge. `24000` matches Voice Live (no resample); `16000` also valid. |
 | `ACS_WAKE_PHRASES` | `hey nuru,nuru` | Comma-separated, case-insensitive phrases that invoke a spoken answer (turn-taking, so she never talks over the room). |
 | `ACS_REQUIRE_WAKE_PHRASE` | `true` | Require a wake phrase before answering (half-duplex). Set `false` in a 1:1 test meeting to answer every turn. |
 | `ACS_IDLE_TIMEOUT_S` | `0` | Leave the call after N seconds of inactivity (`0` disables). |
+| `ACS_FOLLOWUP_WINDOW_S` | `30` | Seconds after an answer during which a follow-up needs **no** wake phrase, so a real back-and-forth doesn't require saying the name every turn. |
+
+### The avatar's face in the meeting
+
+Both in-call legs default to **audio only**. Turning the face on is one flag per leg, and
+the frame geometry must match on both sides of the bridge — the .NET bot silently drops
+frames whose dimensions differ from what it negotiated and shows its placeholder instead.
+The matching values on the VM are `Bot__EnableVideo`, `Bot__VideoWidth/Height/Fps`.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `MEETING_BOT_VIDEO_ENABLED` | `false` | Forward decoded avatar video to the .NET media bot so it renders a lip-synced camera tile. Must agree with `Bot__EnableVideo` on the VM. |
+| `MEETING_BOT_VIDEO_WIDTH` | `640` | Outbound frame width. Must match `Bot__VideoWidth`. |
+| `MEETING_BOT_VIDEO_HEIGHT` | `360` | Outbound frame height. Must match `Bot__VideoHeight`. |
+| `MEETING_BOT_VIDEO_FPS` | `15` | Outbound frame rate. Must match `Bot__VideoFps`. |
+| `ACS_AVATAR_VIDEO_ENABLED` | `false` | Ask Voice Live to synthesise avatar **video** for in-call sessions. Required for either leg to have a face. |
+| `BROWSER_JOIN_VIDEO_ENABLED` | `false` | Browser-joiner leg only: decode the avatar in the browser and publish it as the ACS video tile. Setting it `false` is the safe rollback — the voice keeps working. |
 
 ### Windows media host *(azd/infra only)*
 
@@ -273,3 +316,17 @@ deploy first and tells you which one.
 | `MEETING_BOT_ADMIN_PASSWORD` | — | **Required.** Local administrator password for the Windows host (12–123 chars, 3 of 4 character classes). |
 | `MEETING_BOT_VM_SIZE` | `Standard_D4s_v5` | 4 vCPU. This is the size proven to run the Real-Time Media Platform — a 2-vCPU host was tried and had to be resized. ~$283/month; lowering it is a false economy. |
 | `MEETING_BOT_ICON_URL` | *(empty)* | Public URL of the bot icon shown in Teams. |
+| `MEETING_BOT_ADMIN_USERNAME` | `avatarbot` | Local administrator account created on the Windows host. You need it to RDP in for the `setup-host.ps1` stages. |
+
+### On the Windows host itself
+
+These are **not** azd variables — `setup-host.ps1 -Stage Run` writes them as machine
+environment variables on the VM, and the .NET bot binds them to its `Bot` options.
+
+| Variable | Purpose |
+|---|---|
+| `Bot__AppId` / `Bot__TenantId` | The calling bot's Entra app registration (`-BotAppId` / `-BotTenantId`). |
+| `BOT_CLIENT_SECRET` | That app's client secret (`-BotSecret`). Never put it in `appsettings.json`; the bot reads it from the environment only. |
+| `Bot__ServiceFqdn` / `Bot__CertificateThumbprint` | The host FQDN and the trusted TLS certificate matching it. |
+| `Bot__BridgeWebSocketUrl` | `wss://<container-app>/ws/acs/audio` — where the bot streams meeting audio to the Python brain. |
+| `Bot__EnableVideo` / `Bot__VideoWidth` / `Bot__VideoHeight` / `Bot__VideoFps` | Must match the `MEETING_BOT_VIDEO_*` values above. |

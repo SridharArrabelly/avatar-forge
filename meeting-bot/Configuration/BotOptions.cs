@@ -4,11 +4,11 @@ namespace AvatarForge.MeetingBot.Configuration;
 /// Strongly-typed configuration for the meeting media bot, bound from the
 /// "Bot" section of appsettings.json / environment variables.
 ///
-/// Secrets (AppSecret) must come from the environment or a secret store — never
-/// commit them. In the Avatar-Forge MngEnv tenant the values are:
-///   AppId   = 860ecee0-c226-4930-8c00-e37bae4a3ae5  (avatar-forge-meeting-bot)
-///   Tenant  = 349b3dac-8649-4410-acdc-ef8bbcb7a46f
-///   AppSecret -> stored in azd env BOT_CLIENT_SECRET (do not hardcode)
+/// Every value here is deployment-specific, so nothing real is committed. The
+/// checked-in appsettings.json carries REPLACE- placeholders and the host setup
+/// script writes the real values as machine environment variables
+/// (<c>Bot__AppId</c>, <c>Bot__TenantId</c>, …). The secret is separate again:
+/// it comes from <c>BOT_CLIENT_SECRET</c> and must never be written to a file.
 /// </summary>
 public sealed class BotOptions
 {
@@ -75,7 +75,7 @@ public sealed class BotOptions
     /// <summary>
     /// WebSocket URL of the Python backend bridge endpoint that speaks the
     /// AcsVoiceBridge protocol. Example:
-    ///   wss://ca-avatar-mngenv-....azurecontainerapps.io/ws/acs/audio
+    ///   wss://&lt;your-container-app&gt;.azurecontainerapps.io/ws/acs/audio
     /// </summary>
     public string BridgeWebSocketUrl { get; set; } = string.Empty;
 
@@ -87,10 +87,10 @@ public sealed class BotOptions
     /// </summary>
     public int BridgeSampleRate { get; set; } = 16000;
 
-    // ── Slice 2A — the avatar's video face (camera tile) ──────────────────────
+    // ── The avatar's video face (camera tile) ─────────────────────────────
     //
     // The face is a SECOND, additive media leg. When EnableVideo is false (the
-    // default) the bot is audio-only and behaves exactly like Slice 1 — no
+    // default) the bot is audio-only — no
     // VideoSocket is created, no video is negotiated, nothing changes. When true,
     // the bot negotiates an outbound NV12 video stream and pumps frames into the
     // call as a participant camera tile. The frames are sourced from the SAME
@@ -99,7 +99,7 @@ public sealed class BotOptions
     // speech. Until the Python video source is wired, the loop sends a static
     // placeholder frame so the camera-tile path can be proven independently.
 
-    /// <summary>Master switch for the avatar video face (Slice 2A). Off = audio-only.</summary>
+    /// <summary>Master switch for the avatar video face. Off = audio-only.</summary>
     public bool EnableVideo { get; set; } = false;
 
     /// <summary>Outbound video width in pixels. Must match a supported NV12 send format.</summary>

@@ -1,12 +1,12 @@
-// Azure Communication Services resource for the Phase 2b in-call media participant (#27).
+// Azure Communication Services resource for the channel D in-call media participant (#27).
 //
-// Conditional + additive (mirrors botService.bicep): only deployed when Phase 2b is
-// explicitly enabled (enableAcs=true). A deploy WITHOUT Phase 2b never creates this
+// Conditional + additive (mirrors botService.bicep): only deployed when channel D is
+// explicitly enabled (enableAcs=true). A deploy WITHOUT channel D never creates this
 // resource, so existing (media-less) deployments behave exactly as today.
 //
 // SCOPE OF THIS MODULE: it provisions ONLY the ACS resource itself. It does NOT:
 //   * link the ACS resource to a Teams tenant for interop (that is a Teams-admin /
-//     tenant-policy action — see teams/README.md action items A1/A3), or
+//     tenant-policy action — see docs/admin-checklist.md), or
 //   * create any Entra app registration / grant admin consent.
 // Those are deliberately out of the resource-group deployment scope because they
 // require directory / Teams-admin rights this project does not assume.

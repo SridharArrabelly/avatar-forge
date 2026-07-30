@@ -99,10 +99,12 @@ azd up
 
 # then, ON THE WINDOWS VM (RDP in), install/refresh the bot service
 .\meeting-bot\scripts\setup-host.ps1 -Stage Prep
-.\meeting-bot\scripts\setup-host.ps1 -Stage Cert -Email you@example.com
+.\meeting-bot\scripts\setup-host.ps1 -Stage Cert -Fqdn <vm-fqdn> -CertEmail you@example.com
 .\meeting-bot\scripts\setup-host.ps1 -Stage Build
-.\meeting-bot\scripts\setup-host.ps1 -Stage Run -Thumbprint <cert-tp> `
-    -BridgeUrl wss://<your-container-app>/ws/acs/audio -BotSecret <secret>
+.\meeting-bot\scripts\setup-host.ps1 -Stage Run -Fqdn <vm-fqdn> -Thumbprint <cert-tp> `
+    -BridgeUrl wss://<your-container-app>/ws/acs/audio `
+    -BotAppId <MEETING_BOT_APP_ID> -BotTenantId <MEETING_BOT_APP_TENANT_ID> `
+    -BotSecret <bot-client-secret>
 ```
 
 The `setup-host.ps1` stages run **on the VM**, not on your workstation — they install

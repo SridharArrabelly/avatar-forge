@@ -49,8 +49,8 @@ param teamsAppId string = ''
 @description('Foundry agent id override. Empty means resolve the agent by AGENT_NAME.')
 param agentId string = ''
 
-// ───────── Phase 2b in-call media (#27) ─────────
-@description('ACS endpoint for the Call Automation media participant. Empty disables Phase 2b in the container.')
+// ───────── channel D in-call media (#27) ─────────
+@description('ACS endpoint for the Call Automation media participant. Empty disables channel D in the container.')
 param acsEndpoint string = ''
 
 @description('"true"/"false" string. When "true", the .NET Teams media bot bridge (/ws/acs/audio) is served WITHOUT an ACS resource — sets MEETING_BOT_ENABLED so ACS_ENABLED is true on the Voice Live path alone.')
@@ -68,9 +68,9 @@ param acsAvatarVideoEnabled string = ''
 @description('Placeholder image used on first provision; azd replaces it during `azd deploy`.')
 param containerImage string = 'mcr.microsoft.com/k8se/quickstart:latest'
 
-// Phase 2b ACS env (additive). Surfaces ACS_ENDPOINT only when enabled; the app
+// Channel D ACS env (additive). Surfaces ACS_ENDPOINT only when enabled; the app
 // reads it to construct the Call Automation client (managed identity via
-// AZURE_CLIENT_ID). Empty -> Phase 2b stays off and the container behaves as today.
+// AZURE_CLIENT_ID). Empty -> channel D stays off and the container behaves as today.
 var acsEnv = !empty(acsEndpoint) ? [
   {
     name: 'ACS_ENDPOINT'
@@ -78,7 +78,7 @@ var acsEnv = !empty(acsEndpoint) ? [
   }
 ] : []
 
-// Phase 2b Teams media-bot env (additive). The .NET media bot connects to the
+// Channel D Teams media-bot env (additive). The .NET media bot connects to the
 // /ws/acs/audio bridge, which only needs Voice Live (no ACS resource). MEETING_BOT_ENABLED
 // flips ACS_ENABLED on so the bridge is served. Empty/false -> behaves as today.
 var meetingBotOn = toLower(meetingBotEnabled) == 'true'

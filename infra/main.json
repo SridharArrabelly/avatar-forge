@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.43.8.12551",
-      "templateHash": "465350186044158148"
+      "templateHash": "11841489409163476650"
     }
   },
   "parameters": {
@@ -221,7 +221,7 @@
       "type": "string",
       "defaultValue": "false",
       "metadata": {
-        "description": "Enable Phase 2b ACS Call Automation media participant (\"true\"/\"false\"). When not \"true\" (default), no ACS resource is created and the deployment behaves exactly as today."
+        "description": "Enable channel D ACS Call Automation media participant (\"true\"/\"false\"). When not \"true\" (default), no ACS resource is created and the deployment behaves exactly as today."
       }
     },
     "acsDataLocation": {
@@ -518,7 +518,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.43.8.12551",
-              "templateHash": "5190757614103222846"
+              "templateHash": "6064097045383943759"
             }
           },
           "parameters": {
@@ -687,7 +687,7 @@
               "type": "string",
               "defaultValue": "false",
               "metadata": {
-                "description": "Enable Phase 2b ACS Call Automation media participant (\"true\"/\"false\"). When not \"true\" (default), no ACS resource is created and the container behaves as today."
+                "description": "Enable channel D ACS Call Automation media participant (\"true\"/\"false\"). When not \"true\" (default), no ACS resource is created and the container behaves as today."
               }
             },
             "acsDataLocation": {
@@ -2104,7 +2104,7 @@
                     "_generator": {
                       "name": "bicep",
                       "version": "0.43.8.12551",
-                      "templateHash": "8148263441507934792"
+                      "templateHash": "6510987069171003795"
                     }
                   },
                   "parameters": {
@@ -2273,7 +2273,7 @@
                       "type": "string",
                       "defaultValue": "",
                       "metadata": {
-                        "description": "ACS endpoint for the Call Automation media participant. Empty disables Phase 2b in the container."
+                        "description": "ACS endpoint for the Call Automation media participant. Empty disables channel D in the container."
                       }
                     },
                     "meetingBotEnabled": {

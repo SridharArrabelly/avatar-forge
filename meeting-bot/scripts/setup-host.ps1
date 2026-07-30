@@ -25,9 +25,10 @@
 
 .EXAMPLE
   # On the box, after prep, get a cert then build+run:
-  .\setup-host.ps1 -Stage Cert  -Fqdn avatar-meetingbot-mngenv.swedencentral.cloudapp.azure.com -CertEmail you@example.com
+  .\setup-host.ps1 -Stage Cert  -Fqdn <host>.<region>.cloudapp.azure.com -CertEmail you@example.com
   .\setup-host.ps1 -Stage Build -RepoUrl https://github.com/SridharArrabelly/avatar-forge.git
-  .\setup-host.ps1 -Stage Run   -Fqdn ... -Thumbprint <cert-thumb> -BridgeUrl wss://<app>/ws/acs/audio -BotSecret <secret>
+  .\setup-host.ps1 -Stage Run   -Fqdn ... -Thumbprint <cert-thumb> -BridgeUrl wss://<app>/ws/acs/audio `
+                                -BotAppId <app-id> -BotTenantId <tenant-id> -BotSecret <secret>
 #>
 [CmdletBinding()]
 param(
@@ -44,8 +45,10 @@ param(
     [string]$Branch = 'main',
     [string]$WorkDir = 'C:\avatar-meetingbot',
     [string]$BridgeUrl,
-    [string]$BotAppId = '860ecee0-c226-4930-8c00-e37bae4a3ae5',
-    [string]$BotTenantId = '349b3dac-8649-4410-acdc-ef8bbcb7a46f',
+    # Deployment-specific: the calling bot's Entra app registration. No defaults
+    # on purpose - a wrong-but-plausible default is worse than a missing one.
+    [string]$BotAppId,
+    [string]$BotTenantId,
     [string]$BotSecret
 )
 
@@ -116,7 +119,7 @@ switch ($Stage) {
     }
 
     'Run' {
-        foreach ($p in 'Fqdn', 'Thumbprint', 'BridgeUrl', 'BotSecret') {
+        foreach ($p in 'Fqdn', 'Thumbprint', 'BridgeUrl', 'BotAppId', 'BotTenantId', 'BotSecret') {
             if (-not (Get-Variable $p).Value) { throw "Run stage requires -$p." }
         }
         Write-Step 'Writing environment and starting the bot service'

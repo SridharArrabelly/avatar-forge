@@ -305,14 +305,16 @@ PROFILES: dict[str, Profile] = {
                     "and media ports, and the Azure Bot registration with the Teams calling webhook.",
                 ),
             ]
-            + _core_steps()[3:4]
+            + _core_steps()[3:5]
             + [
                 Step(
                     "Configure the Windows host",
                     YOU,
                     AFTER,
-                    "Installs .NET, requests the TLS certificate, publishes the bot and registers the service.",
-                    "meeting-bot/scripts/setup-host.ps1",
+                    "RDP into the VM, clone this repo there, then run the four stages: "
+                    "Prep installs .NET, Cert requests the TLS certificate, Build publishes "
+                    "the bot and Run registers the Windows service. Details in meeting-bot/README.md.",
+                    r".\meeting-bot\scripts\setup-host.ps1 -Stage Prep|Cert|Build|Run   (on the VM)",
                 ),
                 Step(
                     "Create a Teams app access policy and assign it",
@@ -324,8 +326,17 @@ PROFILES: dict[str, Profile] = {
                     "New-CsApplicationAccessPolicy / Grant-CsApplicationAccessPolicy",
                 ),
             ]
-            + _teams_package_steps()
             + [
+                Step(
+                    "Build and upload the Teams app package (optional for D)",
+                    YOU,
+                    AFTER,
+                    "The calling bot joins through Graph application permissions, so channel D "
+                    "works WITHOUT installing anything in Teams. Build the package only if you "
+                    "also want the app's in-meeting presence; --enable-calling sets "
+                    "supportsCalling=true in the manifest.",
+                    "uv run python teams/build_package.py --bot-id <MEETING_BOT_APP_ID> --enable-calling",
+                ),
                 Step(
                     "Invite the avatar into a meeting",
                     YOU,

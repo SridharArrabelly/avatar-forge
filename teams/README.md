@@ -155,13 +155,13 @@ Only `frame-ancestors` is set on purpose — a full CSP (`script-src`/`connect-s
 
 # Channel C — Conversational bot (issue #53)
 
-Phase 2a adds an **installable, @mentionable bot** to the **same Teams app package** (the
+Channel C adds an **installable, @mentionable bot** to the **same Teams app package** (the
 manifest now carries both a `staticTabs` entry **and** a `bots` entry — one app, two
 surfaces). The bot answers questions using the **same Foundry agent** the voice avatar
 uses (Azure AI Search RAG + Bing grounding), returns answers as Adaptive Cards with
-sources, and can deep-link back into the Phase 1 tab for the live avatar.
+sources, and can deep-link back into the channel B tab for the live avatar.
 
-It is **additive**: the Phase 1 tab and the standalone web app are unchanged, and no Node
+It is **additive**: the channel B tab and the standalone web app are unchanged, and no Node
 toolchain is introduced. The bot is hosted **inside the existing FastAPI app** (new
 `POST /api/messages` route) using the **Microsoft 365 Agents SDK** (`microsoft-agents-*`,
 FastAPI adapter), so it ships in the same Container App — the messaging endpoint is just
@@ -172,7 +172,7 @@ the existing ACA HTTPS URL + `/api/messages`.
 | Area | Change |
 | --- | --- |
 | `teams/manifest.template.json` | Added a `bots` entry (`personal` + `team` + `groupchat` scopes), a `commandLists`, a `{{BOT_ID}}` placeholder, and `token.botframework.com` to `validDomains`. The static tab is untouched. |
-| `teams/build_package.py` | Optional `--bot-id` / `TEAMS_BOT_ID` input fills `{{BOT_ID}}`. **When omitted, the build is tab-only** (the `bots` entry is dropped) so the Phase 1 Tab package always builds. The zip stays flat (manifest + 2 icons). |
+| `teams/build_package.py` | Optional `--bot-id` / `TEAMS_BOT_ID` input fills `{{BOT_ID}}`. **When omitted, the build is tab-only** (the `bots` entry is dropped) so the channel B Tab package always builds. The zip stays flat (manifest + 2 icons). |
 | `backend/bot/` | The bot: SDK app + `/api/messages` route (`app.py`), Foundry-agent bridge (`agent_runtime.py`), Adaptive Card + deep link (`cards.py`). |
 | `backend/main.py` | Mounts the bot router before the static SPA; closes the agent client on shutdown. |
 | `infra/` | New `modules/botService.bicep` (Azure Bot + Teams channel), conditional on a bot app id; container env + secret wiring. |
@@ -187,7 +187,7 @@ registered as an **Azure Bot** resource with the **Teams channel** enabled. This
 - **Azure Bot + Teams channel + container wiring** are created by `infra/` when you supply
   the bot app id/secret — **no Teams admin access required** (these are *Azure* RBAC
   actions in your subscription).
-- **User SSO is deferred** (Phase 2a ships with bot-framework identity only). The bot does
+- **User SSO is deferred** (channel C ships with bot-framework identity only). The bot does
   not yet exchange a user token, so it does not need `webApplicationInfo` in the manifest
   for the MVP. Adding SSO later requires an exposed API scope + `webApplicationInfo` +
   token-exchange handling.
@@ -212,7 +212,7 @@ identity object), which lives outside the resource-group deployment:
    ```
    > These map to the `botAppId` / `botAppPassword` / `teamsAppId` Bicep params. If
    > `BOT_APP_ID` is unset, the bot infra is skipped entirely and the deploy behaves
-   > exactly as Phase 1.
+   > exactly as channel B.
 3. **Provision + deploy**: `azd up` (or `azd provision` then `azd deploy`). This creates
    the Azure Bot, enables the Teams channel, and sets the messaging endpoint to
    `https://<aca-host>/api/messages`. The endpoint is also emitted as the
@@ -220,7 +220,7 @@ identity object), which lives outside the resource-group deployment:
 
 ## Build the package (with the bot id)
 
-The bot is **additive and opt-in**: omit `--bot-id` to build the tab-only Phase 1 package
+The bot is **additive and opt-in**: omit `--bot-id` to build the tab-only channel B package
 (the `bots` entry is dropped). To include the bot, pass `--bot-id` (the bot app id from step 1):
 
 ```powershell
@@ -231,7 +231,7 @@ uv run python teams/build_package.py `
 
 `--app-id` / `TEAMS_APP_ID` behaves as before (deterministic from the hostname if
 omitted). Output is the same flat `teams/build/avatar-forge-teams.zip`. **Sideload it
-exactly as in Phase 1** (Route A or Route B above) — the same package now installs both
+exactly as in channel B** (Route A or Route B above) — the same package now installs both
 the tab and the bot.
 
 ## Validate the bot (web AND desktop)
@@ -241,10 +241,10 @@ the tab and the bot.
 - [ ] **Group chat:** add the app, **@mention** the bot, get an answer (bots only see
       messages they're @mentioned in, in group/meeting chat).
 - [ ] **Meeting chat:** add the app to a meeting, **@mention** the bot in the meeting chat,
-      get an answer (chat-only — no in-call media yet; that's Phase 2b / #27).
+      get an answer (chat-only — no in-call media yet; that's channel D / #27).
 - [ ] **Parity:** the same question asked to the bot and to the voice avatar returns
       consistent answers + citations (both go through the same Foundry agent).
-- [ ] **No regressions:** the Phase 1 tab still loads and the standalone web app
+- [ ] **No regressions:** the channel B tab still loads and the standalone web app
       (`uv run avatar-forge`) is unchanged.
 
 > The bot endpoint also answers `GET /api/messages` with `{"status":"ok"}` for a quick
@@ -285,11 +285,16 @@ The **only** thing this folder contributes to channel D is the `--enable-calling
 which sets `supportsCalling: true` in the manifest:
 
 ```powershell
-python teams/build_package.py --hostname <host> --bot-id <chat-bot-id> --enable-calling
+uv run python teams/build_package.py --hostname <host> --bot-id <MEETING_BOT_APP_ID> --enable-calling
 ```
 
-That is needed for the app's in-meeting presence. The calling bot itself joins via Graph
-application permissions and does **not** require the app to be installed in the meeting.
+Note the bot id: a calling manifest must name the **calling** bot's app registration, not
+the chat bot's. They are different Entra apps (an app can back only one Azure Bot), so a
+package cannot be both C's chat bot and D's calling bot — build a separate one.
+
+That is needed only for the app's in-meeting presence. The calling bot itself joins via
+Graph application permissions and does **not** require the app to be installed in the
+meeting, so channel D works with no Teams package at all.
 
 > **Historical note.** Earlier revisions of this file described channel D as an
 > ACS-based, audio-only participant. Live testing disproved that design: ACS

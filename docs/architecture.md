@@ -58,7 +58,7 @@ audio forwarding, event processing). The browser only:
   and renders the avatar via a direct WebRTC peer connection to Azure;
 - (WebSocket video mode) receives fMP4 chunks for MediaSource Extensions playback.
 
-The **Teams bot** (Phase 2a) is hosted inside the same FastAPI app as a `POST
+The **Teams bot** (channel C) is hosted inside the same FastAPI app as a `POST
 /api/messages` route and reuses the same Foundry agent — see
 [`teams/README.md`](../teams/README.md).
 

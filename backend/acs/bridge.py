@@ -1,6 +1,6 @@
 """AcsVoiceBridge — bridges an ACS media WebSocket to a Voice Live session.
 
-This is the heart of Phase 2b. It is an **adapter**, not a transport swap: it
+This is the heart of channel D. It is an **adapter**, not a transport swap: it
 reuses the existing ``VoiceSessionHandler`` unchanged by feeding it the two
 callbacks it already expects (``send_message`` for control JSON, ``send_binary``
 for PCM16 output) and driving its input via ``send_audio_bytes``.
@@ -142,7 +142,7 @@ class AcsVoiceBridge:
         self._silent_in = 0
         self._closed = False
 
-        # ── Avatar face (Slice 2A) ──
+        # ── Avatar face ──
         # In avatar/websocket mode Voice Live emits ONE fragmented-MP4 stream
         # carrying both the H.264 face and the AAC answer audio; the decoder
         # splits it back into the NV12 frames the bot's VideoSocket wants and the
@@ -480,7 +480,7 @@ class AcsVoiceBridge:
 class BrowserVoiceBridge:
     """Bridges a *browser* media WebSocket (raw PCM16) to a Voice Live session.
 
-    This is the client-side media path (issue #27, D5 option A1). Microsoft's
+    This is the client-side media path — the browser-joiner fallback. Microsoft's
     server-side Call Automation media streaming does **not** deliver real-time
     audio from a Teams *meeting* (only from ACS/PSTN/Teams-*user* calls), so the
     meeting audio is captured in the browser instead — the ACS Calling SDK

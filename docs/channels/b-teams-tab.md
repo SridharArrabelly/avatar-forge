@@ -48,9 +48,11 @@ speaker. Same voice, same grounding, same agent — no second deployment.
 **No Azure resources.** Only a Teams app package:
 
 ```powershell
-python teams/build_package.py
+uv run python teams/build_package.py --hostname <your-app>.azurecontainerapps.io
 ```
 
+The hostname is required (or set `TEAMS_HOSTNAME`) — it becomes every URL in the
+manifest, so the package is tied to the deployment it points at.
 This fills the placeholders in `teams/manifest.template.json` (schema v1.17) with
 your deployed URL and IDs, and produces an installable `.zip`.
 

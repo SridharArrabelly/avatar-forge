@@ -68,7 +68,7 @@ spawns.
 
 ## Teams bot identity (separate)
 
-The Phase 2a bot uses its **own** identity — an Entra app registration (client id +
+The channel C bot uses its **own** identity — an Entra app registration (client id +
 secret) registered as an Azure Bot resource — which is separate from the backend
 managed identity above and separate from user SSO (deferred). The bot still reaches
 Foundry/Search through the backend's managed identity; only the Bot Framework channel

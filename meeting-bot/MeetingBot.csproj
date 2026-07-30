@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
 
   <!--
-    Avatar-Forge Teams meeting media bot (Phase 2b, issue #27 — Slice 1: AUDIO).
+    Avatar-Forge Teams meeting media bot (channel D, issue #27 — audio leg).
 
     This is the *thin .NET/Windows media relay* described in
     docs/teams-meeting-bot.md. It is deliberately "dumb": it joins a Teams

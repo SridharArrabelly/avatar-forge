@@ -6,7 +6,7 @@
 > is the *code-local* reference: project layout, build, and the traps that cost real
 > debugging time.
 
-> **Phase 2b, issue #27 — Slice 1 (audio).** This is the thin .NET/Windows media
+> **The in-call media bot — channel D (issue #27).** This is the thin .NET/Windows media
 > relay described in [`docs/channels/d-design-media-bot.md`](../docs/channels/d-design-media-bot.md).
 > It joins a Teams meeting, captures the **mixed participant audio**, and forwards
 > raw PCM16 over a WebSocket to the **unchanged** Python backend
@@ -64,7 +64,7 @@ flowchart LR
 The seam is the **already-built** `/ws/acs/audio` endpoint. The bot just speaks its
 wire protocol (`AudioMetadata` → base64-PCM16 `AudioData` frames; inbound
 `AudioData` to play, `StopAudio` for barge-in). The only Python-side requirement for
-Slice 1 is two env flags: `MEETING_BOT_ENABLED=true` (serves `/ws/acs/audio` without an
+The audio leg is two env flags: `MEETING_BOT_ENABLED=true` (serves `/ws/acs/audio` without an
 ACS resource) and `ACS_AUDIO_SAMPLE_RATE=16000` (matches the media platform). Both are
 already set on the deployed app and wired through bicep.
 
@@ -111,7 +111,7 @@ Set via `appsettings.json` or environment (`Bot__*`). **Never commit the secret.
 > diagnosis if genuine callbacks are ever rejected, then turn it back on. It logs a
 > warning on every notification while disabled.
 
-> **Slice 2A — the avatar's video face (now built end to end).** With
+> **The avatar's video face (now built end to end).** With
 > `Bot__EnableVideo=true` the bot adds an outbound NV12 `VideoSocket` and appears as a
 > **camera tile**. The frames come from Python: the bridge runs its Voice Live session in
 > avatar/`websocket` mode, decodes the resulting stream and forwards real `VideoData`
@@ -126,7 +126,7 @@ Set via `appsettings.json` or environment (`Bot__*`). **Never commit the secret.
 > single switch rather than a cosmetic one: in avatar/`websocket` mode Voice Live stops
 > emitting `response.audio.delta` and muxes the answer audio (AAC) into the same
 > fragmented-MP4 stream, so the bridge recovers the audio from there instead. Both
-> defaults are `false` = the audio-only Slice 1 bot, byte-for-byte unchanged. Full
+> defaults are `false` = the audio-only bot, byte-for-byte unchanged. Full
 > design: [`docs/channels/d-design-avatar-video.md`](../docs/channels/d-design-avatar-video.md).
 
 ## What `azd up` provisions
@@ -183,15 +183,27 @@ A 4-stage helper drives the Windows host. Stage `Prep` can run remotely via
 `az vm run-command`; the rest need the repo on the VM (RDP in), because they involve
 interactive cert issuance and a private git clone.
 
-```pwsh
+```powershell
 # On the VM, from a clone of this repo:
-.\meeting-bot\scripts\setup-host.ps1 -Stage Prep                            # firewall + .NET 8 SDK/runtime + VC++ x64 redist
-.\meeting-bot\scripts\setup-host.ps1 -Stage Cert  -Email you@example.com    # win-acme Let's Encrypt (HTTP-01, port 80) -> prints the thumbprint
-.\meeting-bot\scripts\setup-host.ps1 -Stage Build                           # git clone + dotnet publish -r win-x64
-.\meeting-bot\scripts\setup-host.ps1 -Stage Run   -Thumbprint <cert-tp> `
+# firewall + .NET 8 SDK/runtime + VC++ x64 redist
+.\meeting-bot\scripts\setup-host.ps1 -Stage Prep
+
+# win-acme Let's Encrypt (HTTP-01, needs inbound TCP 80) -> prints the thumbprint
+.\meeting-bot\scripts\setup-host.ps1 -Stage Cert -Fqdn <vm-fqdn> -CertEmail you@example.com
+
+# git clone + dotnet publish -r win-x64
+.\meeting-bot\scripts\setup-host.ps1 -Stage Build
+
+# set the Bot__* machine environment variables, then install + start the service
+.\meeting-bot\scripts\setup-host.ps1 -Stage Run -Fqdn <vm-fqdn> -Thumbprint <cert-tp> `
     -BridgeUrl wss://<your-container-app>/ws/acs/audio `
-    -BotSecret <BOT_CLIENT_SECRET>                                          # set Bot__* + install/start the Windows service
+    -BotAppId <MEETING_BOT_APP_ID> -BotTenantId <MEETING_BOT_APP_TENANT_ID> `
+    -BotSecret <bot-client-secret>
 ```
+
+The `Run` stage takes no defaults for the identity arguments on purpose: a
+plausible-but-wrong app id fails deep inside the Graph media stack with an
+unhelpful error, so the script would rather refuse to start.
 
 > Note: this is a **private** repo, so the Build stage needs git auth on the VM
 > (e.g. a PAT or `gh auth login`).
@@ -223,7 +235,8 @@ Steps 1–6 bring a host from nothing to serving. Steps 7–8 are the Teams-side
 5. **Build & publish on the VM** — `-Stage Build`.
 6. **Run** — `-Stage Run`. Verify `https://<fqdn>:9441/api/health` → `{"status":"ok"}`
    **from outside Azure**, not just from the VM.
-7. **Teams manifest** — build with `python teams/build_package.py --enable-calling`
+7. **Teams manifest (optional)** — build with
+   `uv run python teams/build_package.py --bot-id <MEETING_BOT_APP_ID> --enable-calling`
    (sets `supportsCalling: true`), then upload it in Teams ("Apps → Manage your apps →
    Upload an app"). This is only needed for the chat/tab surface and in-meeting *app*
    presence — the calling bot joins via Graph application permissions (next section)

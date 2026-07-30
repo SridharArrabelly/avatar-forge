@@ -1,4 +1,4 @@
-# Slice 2A — the avatar's synced video face in a Teams meeting
+# The avatar's synced video face in a Teams meeting
 
 > **Status: built, shipped and live-verified.** The avatar appears as a lip-synced
 > camera tile in real meetings.
@@ -7,8 +7,8 @@
 > misleading. This doc is the canonical design for that synced face.
 
 This document covers **only the face**. The audio leg (the avatar hears the room and
-answers aloud) is Slice 1 and is described in [`d-design-media-bot.md`](./d-design-media-bot.md).
-Slice 2A rides the **same** .NET meeting-bot host and the **same** Python brain; it adds
+answers aloud) is the **audio leg**, described in [`d-design-media-bot.md`](./d-design-media-bot.md).
+The **video leg** rides the **same** .NET meeting-bot host and the **same** Python brain; it adds
 a second, additive media leg and nothing else changes.
 
 ---
@@ -19,7 +19,7 @@ To put Nuru's face in the meeting as a **real participant camera tile** that is
 **lip-synced** to her spoken answer, the video frames must come from the **same Voice
 Live avatar synthesis** that produces the answer audio. Azure Voice Live already renders
 a talking-head/full-body avatar driven by the TTS it speaks — so the audio and video are
-born in sync at the source. The job of Slice 2A is to (a) turn that avatar **on** for the
+born in sync at the source. The job of the video leg is to (a) turn that avatar **on** for the
 server-side meeting bridge session, (b) get the avatar's **video** frames into Python,
 (c) decode them to raw **NV12**, (d) forward time-aligned NV12 to the .NET bot over the
 existing bridge WebSocket, and (e) have the bot push those frames into the call through a
@@ -43,10 +43,10 @@ re-speaking the same text), the two are independently timed — network jitter, 
 TTS runs, and separate first-token latencies guarantee drift. There is no practical way
 to re-align them after the fact.
 
-Therefore the design forwards **both** the audio (already done in Slice 1) **and** the
+Therefore the design forwards **both** the audio (already done for the audio leg) **and** the
 video from the **one** server-side Voice Live session the bridge already owns. Inbound
-room audio → that session → it produces (i) answer **audio** PCM (Slice 1) and (ii)
-avatar **video** frames (Slice 2A), both from the same `response`. We carry both to the
+room audio → that session → it produces (i) answer **audio** PCM and (ii)
+avatar **video** frames, both from the same `response`. We carry both to the
 bot and play them out together.
 
 ---
@@ -60,14 +60,14 @@ flowchart LR
     subgraph NET[".NET meeting bot · Microsoft.Skype.Bots.Media"]
         direction TB
         AS["AudioSocket"]
-        VS["VideoSocket<br/><b>← Slice 2A</b>"]
+        VS["VideoSocket<br/><b>← video leg</b>"]
     end
 
     subgraph PY["Python backend — the unchanged brain"]
         direction TB
         BR["AcsVoiceBridge"]
         VH["VoiceSessionHandler"]
-        DEC["avatar_stream<br/>fMP4 demux → H.264 decode → NV12<br/><b>← Slice 2A</b>"]
+        DEC["avatar_stream<br/>fMP4 demux → H.264 decode → NV12<br/><b>← video leg</b>"]
         BR --- VH
         BR --- DEC
     end
@@ -77,14 +77,14 @@ flowchart LR
 
     MT <== "mixed room audio in<br/>voice + camera tile out" ==> NET
     AS <-- "wss · AudioMetadata + AudioData(PCM16)<br/>both directions, + StopAudio for barge-in" --> BR
-    VS <-- "wss · VideoData<br/>NV12 frames<br/><b>← Slice 2A</b>" --> DEC
+    VS <-- "wss · VideoData<br/>NV12 frames<br/><b>← video leg</b>" --> DEC
     VH <-- "RESPONSE_AUDIO_DELTA<br/>response.video.delta · fMP4 / H.264" --> VL
     VL <--> FA
 ```
 
 Both seam arrows are the **same socket**, `wss://…/ws/acs/audio`.
 
-The **only** new arrows are the two marked *Slice 2A*: the avatar video produced by the
+The **only** new arrows are the two marked *video leg*: the avatar video produced by the
 same Voice Live session, decoded to NV12 in Python, sent down the existing bridge socket
 as `VideoData`, and emitted by the bot's `VideoSocket` as a camera tile.
 
@@ -92,7 +92,7 @@ as `VideoData`, and emitted by the bot's `VideoSocket` as a camera tile.
 
 ## 4. Getting the avatar video into Python — two source options
 
-This is the single hard unknown of Slice 2A. There are two ways to obtain the avatar's
+This is the single hard unknown of the video leg. There are two ways to obtain the avatar's
 video server-side; the design **prefers Option 1** because it removes the WebRTC risk
 entirely.
 
@@ -177,7 +177,7 @@ and the wire protocol don't change between options.
 ### 5.1 .NET meeting bot (`meeting-bot/`)
 
 All additive and gated on `Bot:EnableVideo` (default **false** = byte-for-byte the
-audio-only Slice 1 session). Verified to compile against the real SDK on Windows.
+audio-only session). Verified to compile against the real SDK on Windows.
 
 - **`Configuration/BotOptions.cs`** — new `EnableVideo`, `VideoWidth`, `VideoHeight`,
   `VideoFps` (defaults 640×360@15). Off by default.
@@ -266,7 +266,7 @@ which is the property that mattered, given the audio leg is the part already pro
 meetings.
 
 ### 5.3 Infra — none new
-Slice 2A adds **no** new Azure resource. It reuses the Slice 1 Windows media host and the
+The video leg adds **no** new Azure resource. It reuses the same Windows media host and the
 existing bridge WebSocket. The only operational change is CPU headroom on the host/back end
 for the decode + an extra `VideoSocket` (the D4s_v5 already sized for media is adequate at
 360p/15fps; revisit for 720p/30fps).
@@ -277,9 +277,9 @@ for the decode + an extra `VideoSocket` (the D4s_v5 already sized for media is a
 
 - The face follows the **voice**: frames flow only while Nuru is answering. Between
   answers the tile shows the placeholder/last frame (or we can blank it). She never
-  "speaks over" anyone because the audio gate (wake-phrase + barge-in from Slice 1) still
+  "speaks over" anyone because the audio gate (wake-phrase + barge-in from the audio leg) still
   governs when a `response` is produced at all.
-- **Barge-in:** `StopAudio` already flushes queued audio; Slice 2A also flushes the video
+- **Barge-in:** `StopAudio` already flushes queued audio; the video leg also flushes the video
   queue, so a cancelled answer's trailing frames don't linger.
 - **Leave/teardown:** unchanged — disposing the call handler tears down both sockets.
 
@@ -331,5 +331,5 @@ step proved one unknown in isolation, so a failure was always attributable.
 6. **Option 2 (aiortc) was never needed** — Option 1's websocket video was usable, so the
    contingency path was not built.
 
-Audio value (Slice 1) was never blocked on any of this; `EnableVideo=false` still yields
+Audio value was never blocked on any of this; `EnableVideo=false` still yields
 the audio-only session unchanged.

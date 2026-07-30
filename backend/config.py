@@ -67,11 +67,11 @@ PROACTIVE_GREETING = os.getenv(
 
 PROJECT_ENDPOINT = os.getenv("PROJECT_ENDPOINT", "")
 
-# ───────── Teams bot (issue #53, Phase 2a) ─────────
+# ───────── Teams bot (channel C, issue #53) ─────────
 # The Foundry agent is resolved by ID when available (durable identifier), with
 # AGENT_NAME as a dev-only fallback (fails fast on zero/multiple matches).
 AGENT_ID = os.getenv("AGENT_ID", "")
-# Teams app id used to build deep links back to the Phase 1 static tab (#28).
+# Teams app id used to build deep links back to the channel B static tab (#28).
 # Defaults to TEAMS_APP_ID if that is what the package was built with.
 TEAMS_APP_ID = os.getenv("TEAMS_APP_ID", "")
 # entityId of the personal static tab in teams/manifest.template.json.
@@ -88,14 +88,16 @@ BOT_APP_ID = os.getenv(
 # (ack-then-background-run), this is NOT bound by the Teams ~15s turn window.
 BOT_RUN_TIMEOUT_S = float(os.getenv("BOT_RUN_TIMEOUT_S", "60"))
 
-# ───────── Teams in-call media participant (issue #27, Phase 2b) ─────────
-# Phase 2b is the live in-call audio avatar (ACS Call Automation Participant
-# mode, D5=A1 browser joiner). It is ADDITIVE and OPT-IN: every endpoint and the
-# media bridge are gated on ACS being configured, so a deploy without ACS behaves
-# exactly as Phase 2a. The path is:
-#   browser ACS Calling Web SDK joins the Teams meeting (anonymous, lobby-governed)
-#   -> emits a ServerCallId -> POST /api/acs/call -> server connect_call() attaches
-#   bidirectional audio over wss://.../ws/acs/audio -> AcsVoiceBridge <-> Voice Live.
+# ───────── Teams in-call media participant (channel D, issue #27) ─────────
+# Channel D is the live in-call avatar. It is ADDITIVE and OPT-IN: every endpoint
+# and the media bridge are gated on ACS being configured, so a deploy without ACS
+# behaves exactly as channel C. Two legs share the same Voice Live pipeline:
+#   1. the .NET Graph media bot on a Windows VM  -> wss://.../ws/acs/audio
+#      (hears every participant; this is the real one)
+#   2. the browser joiner /acs-join.html         -> wss://.../ws/acs/browser
+#      ACS Calling SDK joins as an anonymous interop guest via the meeting lobby,
+#      then POST /api/acs/call attaches media with connect_call(). It only hears
+#      the operator's own mic, so it is the no-admin-rights fallback.
 ACS_ENDPOINT = os.getenv("ACS_ENDPOINT", "").strip()
 # Connection string for the ACS resource (preferred for Call Automation + Identity).
 # When empty, the client falls back to ACS_ENDPOINT + DefaultAzureCredential.
@@ -133,7 +135,7 @@ ACS_REQUIRE_WAKE_PHRASE = os.getenv(
 ACS_FOLLOWUP_WINDOW_S = float(os.getenv("ACS_FOLLOWUP_WINDOW_S", "30"))
 # Seconds of inactivity before the participant leaves the call (0 disables).
 ACS_IDLE_TIMEOUT_S = float(os.getenv("ACS_IDLE_TIMEOUT_S", "0"))
-# Phase 2b Slice 2 (avatar face): when true, the browser joiner sends an outgoing
+# Avatar face: when true, the browser joiner sends an outgoing
 # video stream so the avatar appears as a visible participant tile (not a faceless
 # audio participant). The first increment is a branded placard (logo + avatar name
 # + a "listening" pulse) rendered to a canvas and sent via the ACS Calling SDK's
@@ -142,7 +144,7 @@ ACS_IDLE_TIMEOUT_S = float(os.getenv("ACS_IDLE_TIMEOUT_S", "0"))
 ACS_AVATAR_VIDEO_ENABLED = os.getenv(
     "ACS_AVATAR_VIDEO_ENABLED", "false"
 ).strip().lower() in ("1", "true", "yes", "on")
-# Phase 2b Slice 1: the .NET/Windows Graph media bot connects to the
+# In-call media bot: the .NET/Windows Graph media bot connects to the
 # ``/ws/acs/audio`` bridge endpoint and speaks the AcsVoiceBridge protocol. That
 # path needs Voice Live only — NOT an ACS resource — so this flag enables the
 # bridge endpoint independently of ACS_ENDPOINT/ACS_CONNECTION_STRING. (The
@@ -151,7 +153,7 @@ ACS_AVATAR_VIDEO_ENABLED = os.getenv(
 MEETING_BOT_ENABLED = os.getenv(
     "MEETING_BOT_ENABLED", "false"
 ).strip().lower() in ("1", "true", "yes", "on")
-# Phase 2b Slice 2A (the avatar's FACE in the meeting): when true, the meeting
+# The avatar's FACE in the meeting: when true, the meeting
 # bot's Voice Live session runs the avatar in ``websocket`` output mode and the
 # bridge decodes the resulting stream into raw NV12 frames for the .NET bot's
 # VideoSocket, so the avatar appears as a real lip-synced camera tile.
@@ -187,7 +189,7 @@ MEETING_BOT_VIDEO_FPS = int(os.getenv("MEETING_BOT_VIDEO_FPS", "15"))
 BROWSER_JOIN_VIDEO_ENABLED = os.getenv(
     "BROWSER_JOIN_VIDEO_ENABLED", "false"
 ).strip().lower() in ("1", "true", "yes", "on")
-# True when Phase 2b in-call media is configured: either an ACS resource is set,
+# True when channel D in-call media is configured: either an ACS resource is set,
 # or the Graph media bot bridge is explicitly enabled.
 ACS_ENABLED = bool(ACS_ENDPOINT or ACS_CONNECTION_STRING or MEETING_BOT_ENABLED)
 

@@ -17,11 +17,18 @@ meeting at the same time.
 > ⚠️ **Never run both in one meeting.** Two assistants would hear each other's answers and
 > feed back. Leave one before starting the other.
 
-> **About the URLs below.** The hostnames, resource group and VM name in this runbook are
-> from the reference deployment. Substitute your own: the app URL is `SERVICE_APP_URI` in
-> your azd env, and the bot FQDN is `<MEETING_BOT_DNS_LABEL>.<region>.cloudapp.azure.com`.
-> Resource names (`avatar-meetingbot-vm`, `avatar-meetingbot-nsg`) are deterministic, so
-> those work as written.
+> **Set these once per shell.** Everything below refers to them, so nothing in this
+> runbook is tied to one deployment:
+>
+> ```powershell
+> $rg      = azd env get-value AZURE_RESOURCE_GROUP
+> $appName = azd env get-value SERVICE_APP_NAME
+> $appUrl  = azd env get-value SERVICE_APP_URI          # https://<app>.<region>.azurecontainerapps.io
+> $bot     = azd env get-value MEETING_BOT_OPERATOR_API # https://<vm-fqdn>:9441  (in-call profile only)
+> ```
+>
+> The VM and NSG names (`avatar-meetingbot-vm`, `avatar-meetingbot-nsg`) are
+> deterministic, so those are written literally.
 
 The single most important difference is the "Hears" row. The browser joiner captures the
 *operator's* audio, so it can only answer what **you** say into your own mic. The media bot
@@ -48,14 +55,13 @@ one-time admin consent described in `meeting-bot/README.md`.
 Watch the backend while you test (both paths log here):
 
 ```powershell
-az containerapp logs show -n ca-avatar-newtenan-ahfjen5fzzjgi -g rg-avatar-newtenant `
-  --type console --follow
+az containerapp logs show -n $appName -g $rg --type console --follow
 ```
 
 Is anything connected right now?
 
 ```powershell
-curl.exe https://ca-avatar-newtenan-ahfjen5fzzjgi.purpleocean-4494944c.swedencentral.azurecontainerapps.io/api/acs/status
+curl.exe "$appUrl/api/acs/status"
 # {"enabled":true,"active":false,"count":0}   <- count is live media sessions
 ```
 
@@ -64,8 +70,7 @@ curl.exe https://ca-avatar-newtenan-ahfjen5fzzjgi.purpleocean-4494944c.swedencen
 ## Path A — browser joiner
 
 1. Start (or join) the Teams meeting yourself, in the Teams client.
-2. Open the joiner in a **separate browser tab**:
-   `https://ca-avatar-newtenan-ahfjen5fzzjgi.purpleocean-4494944c.swedencentral.azurecontainerapps.io/acs-join.html`
+2. Open the joiner in a **separate browser tab**: `$appUrl/acs-join.html`
 3. Paste the classic link → **Join meeting**. Allow the mic prompt.
 4. Admit the participant from the lobby if Teams asks.
 5. Ask a question **out loud into your own mic**, prefixed with the wake phrase
@@ -108,7 +113,7 @@ server only decodes audio.
 ### Rollback (voice keeps working)
 
 ```powershell
-az containerapp update -n ca-avatar-newtenan-ahfjen5fzzjgi -g rg-avatar-newtenant `
+az containerapp update -n $appName -g $rg `
   --set-env-vars BROWSER_JOIN_VIDEO_ENABLED=false
 ```
 
@@ -123,8 +128,8 @@ Use this runbook to re-verify after a change.
 ### 1. Confirm the VM is up
 
 ```powershell
-az vm start -n avatar-meetingbot-vm -g rg-avatar-newtenant   # if deallocated
-curl.exe https://avatar-meetingbot-newtenant.swedencentral.cloudapp.azure.com:9441/api/health
+az vm start -n avatar-meetingbot-vm -g $rg   # if deallocated
+curl.exe "$bot/api/health"
 # {"status":"ok"}
 ```
 
@@ -135,7 +140,6 @@ curl.exe https://avatar-meetingbot-newtenant.swedencentral.cloudapp.azure.com:94
 ### 3. Join
 
 ```powershell
-$bot  = "https://avatar-meetingbot-newtenant.swedencentral.cloudapp.azure.com:9441"
 $link = "<paste the classic meetup-join link>"
 $body = @{ joinUrl = $link } | ConvertTo-Json
 Invoke-RestMethod "$bot/api/join" -Method POST -Body $body -ContentType "application/json"
@@ -180,7 +184,7 @@ Bot-side logs (on the VM): look for `Video send status = Active`.
 ### Rollback to the proven audio-only behaviour
 
 ```powershell
-az containerapp update -n ca-avatar-newtenan-ahfjen5fzzjgi -g rg-avatar-newtenant `
+az containerapp update -n $appName -g $rg `
   --set-env-vars MEETING_BOT_VIDEO_ENABLED=false
 # and on the VM: Bot__EnableVideo=false, then restart the service
 ```
@@ -192,5 +196,5 @@ az containerapp update -n ca-avatar-newtenan-ahfjen5fzzjgi -g rg-avatar-newtenan
 ### 5. Afterwards — stop paying for the VM
 
 ```powershell
-az vm deallocate -n avatar-meetingbot-vm -g rg-avatar-newtenant
+az vm deallocate -n avatar-meetingbot-vm -g $rg
 ```

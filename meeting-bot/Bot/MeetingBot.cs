@@ -18,7 +18,7 @@ namespace AvatarForge.MeetingBot.Bot;
 /// it spins up a <see cref="CallHandler"/> per joined meeting.
 ///
 /// Mirrors the official Graph Communications "local media" sample shape, trimmed
-/// to exactly what Slice 1 (audio) needs.
+/// to exactly what the audio leg needs.
 /// </summary>
 public sealed class MeetingBotService : IDisposable
 {
@@ -256,10 +256,10 @@ public sealed class MeetingBotService : IDisposable
     }
 
     /// <summary>
-    /// Build the local media session. Audio is always present (Slice 1). When
+    /// Build the local media session. Audio is always present (the audio leg). When
     /// <see cref="BotOptions.EnableVideo"/> is set, an outbound NV12 VideoSocket
-    /// is added so Nuru can render a synced avatar camera tile (Slice 2A); when
-    /// it is unset the session is byte-for-byte the audio-only Slice 1 session.
+    /// is added so Nuru can render a synced avatar camera tile (the avatar video face); when
+    /// it is unset the session is byte-for-byte the audio-only session.
     /// See docs/teams-meeting-bot.md §10 and docs/teams-avatar-video.md.
     /// </summary>
     private ILocalMediaSession CreateLocalMediaSession()
@@ -274,7 +274,7 @@ public sealed class MeetingBotService : IDisposable
         if (!_options.EnableVideo)
             return _client.CreateMediaSession(audioSettings);
 
-        // Slice 2A: outbound-only NV12 video for the avatar's camera tile. We
+        // Outbound-only NV12 video for the avatar's camera tile. We
         // advertise the configured format (plus a 720p fallback) so Teams can
         // negotiate a send resolution; the playout loop pushes frames sourced
         // from the same Voice Live avatar synthesis as the audio.

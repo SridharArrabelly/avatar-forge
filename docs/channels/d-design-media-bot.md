@@ -1,4 +1,4 @@
-# Teams Meeting Bot — design & architecture (Phase 2b, issue #27)
+# Teams Meeting Bot — design & architecture (channel D, issue #27)
 
 > **Goal in one sentence:** let the avatar (Nuru) **join a Teams meeting, hear every
 > participant — including remote callers — and answer their spoken questions aloud**,
@@ -26,7 +26,7 @@ Python service and a .NET service on purpose, and that decision needs to be defe
 ## 1. The problem, precisely
 
 The avatar already answers spoken questions beautifully **on the web** (mic → Azure Voice
-Live → Foundry agent with AI Search RAG + Bing news → spoken answer). Phase 2b is **not**
+Live → Foundry agent with AI Search RAG + Bing news → spoken answer). Channel D is **not**
 about answering — that pipeline is reused untouched. The hard, new problem is **meeting
 media transport**: getting *the room's* audio into that pipeline and the avatar's voice
 back into *the room*.
@@ -73,7 +73,7 @@ preference.
 ### Why mix languages instead of going all-.NET
 
 - **Only one component is .NET/Windows-locked** — the media ingestion. Everything else
-  (Voice Live, the Foundry agent, RAG, the Phase 2a bot, the web app, infra) is fully
+  (Voice Live, the Foundry agent, RAG, the channel C bot, the web app, infra) is fully
   supported in Python and already deployed and working.
 - **The .NET bot carries no business logic.** It is a *media pump*: join → grab PCM →
   forward → play back. All intelligence (STT, retrieval, answer, TTS, turn-taking) stays
@@ -236,7 +236,7 @@ The .NET bot does **not** implement any of this — it just carries audio and ho
 | ACS resource | optional | Only if a fallback ACS path is kept; not required for option (b). |
 
 All new infra is **additive and conditional** (mirrors `botService.bicep` /
-`communicationServices.bicep`): a deploy **without** Phase 2b enabled behaves exactly as
+`communicationServices.bicep`): a deploy **without** channel D enabled behaves exactly as
 today. The Windows host is the one piece that is materially new and carries ongoing cost.
 
 **Recommended first host:** a single **Windows Server VM** (simplest to stand up and debug
@@ -312,7 +312,7 @@ Same bot foundation; a second slice. The route is **decided**:
 synthesis, component changes, the aiortc↔Voice Live feasibility risk, and the phased
 increments — is in [`d-design-avatar-video.md`](./d-design-avatar-video.md).**
 
-**Build order (as executed):** Slice 1 (audio) → Slice 2A scaffold (flag-gated
+**Build order (as executed):** audio leg → video scaffold (flag-gated
 `VideoSocket` + placeholder NV12 tile) → the hard increment (server-side avatar WebRTC
 capture → real NV12 frames over the bridge). Audio value was never blocked on the video
 work, and `Bot:EnableVideo=false` still yields the byte-for-byte audio-only session.

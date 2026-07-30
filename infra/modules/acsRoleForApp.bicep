@@ -2,7 +2,7 @@
 // resource so the server can construct the Call Automation / Identity clients
 // with DefaultAzureCredential (ACS_ENDPOINT path) — no connection string needed.
 //
-// Conditional + additive: only deployed when Phase 2b is enabled (enableAcs=true).
+// Conditional + additive: only deployed when channel D is enabled (enableAcs=true).
 // Scoped to the single ACS resource (least privilege at resource scope). ACS has no
 // granular data-plane built-in role, so Contributor on the resource is the supported
 // grant for Entra-authenticated data-plane access (token mint + connect_call).

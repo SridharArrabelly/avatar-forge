@@ -3,9 +3,9 @@
 Exposes ``build_bot_router()`` which returns an ``APIRouter`` carrying the
 ``POST /api/messages`` endpoint, plus ``shutdown_bot()`` for app teardown. The
 bot reuses the existing Foundry agent for answers (see ``agent_runtime``) and
-can deep-link into the Phase 1 personal tab (#28, see ``cards``).
+can deep-link into the channel B personal tab (#28, see ``cards``).
 
-Hosting choice (Phase 2a / M0): Microsoft 365 Agents SDK with its official
+Hosting choice: Microsoft 365 Agents SDK with its official
 FastAPI adapter — no Node toolchain, single ACA deployable, messaging endpoint
 is the existing ACA HTTPS URL + ``/api/messages``.
 """
@@ -57,7 +57,7 @@ _ERROR = "Sorry — I hit an error reaching the knowledge base. Please try again
 # The bot is additive and opt-in: the AgentApplication (and its MSAL-backed
 # CloudAdapter) is only constructed when bot credentials are configured via the
 # CONNECTIONS__SERVICE_CONNECTION__SETTINGS__* env vars. When they are absent
-# (standalone web app / Phase 1 tab-only / offline), AGENT_APP stays None, the
+# (standalone web app / channel B tab-only / offline), AGENT_APP stays None, the
 # module still imports cleanly, and POST /api/messages returns 503 — the bot
 # never gates the always-on surfaces (#53 additive guardrail).
 AGENT_APP: AgentApplication[TurnState] | None = None

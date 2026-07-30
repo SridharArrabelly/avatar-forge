@@ -24,7 +24,7 @@ namespace AvatarForge.MeetingBot.Bridge;
 ///     {"Kind":"AudioData","AudioData":{"Data":"<base64 PCM16>"}}   -> play into call
 ///     {"Kind":"StopAudio","StopAudio":{}}                          -> flush outbound buffer (barge-in)
 ///     {"Kind":"VideoData","VideoData":{"Data":"<base64 NV12>","Width":640,"Height":360}}
-///                                                                  -> render as the avatar camera tile (Slice 2A)
+///                                                                  -> render as the avatar camera tile
 ///
 /// The VideoData frames carry raw NV12 video from the SAME Voice Live avatar
 /// synthesis that produced the AudioData, so audio and video stay lip-synced.
@@ -56,7 +56,7 @@ public sealed class VoiceLiveBridgeClient : IAsyncDisposable
     /// <summary>
     /// Raised when a Nuru avatar video frame (raw NV12) arrives to be rendered as
     /// the bot's camera tile. Only fires when the Python bridge has the avatar
-    /// enabled and is forwarding <c>VideoData</c> frames (Slice 2A).
+    /// enabled and is forwarding <c>VideoData</c> frames.
     /// </summary>
     public event Func<VideoFrame, Task>? VideoReceived;
 

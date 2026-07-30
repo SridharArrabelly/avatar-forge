@@ -1,4 +1,4 @@
-// Teams personal-tab integration (issue #28, scope 1A).
+// Teams personal-tab integration (issue #28).
 //
 // This file is a strict NO-OP unless the page is actually running inside the
 // Microsoft Teams client. When standalone (the port-3000 app, top-level window),

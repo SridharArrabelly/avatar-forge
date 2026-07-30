@@ -140,7 +140,7 @@ tenant allows service-principal secrets (`AZURE_TENANT_ID` / `AZURE_CLIENT_ID` /
 
 ## Run inside Microsoft Teams
 
-To run the same UI as a Teams personal tab (and the Phase 2a conversational bot),
+To run the same UI as a Teams personal tab (and the channel C conversational bot),
 follow [`teams/README.md`](../teams/README.md) — it covers building the package against
 your deployed hostname, the admin-free sideload routes, the bot's Azure Bot / Entra
 setup, and the validation checklist. The Teams integration is fully additive: the

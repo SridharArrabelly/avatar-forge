@@ -135,8 +135,8 @@ Notes:
 - The model choice also swaps the prompt variant:
   `instructions-reasoning.md` for reasoning models (gpt-5.x),
   `instructions-nonreasoning.md` for gpt-4.1-mini.
-- The harness pins `ROOT` to the repo path at the top of the file — update
-  that constant if you move the repo.
+- The harness locates the repo root by walking up from the working directory,
+  so run it from anywhere inside a clone.
 
 ## The harness
 
@@ -158,9 +158,16 @@ from azure.identity import DefaultAzureCredential
 from dotenv import load_dotenv
 from openai import OpenAI
 
-REPO = Path(__file__).resolve()
-# locate repo root that contains scripts/test_foundry_agent.py
-ROOT = Path(r"C:\Users\sarrabelly\.copilot\repos\copilot-worktrees\avatar-forge\sridhararrabelly-automatic-eureka")
+# Find the repo root by walking up from the working directory, so the harness
+# runs from any clone without editing a hardcoded path.
+ROOT = next(
+    (p for p in (Path.cwd(), *Path.cwd().parents)
+     if (p / "scripts" / "test_foundry_agent.py").is_file()),
+    None,
+)
+if ROOT is None:
+    raise SystemExit("Run this from inside the repo — scripts/test_foundry_agent.py not found.")
+
 spec = importlib.util.spec_from_file_location(
     "tfa", str(ROOT / "scripts" / "test_foundry_agent.py")
 )

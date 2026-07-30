@@ -81,8 +81,12 @@ Deployment mechanics: [`../deployment.md`](../deployment.md).
 ## 5. How to verify
 
 ```powershell
-# the app answers
-Invoke-RestMethod https://<your-app>.azurecontainerapps.io/api/health
+# the app is up
+Invoke-RestMethod https://<your-app>.azurecontainerapps.io/health
+# -> status healthy, service avatar-forge
+
+# and it is bound to the agent (voice, avatar and agent name come back here)
+Invoke-RestMethod https://<your-app>.azurecontainerapps.io/api/config
 ```
 
 Then open the endpoint in a browser, allow the microphone, and ask a question
