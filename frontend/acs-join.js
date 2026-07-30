@@ -234,6 +234,16 @@ function allHumansMuted() {
 
 function ensureCaptureNode() {
     if (captureNode) return;
+    // NOTE (perf, deliberate): this is a main-thread ScriptProcessor, while the
+    // web app (app.js) captures via an AudioWorklet at 960 samples / 40 ms. At
+    // 24 kHz, 4096 samples is 170 ms of buffering before a sample leaves the
+    // browser, and app.js carries a comment recording that smaller buffers gave
+    // it tighter barge-in latency. So this leg is ~130 ms behind the web app on
+    // the question path, and shares a thread with the avatar canvas + MediaSource.
+    // Left as-is on purpose: this is the no-admin FALLBACK leg (the Graph media
+    // bot is the real one) and the half-duplex gate below took several live
+    // sessions to stabilise. Porting it to an AudioWorklet is worthwhile but is
+    // a change to a live-verified media path and wants its own live test round.
     captureNode = audioCtx.createScriptProcessor(4096, 1, 1);
     captureNode.onaudioprocess = (e) => {
         if (!mediaWs || mediaWs.readyState !== WebSocket.OPEN) return;
