@@ -171,6 +171,22 @@ MEETING_BOT_VIDEO_ENABLED = os.getenv(
 MEETING_BOT_VIDEO_WIDTH = int(os.getenv("MEETING_BOT_VIDEO_WIDTH", "640"))
 MEETING_BOT_VIDEO_HEIGHT = int(os.getenv("MEETING_BOT_VIDEO_HEIGHT", "360"))
 MEETING_BOT_VIDEO_FPS = int(os.getenv("MEETING_BOT_VIDEO_FPS", "15"))
+# The same avatar face, but for the BROWSER joiner (acs-join.html) rather than the
+# Windows media bot. The browser already sends an outgoing video tile — until now
+# a static branded placard — so this swaps that placard for the live lip-synced
+# avatar.
+#
+# The split of work differs from the media-bot path: the browser plays the
+# fragmented-MP4 itself in a muted MediaSource <video> and paints it onto the tile
+# canvas, so the server only has to recover the AAC audio from that stream (the
+# same measured behaviour applies — in avatar mode Voice Live sends no
+# ``response.audio.delta``). Recovered audio goes through the existing outbound
+# path, so barge-in, the wake-phrase gate and the host's "Mute" all keep working.
+#
+# Default OFF: with it off the joiner behaves exactly as it does today.
+BROWSER_JOIN_VIDEO_ENABLED = os.getenv(
+    "BROWSER_JOIN_VIDEO_ENABLED", "false"
+).strip().lower() in ("1", "true", "yes", "on")
 # True when Phase 2b in-call media is configured: either an ACS resource is set,
 # or the Graph media bot bridge is explicitly enabled.
 ACS_ENABLED = bool(ACS_ENDPOINT or ACS_CONNECTION_STRING or MEETING_BOT_ENABLED)

@@ -144,7 +144,12 @@ function openMediaSocket() {
         if (typeof ev.data === "string") {
             try {
                 const msg = JSON.parse(ev.data);
-                if (msg.type === "stop_playback") flushPlayback();
+                if (msg.type === "stop_playback") {
+                    flushPlayback();
+                    skipAvatarToLiveEdge();
+                } else if (msg.type === "video_data") {
+                    handleAvatarChunk(msg.delta);
+                }
             } catch (_) { /* ignore */ }
             return;
         }
@@ -320,6 +325,146 @@ function startRemoteAudioCapture() {
     });
 }
 
+// ───────── live avatar face (MediaSource) ─────────
+// The server runs the Voice Live session in avatar/websocket mode and relays the
+// raw fragmented-MP4 stream here as {type:"video_data", delta:<base64>}. We play
+// it MUTED in an offscreen <video> purely as a picture source: the answer AUDIO
+// still arrives separately as decoded PCM16 on the same socket, so the whole
+// turn-taking/barge-in/mute chain stays exactly where it already works. The
+// <video> is then painted onto the same canvas that already feeds the outgoing
+// ACS video tile, so the face replaces the placard without touching transport.
+const FMP4_MIME_CODEC = 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"';
+let avatarLiveVideo = false;      // server says the live stream is enabled
+let avatarVideoEl = null;         // offscreen <video> fed by MediaSource
+let avatarMediaSource = null;
+let avatarSourceBuffer = null;
+let avatarChunkQueue = [];
+let avatarHasPicture = false;     // first decoded frame seen -> safe to paint
+let avatarLastDrawMs = 0;         // last time the video actually advanced
+
+function setupAvatarVideo() {
+    if (avatarVideoEl) return;
+    if (!("MediaSource" in window) || !MediaSource.isTypeSupported(FMP4_MIME_CODEC)) {
+        console.warn("[acs-join] fMP4 MediaSource unsupported — keeping placard");
+        return;
+    }
+    const v = document.createElement("video");
+    v.autoplay = true;
+    v.playsInline = true;
+    // Muted is essential: the answer audio reaches the call through the PCM path.
+    // Letting this element play would double the voice and break the echo gate.
+    v.muted = true;
+    v.volume = 0;
+    v.addEventListener("canplay", () => v.play().catch(() => {}));
+    v.addEventListener("loadeddata", () => { avatarHasPicture = true; });
+
+    avatarMediaSource = new MediaSource();
+    v.src = URL.createObjectURL(avatarMediaSource);
+    avatarMediaSource.addEventListener("sourceopen", () => {
+        try {
+            if (avatarMediaSource.readyState !== "open") return;
+            avatarSourceBuffer = avatarMediaSource.addSourceBuffer(FMP4_MIME_CODEC);
+            avatarSourceBuffer.addEventListener("updateend", drainAvatarQueue);
+            drainAvatarQueue();
+        } catch (e) {
+            console.error("[acs-join] addSourceBuffer failed", e);
+        }
+    });
+    avatarVideoEl = v;
+}
+
+function handleAvatarChunk(base64Data) {
+    if (!base64Data) return;
+    if (!avatarVideoEl) setupAvatarVideo();
+    if (!avatarVideoEl) return;
+    try {
+        const bin = atob(base64Data);
+        const bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        avatarChunkQueue.push(bytes.buffer);
+        drainAvatarQueue();
+    } catch (e) {
+        console.error("[acs-join] bad avatar chunk", e);
+    }
+}
+
+function drainAvatarQueue() {
+    const sb = avatarSourceBuffer;
+    if (!sb || sb.updating) return;
+    if (!avatarMediaSource || avatarMediaSource.readyState !== "open") return;
+    const next = avatarChunkQueue.shift();
+    if (!next) return;
+    try {
+        sb.appendBuffer(next);
+    } catch (e) {
+        // QuotaExceeded: drop what we've already played and retry once. The tile
+        // is live video — old buffered media has no value.
+        console.warn("[acs-join] appendBuffer failed", e);
+        try {
+            const v = avatarVideoEl;
+            if (sb.buffered.length && v) {
+                const end = Math.max(0, v.currentTime - 1);
+                if (end > sb.buffered.start(0)) sb.remove(sb.buffered.start(0), end);
+            }
+        } catch (_) { /* best effort */ }
+    }
+}
+
+// Barge-in: audio is flushed server-side, so jump the picture to the live edge
+// instead of leaving the mouth moving through speech nobody will hear.
+function skipAvatarToLiveEdge() {
+    const v = avatarVideoEl;
+    const sb = avatarSourceBuffer;
+    if (!v || !sb) return;
+    try {
+        if (sb.buffered.length) {
+            const end = sb.buffered.end(sb.buffered.length - 1);
+            if (end - v.currentTime > 0.15) v.currentTime = end - 0.05;
+        }
+    } catch (_) { /* seeking a live buffer can throw; harmless */ }
+}
+
+function teardownAvatarVideo() {
+    try { if (avatarVideoEl) { avatarVideoEl.pause(); avatarVideoEl.src = ""; } } catch (_) {}
+    avatarVideoEl = null;
+    avatarMediaSource = null;
+    avatarSourceBuffer = null;
+    avatarChunkQueue = [];
+    avatarHasPicture = false;
+    avatarLastDrawMs = 0;
+}
+
+// Paint the current avatar frame onto the tile canvas. Returns false when there
+// is nothing live to show, so the caller falls back to the branded placard.
+//
+// "Live" means the <video> has a picture AND its clock is still advancing: when a
+// turn ends the stream simply stops, and a frozen face staring at the room looks
+// broken. After AVATAR_IDLE_MS with no advance we fall back to the placard, which
+// doubles as the "listening" state.
+const AVATAR_IDLE_MS = 900;
+let _avatarLastTime = -1;
+function drawAvatarFrame(ctx, canvas) {
+    const v = avatarVideoEl;
+    if (!avatarLiveVideo || !v || !avatarHasPicture) return false;
+    if (!v.videoWidth || !v.videoHeight) return false;
+
+    const now = performance.now();
+    if (v.currentTime !== _avatarLastTime) {
+        _avatarLastTime = v.currentTime;
+        avatarLastDrawMs = now;
+    } else if (now - avatarLastDrawMs > AVATAR_IDLE_MS) {
+        return false; // stream idle between turns -> show the placard
+    }
+
+    // Cover-fit: fill the tile, centre-crop the overflow. Bias the crop upward
+    // (a quarter, not half) because a talking head sits above centre.
+    const scale = Math.max(canvas.width / v.videoWidth, canvas.height / v.videoHeight);
+    const w = v.videoWidth * scale;
+    const h = v.videoHeight * scale;
+    ctx.drawImage(v, (canvas.width - w) / 2, (canvas.height - h) / 4, w, h);
+    return true;
+}
+
 // ───────── outgoing video tile (Phase 2b Slice 2: avatar face) ─────────
 // Render a branded placard (logo + avatar name + a "listening" pulse) to a canvas
 // and send it as the call's outgoing video, so the avatar is a visible participant
@@ -346,10 +491,28 @@ async function startPlacardVideo() {
     const ctx = canvas.getContext("2d");
     const img = loadBrandImage();
     const t0 = performance.now();
+    function keepFrameAlive() {
+        // Force a captured frame even when requestAnimationFrame is throttled (the
+        // joiner tab usually sits BEHIND the Teams app). canvas.captureStream pulls a
+        // frame on canvas mutation; an explicit requestFrame() guarantees the WebRTC
+        // video sender keeps emitting so the tile never freezes/blanks in background.
+        try {
+            const vt = placardStream && placardStream.getVideoTracks()[0];
+            if (vt && typeof vt.requestFrame === "function") vt.requestFrame();
+        } catch (_) { /* requestFrame not supported — captureStream fps covers it */ }
+    }
     function draw() {
         const t = (performance.now() - t0) / 1000;
         ctx.fillStyle = "#0b1020";
         ctx.fillRect(0, 0, canvas.width, canvas.height);
+        // Live avatar face, when we have one and it is actually advancing.
+        // The avatar renders SQUARE (512x512) while the tile is 16:9, so scale to
+        // cover the height and centre-crop horizontally rather than letterboxing
+        // a small face into a wide black box.
+        if (drawAvatarFrame(ctx, canvas)) {
+            keepFrameAlive();
+            return;
+        }
         if (img && img.complete && img.naturalWidth) {
             const scale = Math.min(180 / img.naturalWidth, 1);
             const w = img.naturalWidth * scale;
@@ -370,14 +533,7 @@ async function startPlacardVideo() {
         ctx.font = "400 18px -apple-system, 'Segoe UI', system-ui, sans-serif";
         ctx.textAlign = "left";
         ctx.fillText("listening", canvas.width / 2 - 48, 324);
-        // Force a captured frame even when requestAnimationFrame is throttled (the
-        // joiner tab usually sits BEHIND the Teams app). canvas.captureStream pulls a
-        // frame on canvas mutation; an explicit requestFrame() guarantees the WebRTC
-        // video sender keeps emitting so the tile never freezes/blanks in background.
-        try {
-            const vt = placardStream && placardStream.getVideoTracks()[0];
-            if (vt && typeof vt.requestFrame === "function") vt.requestFrame();
-        } catch (_) { /* requestFrame not supported — captureStream fps covers it */ }
+        keepFrameAlive();
     }
     // setInterval (unlike requestAnimationFrame) keeps firing in a backgrounded tab
     // (throttled to ~1s, which is still enough to keep the encoder alive and the
@@ -406,6 +562,7 @@ function teardownPlacardVideo() {
 
 function teardownMedia() {
     teardownPlacardVideo();
+    teardownAvatarVideo();
     try { if (mediaWs) mediaWs.close(); } catch (_) {}
     try { if (captureNode) captureNode.disconnect(); } catch (_) {}
     try { if (captureSink) captureSink.disconnect(); } catch (_) {}
@@ -534,6 +691,8 @@ async function ensureEnabled() {
     // Branding name comes from the server (AVATAR_DISPLAY_NAME) — never hardcoded.
     avatarDisplayName = (cfg.avatarDisplayName || "Avatar").trim();
     avatarVideoEnabled = !!cfg.avatarVideoEnabled;
+    avatarLiveVideo = !!cfg.avatarLiveVideo;
+    if (avatarLiveVideo) console.log("[acs-join] live avatar video enabled");
     return true;
 }
 

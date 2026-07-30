@@ -52,6 +52,11 @@ logger = logging.getLogger(__name__)
 # Per-section Q values for a 6th-order Butterworth response (3 cascaded biquads).
 _BUTTERWORTH_Q6 = (0.51763809, 0.70710678, 1.93185165)
 
+# Voice Live's native PCM16 rate. The browser leg runs at this rate end to end
+# (frontend/acs-join.js MEDIA_SAMPLE_RATE) so nothing is resampled there; the ACS
+# Call Automation / meeting-bot leg resamples to whatever the far end negotiates.
+_VOICE_LIVE_RATE = 24000
+
 
 def _design_lowpass(fs: int, fc: float, q_list=_BUTTERWORTH_Q6):
     """RBJ-cookbook biquad coefficients for a cascaded low-pass at ``fc``."""
@@ -490,7 +495,7 @@ class BrowserVoiceBridge:
     Call Automation socket). Turn-taking is identical to ``AcsVoiceBridge``.
     """
 
-    def __init__(self, ws, client_id: str):
+    def __init__(self, ws, client_id: str, avatar_video: bool = False):
         self._ws = ws
         self.client_id = client_id
         self.handler = None  # set by routes after construction
@@ -505,6 +510,42 @@ class BrowserVoiceBridge:
         self._frames_in = 0
         self._frames_out = 0
         self._closed = False
+
+        # ── Avatar face ──
+        # In avatar/websocket mode Voice Live sends ONE fragmented-MP4 stream
+        # carrying both the rendered face and the answer audio, and stops sending
+        # response.audio.delta entirely. So we do two things with each delta:
+        #
+        #   1. feed it to an AUDIO-ONLY decoder, which recovers the PCM16 and
+        #      pushes it through the existing send_binary path — barge-in, the
+        #      wake-phrase gate and the hard mute all keep working untouched;
+        #   2. forward the raw bytes to the browser, which plays them in a muted
+        #      MediaSource <video> and paints that onto the outgoing video tile.
+        #
+        # Splitting it this way means the audio leg (the part that already works
+        # in real meetings) is not on the video code path at all: if the face
+        # fails, she still talks.
+        self._avatar_video = avatar_video
+        self._decoder: Optional[AvatarStreamDecoder] = None
+        self._video_out = 0
+
+    def _ensure_decoder(self) -> AvatarStreamDecoder:
+        if self._decoder is None:
+            self._decoder = AvatarStreamDecoder(
+                width=MEETING_BOT_VIDEO_WIDTH,
+                height=MEETING_BOT_VIDEO_HEIGHT,
+                fps=MEETING_BOT_VIDEO_FPS,
+                audio_rate=_VOICE_LIVE_RATE,
+                on_video=self._drop_video,
+                on_audio=self.send_binary,
+                decode_video=False,  # the browser renders the face itself
+                loop=asyncio.get_running_loop(),
+            )
+        return self._decoder
+
+    async def _drop_video(self, nv12: bytes, width: int, height: int) -> None:
+        """Never called (``decode_video=False``); present to satisfy the decoder."""
+        return
 
     # ───────── Voice Live -> browser (outbound) ─────────
 
@@ -525,6 +566,15 @@ class BrowserVoiceBridge:
     async def send_message(self, msg: dict) -> None:
         """Drive turn-taking and barge-in from Voice Live control events."""
         mtype = msg.get("type")
+
+        if mtype == "video_data":
+            if self._avatar_video and not self._closed:
+                delta = msg.get("delta") or ""
+                if delta:
+                    # Audio first: recovering the PCM is what keeps her audible.
+                    self._ensure_decoder().feed(base64.b64decode(delta))
+                    await self._send_video_delta(delta)
+            return
 
         if mtype == "transcript_done" and msg.get("role") == "user":
             self._on_user_utterance((msg.get("transcript") or "").strip())
@@ -548,8 +598,29 @@ class BrowserVoiceBridge:
         elif mtype == "stop_playback":
             await self._send_stop_audio()
 
+    async def _send_video_delta(self, delta_b64: str) -> None:
+        """Forward one raw fMP4 chunk to the browser's MediaSource player.
+
+        Deliberately NOT gated on ``_suppress_current_response``/``_hard_muted``.
+        MediaSource needs a byte-contiguous stream — the ``ftyp``/``moov`` init
+        segment arrives only once per session, and dropping fragments from the
+        middle corrupts everything after them. Silencing is enforced on the audio
+        path instead (that is what the room actually hears); a suppressed response
+        is also interrupted immediately, so barely any video exists for it.
+        """
+        if self._closed:
+            return
+        try:
+            await self._ws.send_text(
+                json.dumps({"type": "video_data", "delta": delta_b64})
+            )
+            self._video_out += 1
+            if self._video_out == 1:
+                logger.info(f"[browser {self.client_id}] avatar video stream started")
+        except Exception as e:  # noqa: BLE001 — video must never kill the call
+            logger.debug(f"[browser {self.client_id}] video delta send failed: {e}")
+
     async def _send_stop_audio(self) -> None:
-        """Tell the browser to flush its outbound playback queue (barge-in)."""
         if self._closed:
             return
         try:
@@ -644,6 +715,8 @@ class BrowserVoiceBridge:
             logger.info(f"[browser {self.client_id}] media socket closed: {e}")
         finally:
             self._closed = True
+            if self._decoder is not None:
+                self._decoder.close()
 
     def _on_user_utterance(self, transcript: str) -> None:
         """Arm the answer gate when an utterance is addressed to the avatar."""

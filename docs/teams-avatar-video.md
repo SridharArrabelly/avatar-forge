@@ -218,8 +218,46 @@ audio-only Slice 1 session). Verified to compile against the real SDK on Windows
 - Gated on `MEETING_BOT_VIDEO_ENABLED`, default **off**: with the flag off no decoder is
   created, video deltas are ignored, and the session config is identical to before.
 
-### 5.3 Infra — none new
+### 5.2b Browser joiner (`frontend/acs-join.js`) — DONE
 
+The browser joiner already sent an outgoing video tile, but it painted a **static branded
+placard**. It now paints the live avatar instead. Enabled by
+`BROWSER_JOIN_VIDEO_ENABLED` (default **off**, and additionally gated on the existing
+`ACS_AVATAR_VIDEO_ENABLED` that turns the tile on at all).
+
+The work is split differently from the media-bot path, because a browser can decode fMP4
+natively and a `VideoSocket` cannot:
+
+| | media bot (`/ws/acs/audio`) | browser joiner (`/ws/acs/browser`) |
+| --- | --- | --- |
+| who decodes the H.264 | Python (PyAV → NV12) | the browser (MediaSource) |
+| who decodes the AAC | Python | Python |
+| what crosses the socket | NV12 frames + PCM16 | **raw fMP4** + PCM16 |
+
+So on the browser leg the server runs the decoder in **audio-only** mode
+(`AvatarStreamDecoder(decode_video=False)`) purely to recover the PCM16, and forwards the
+untouched fMP4 bytes as `{"type":"video_data","delta":…}`. The browser plays those in an
+offscreen **muted** `<video>` via MediaSource and draws it onto the same canvas that
+already feeds the ACS `LocalVideoStream`.
+
+Three details that are load-bearing:
+
+- **The `<video>` is muted.** The answer audio still reaches the call through the existing
+  PCM path, so letting the element play its own AAC track would double the voice *and*
+  defeat the half-duplex echo gate.
+- **Video deltas are never dropped**, even while a response is suppressed or the host has
+  pressed *Mute*. MediaSource needs a byte-contiguous stream — the `ftyp`/`moov` init
+  segment arrives once per session, so dropping fragments corrupts everything after them.
+  Silencing is enforced on the audio path, which is what the room actually hears.
+- **The tile falls back to the placard when the stream goes idle** (~900 ms with no
+  advance in `currentTime`). Between turns Voice Live simply stops sending, and a frozen
+  face staring at the room looks broken; the placard doubles as the "listening" state.
+
+Because audio never travels the video code path, a failure of the face cannot silence her —
+which is the property that mattered, given the audio leg is the part already proven in real
+meetings.
+
+### 5.3 Infra — none new
 Slice 2A adds **no** new Azure resource. It reuses the Slice 1 Windows media host and the
 existing bridge WebSocket. The only operational change is CPU headroom on the host/back end
 for the decode + an extra `VideoSocket` (the D4s_v5 already sized for media is adequate at

@@ -108,6 +108,7 @@ class AvatarStreamDecoder:
         audio_rate: int,
         on_video: Callable[[bytes, int, int], Awaitable[None]],
         on_audio: Callable[[bytes], Awaitable[None]],
+        decode_video: bool = True,
         loop: Optional[asyncio.AbstractEventLoop] = None,
     ) -> None:
         self.width = width
@@ -116,6 +117,10 @@ class AvatarStreamDecoder:
         self.audio_rate = audio_rate
         self._on_video = on_video
         self._on_audio = on_audio
+        # The browser joiner plays the fMP4 itself (MediaSource) and only needs
+        # the audio track split back out, so it decodes audio only. Skipping the
+        # H.264 decode + scale there avoids paying for frames nobody consumes.
+        self._decode_video = decode_video
         self._loop = loop or asyncio.get_event_loop()
 
         self._reader = _QueueReader()
@@ -188,6 +193,9 @@ class AvatarStreamDecoder:
                     break
                 if packet.dts is None:
                     continue
+                is_video = packet.stream.type == "video"
+                if is_video and not self._decode_video:
+                    continue
                 try:
                     frames = packet.decode()
                 except Exception:  # noqa: BLE001 — a bad packet must not kill the call
@@ -195,7 +203,7 @@ class AvatarStreamDecoder:
                 for frame in frames:
                     if self._stopped:
                         break
-                    if packet.stream.type == "video":
+                    if is_video:
                         self._handle_video(av, frame)
                     elif resampler is not None:
                         self._handle_audio(resampler, frame)

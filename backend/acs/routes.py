@@ -23,6 +23,7 @@ from ..config import (
     ACS_AVATAR_VIDEO_ENABLED,
     ACS_CALLBACK_BASE_URL,
     ACS_ENABLED,
+    BROWSER_JOIN_VIDEO_ENABLED,
     ACS_ENDPOINT,
     AVATAR_DISPLAY_NAME,
     DEFAULT_ENDPOINT,
@@ -119,6 +120,9 @@ def build_acs_router() -> APIRouter:
             "avatarDisplayName": AVATAR_DISPLAY_NAME,
             # Phase 2b Slice 2: when true the joiner sends a branded video tile.
             "avatarVideoEnabled": ACS_AVATAR_VIDEO_ENABLED,
+            # ...and when THIS is true that tile carries the live lip-synced
+            # avatar (streamed over the media socket) instead of the placard.
+            "avatarLiveVideo": ACS_AVATAR_VIDEO_ENABLED and BROWSER_JOIN_VIDEO_ENABLED,
         }
 
     @router.get("/api/acs/status")
@@ -249,7 +253,9 @@ def build_acs_router() -> APIRouter:
         client_id = f"browser-{id(websocket)}"
         logger.info(f"[browser {client_id}] media socket connected")
 
-        bridge = BrowserVoiceBridge(websocket, client_id)
+        bridge = BrowserVoiceBridge(
+            websocket, client_id, avatar_video=BROWSER_JOIN_VIDEO_ENABLED
+        )
         endpoint = _strip_realtime_suffix(DEFAULT_ENDPOINT)
         if not endpoint:
             logger.error("AZURE_VOICELIVE_ENDPOINT not set; closing browser media socket")
@@ -262,7 +268,7 @@ def build_acs_router() -> APIRouter:
             credential=create_credential(""),
             send_message=bridge.send_message,
             send_binary=bridge.send_binary,
-            config=dict(_IN_CALL_CONFIG),
+            config=_in_call_config(BROWSER_JOIN_VIDEO_ENABLED),
         )
         bridge.handler = handler
         _ACTIVE_CALLS.add(client_id)
