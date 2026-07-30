@@ -1,12 +1,19 @@
 /*
  * Browser joiner for the in-call avatar (channel D, issue #27).
  *
- * This is the one piece that cannot run server-side: ACS Call Automation has no
- * "join Teams meeting by URL" API, so a client-side ACS Calling SDK must join the
- * meeting first (as an anonymous interop guest — governed by the meeting lobby,
- * no Teams admin needed) and surface a ServerCallId. We then hand that id to the
- * Python server (POST /api/acs/call) which attaches the bidirectional audio
- * bridge via connect_call().
+ * This is the one piece that cannot run server-side, for two separate reasons.
+ * ACS Call Automation has no "join Teams meeting by URL" API, so a client-side ACS
+ * Calling SDK must join the meeting (as an anonymous interop guest — governed by
+ * the meeting lobby, no Teams admin needed). And live testing showed its
+ * server-side media streaming does not deliver a Teams *meeting*'s audio at all
+ * (every inbound frame arrived flagged silent while someone was speaking), so the
+ * media stays client-side too: this page captures audio with Web Audio and streams
+ * PCM16 straight to /ws/acs/browser, where BrowserVoiceBridge feeds Voice Live.
+ * Server-side attach via connect_call() is NOT used here.
+ *
+ * Known limit of this leg: a browser only ever receives its own microphone, so the
+ * avatar hears the operator, not the room. Hearing everyone is what the .NET media
+ * bot (/ws/acs/audio) exists for.
  *
  * SDK delivery (important): the ACS Calling SDK relies on web workers / wasm for
  * its media stack. Loaded as a plain ES module from a CDN (esm.sh) those workers

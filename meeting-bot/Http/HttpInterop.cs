@@ -10,14 +10,17 @@ namespace AvatarForge.MeetingBot.Http;
 /// </summary>
 public static class HttpInterop
 {
-    public static HttpRequestMessage ToHttpRequestMessage(this HttpRequest request)
+    public static async Task<HttpRequestMessage> ToHttpRequestMessageAsync(this HttpRequest request)
     {
         var message = new HttpRequestMessage(new HttpMethod(request.Method), request.GetEncodedUrl());
 
         if (request.ContentLength > 0)
         {
+            // Read asynchronously. Blocking on the body here occupies a thread-pool
+            // thread for the duration of a network read, on the one endpoint Teams
+            // calls for every signalling notification of every call.
             using var reader = new StreamReader(request.Body);
-            var body = reader.ReadToEndAsync().GetAwaiter().GetResult();
+            var body = await reader.ReadToEndAsync().ConfigureAwait(false);
             message.Content = new StringContent(body);
         }
 

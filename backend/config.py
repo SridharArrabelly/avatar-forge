@@ -96,8 +96,9 @@ BOT_RUN_TIMEOUT_S = float(os.getenv("BOT_RUN_TIMEOUT_S", "60"))
 #      (hears every participant; this is the real one)
 #   2. the browser joiner /acs-join.html         -> wss://.../ws/acs/browser
 #      ACS Calling SDK joins as an anonymous interop guest via the meeting lobby,
-#      then POST /api/acs/call attaches media with connect_call(). It only hears
-#      the operator's own mic, so it is the no-admin-rights fallback.
+#      then captures and streams the audio from the browser itself — server-side
+#      connect_call() does not carry Teams *meeting* audio. It only hears the
+#      operator's own mic, so it is the no-admin-rights fallback.
 ACS_ENDPOINT = os.getenv("ACS_ENDPOINT", "").strip()
 # Connection string for the ACS resource (preferred for Call Automation + Identity).
 # When empty, the client falls back to ACS_ENDPOINT + DefaultAzureCredential.

@@ -329,22 +329,10 @@ public sealed class MeetingBotService : IDisposable
                 "Call {CallId} state updated: {State}, result: {ResultCode}",
                 call.Id, call.Resource?.State, call.Resource?.ResultInfo?.Code);
 
-            // Self-unmute once the call is established (not before).
-            if (string.Equals(call.Resource?.State?.ToString(), "Established", StringComparison.OrdinalIgnoreCase))
-            {
-                _ = Task.Run(async () =>
-                {
-                    try
-                    {
-                        await call.UnmuteAsync().ConfigureAwait(false);
-                        _logger.LogInformation("Call {CallId}: self-unmuted.", call.Id);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogWarning(ex, "Call {CallId}: self-unmute failed.", call.Id);
-                    }
-                });
-            }
+            // Self-unmute is NOT done here. A call is added to this collection in
+            // "Establishing", so an Established check at this point does not fire;
+            // JoinMeetingAsync subscribes to the per-call OnUpdated instead, and
+            // guards it so the unmute happens exactly once.
         }
         foreach (var call in args.RemovedResources)
         {

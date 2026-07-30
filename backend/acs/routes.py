@@ -6,10 +6,15 @@ configured every endpoint returns 503 and the rest of the app is unaffected.
 Endpoints:
   GET  /api/acs/config    -> {enabled, endpoint} for the browser joiner page
   POST /api/acs/token     -> mint an ACS VoIP token for the browser joiner
-  POST /api/acs/call      -> attach media to a joined call (ServerCallId -> connect_call)
-  POST /api/acs/callback  -> ACS Call Automation event webhook (CloudEvents)
   WS   /ws/acs/audio      -> the .NET Graph media bot <-> Voice Live (hears the room)
   WS   /ws/acs/browser    -> the browser joiner <-> Voice Live (hears the operator only)
+
+  POST /api/acs/call      -> attach media to a joined call (ServerCallId -> connect_call)
+  POST /api/acs/callback  -> ACS Call Automation event webhook (CloudEvents)
+      NOT used by either meeting leg above. Server-side media streaming was
+      measured not to carry a Teams *meeting*'s audio, so both legs bridge audio
+      themselves. These remain for ACS-native / Teams-user calls, which do
+      support it.
 """
 
 from __future__ import annotations

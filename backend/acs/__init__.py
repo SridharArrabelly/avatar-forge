@@ -15,13 +15,21 @@ session — see ``docs/channels/d-in-call-media-bot.md`` for the full design:
                                                              <--> VoiceSessionHandler
 
     2. BROWSER JOINER (hears only the operator).  ACS Call Automation has no
-       "join a Teams meeting by URL" API, so /acs-join.html loads the ACS Calling
-       Web SDK from a CDN (no Node toolchain on the server) and joins as an
-       anonymous interop guest, governed by the meeting lobby — which is why this
-       leg needs no Teams-admin action:
+       "join a Teams meeting by URL" API, so /acs-join.html joins as an anonymous
+       interop guest using the ACS Calling Web SDK — vendored locally in
+       ``frontend/vendor/`` rather than fetched from a CDN, both to keep the
+       no-Node guardrail and because the CDN's ES module build leaves join()
+       stuck forever. Lobby-governed, so it needs no Teams-admin action.
 
-           browser joins -> emits ServerCallId -> POST /api/acs/call
-                         -> connect_call() -> /ws/acs/browser -> BrowserVoiceBridge
+       Media stays in the browser too: server-side ``connect_call`` streaming was
+       measured NOT to deliver a Teams meeting's audio (every frame arrived
+       flagged silent mid-conversation), so the page captures PCM16 itself:
+
+           browser (Web Audio)  <--wss-->  /ws/acs/browser  <-->  BrowserVoiceBridge
+                                                                    <--> VoiceSessionHandler
+
+``POST /api/acs/call`` / ``connect_call`` remain for ACS-native and Teams-*user*
+calls, which do support server-side media; neither meeting leg above uses them.
 
 See ``backend/acs/bridge.py`` for the media bridges and ``backend/acs/routes.py``
 for the HTTP/WebSocket endpoints.

@@ -28,7 +28,7 @@ public sealed class CallingController : ControllerBase
         // Hand the inbound request to the SDK. ProcessNotificationAsync reads
         // the body/headers, validates, and raises the typed call events.
         var response = await _bot.Client
-            .ProcessNotificationAsync(Request.ToHttpRequestMessage())
+            .ProcessNotificationAsync(await Request.ToHttpRequestMessageAsync().ConfigureAwait(false))
             .ConfigureAwait(false);
 
         // Relay the SDK's status/headers back to Graph.
