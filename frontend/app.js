@@ -507,9 +507,37 @@ function updateLastAssistantMessage(text) {
     }
 }
 
+// Scroll-to-bottom is called once per streaming transcript token. Reading
+// scrollHeight right after writing textContent forces a synchronous layout, so
+// doing it per token stalls the main thread on every delta. Both the chat log
+// and the caption band batch their scroll into a single rAF flush instead —
+// visually identical (the user can't see sub-frame scroll states) but at most
+// one forced layout per frame regardless of token rate.
+let _scrollRafId = null;
+let _scrollChatPending = false;
+let _scrollCaptionPending = false;
+
+function _flushScrolls() {
+    _scrollRafId = null;
+    if (_scrollChatPending) {
+        _scrollChatPending = false;
+        const chatArea = document.getElementById('chatArea');
+        if (chatArea) chatArea.scrollTop = chatArea.scrollHeight;
+    }
+    if (_scrollCaptionPending) {
+        _scrollCaptionPending = false;
+        const caption = document.getElementById('avatarCaption');
+        if (caption) caption.scrollTop = caption.scrollHeight;
+    }
+}
+
+function _scheduleScrollFlush() {
+    if (_scrollRafId === null) _scrollRafId = requestAnimationFrame(_flushScrolls);
+}
+
 function scrollChatToBottom() {
-    const chatArea = document.getElementById('chatArea');
-    chatArea.scrollTop = chatArea.scrollHeight;
+    _scrollChatPending = true;
+    _scheduleScrollFlush();
 }
 
 function clearChat() {
@@ -1202,7 +1230,10 @@ function setAvatarCaption(text, role) {
     el.classList.toggle('visible', !!text);
     // Rolling subtitle: keep the newest line in view as the transcript streams,
     // so long answers scroll up instead of freezing on the first two lines.
-    el.scrollTop = el.scrollHeight;
+    // Batched with the chat scroll so a fast token stream costs one forced
+    // layout per frame, not one per token.
+    _scrollCaptionPending = true;
+    _scheduleScrollFlush();
 }
 
 function clearAvatarCaption(delayMs) {
@@ -1271,7 +1302,16 @@ function stopAvatarSpeaking() {
 
 // Reset on every audio chunk; if audio stops arriving for SPEAKING_WATCHDOG_MS
 // the glow force-clears. Resetting per chunk means long answers never get cut.
+// The WebRTC analyser loop calls setAvatarSpeaking(true) every animation frame,
+// so re-arming is throttled: churning a timer 60x/s bought nothing against a
+// 4s deadline.
+let lastWatchdogArmMs = 0;
+const WATCHDOG_REARM_MIN_MS = 250;
+
 function armSpeakingWatchdog() {
+    const now = performance.now();
+    if (speakingWatchdogTimer && (now - lastWatchdogArmMs) < WATCHDOG_REARM_MIN_MS) return;
+    lastWatchdogArmMs = now;
     if (speakingWatchdogTimer) clearTimeout(speakingWatchdogTimer);
     speakingWatchdogTimer = setTimeout(() => setAvatarSpeaking(false), SPEAKING_WATCHDOG_MS);
 }
@@ -1512,7 +1552,30 @@ function updateDeveloperModeLayout() {
     updateAvatarMicRing();
 }
 
-let soundWaveIntervalId = null;
+let soundWaveRafId = null;
+// Bar elements are cached at creation time. The previous implementation ran an
+// 80ms setInterval that did 20 document.getElementById() lookups plus 20
+// `style.transition` + 20 `style.height` writes on EVERY tick (~250 id lookups
+// and ~500 style writes per second) — and, being a timer, it kept doing all of
+// that while the tab was hidden. Now: ids resolved once, transition set once at
+// creation, unchanged heights skipped, and the loop is rAF-driven so the
+// browser suspends it in background tabs.
+let soundWaveBars = [];
+let soundWaveHeights = [];
+const SOUND_WAVE_INTERVAL_MS = 80;
+
+function buildSoundWaveBars(container, startIndex) {
+    if (!container || container.children.length > 0) return;
+    for (let i = startIndex; i < startIndex + 10; i++) {
+        const bar = document.createElement('div');
+        bar.className = 'bar';
+        bar.id = `item-${i}`;
+        bar.style.height = '2px';
+        // Set once here instead of re-assigning the same value every tick.
+        bar.style.transition = 'height 0.08s ease';
+        container.appendChild(bar);
+    }
+}
 
 function updateSoundWaveAnimation() {
     const leftWave = document.getElementById('soundWaveLeft');
@@ -1520,58 +1583,54 @@ function updateSoundWaveAnimation() {
 
     if (isConnected && avatarEnabled && isRecording && !isDeveloperMode) {
         // Create sound wave bars if not already present
-        if (leftWave && leftWave.children.length === 0) {
-            for (let i = 0; i < 10; i++) {
-                const bar = document.createElement('div');
-                bar.className = 'bar';
-                bar.id = `item-${i}`;
-                bar.style.height = '2px';
-                leftWave.appendChild(bar);
-            }
+        buildSoundWaveBars(leftWave, 0);
+        buildSoundWaveBars(rightWave, 10);
+
+        // (Re)build the element cache if the bars were just created or replaced.
+        if (soundWaveBars.length !== 20 || !soundWaveBars[0] || !soundWaveBars[0].isConnected) {
+            soundWaveBars = [];
+            for (let i = 0; i < 20; i++) soundWaveBars.push(document.getElementById(`item-${i}`));
+            soundWaveHeights = new Array(20).fill(-1);
         }
-        if (rightWave && rightWave.children.length === 0) {
-            for (let i = 10; i < 20; i++) {
-                const bar = document.createElement('div');
-                bar.className = 'bar';
-                bar.id = `item-${i}`;
-                bar.style.height = '2px';
-                rightWave.appendChild(bar);
-            }
-        }
+
         // Start animation
-        if (!soundWaveIntervalId) {
-            soundWaveIntervalId = setInterval(() => {
-                if (micAnalyserNode && micAnalyserDataArray) {
-                    micAnalyserNode.getByteFrequencyData(micAnalyserDataArray);
-                    for (let i = 0; i < 20; i++) {
-                        const ele = document.getElementById(`item-${i}`);
-                        if (ele) {
-                            // Map the 20 bars to different frequency bins for a real spectral visualizer
-                            const binIndex = Math.floor((micAnalyserDataArray.length / 40) * (i + 2)); // focus on speech frequencies
-                            const binValue = micAnalyserDataArray[binIndex] || 0;
-                            // Scale value (0-255) to height (2px - 50px)
-                            const height = 2 + (binValue / 255) * 48;
-                            ele.style.transition = 'height 0.08s ease';
-                            ele.style.height = `${height}px`;
-                        }
+        if (!soundWaveRafId) {
+            let lastTick = 0;
+            const tick = (ts) => {
+                soundWaveRafId = requestAnimationFrame(tick);
+                // Keep the original ~12.5Hz cadence so the 0.08s CSS transition
+                // still reads as a smooth spectral sweep.
+                if (ts - lastTick < SOUND_WAVE_INTERVAL_MS) return;
+                lastTick = ts;
+                const hasData = !!(micAnalyserNode && micAnalyserDataArray);
+                if (hasData) micAnalyserNode.getByteFrequencyData(micAnalyserDataArray);
+                const binCount = hasData ? micAnalyserDataArray.length : 0;
+                for (let i = 0; i < 20; i++) {
+                    const ele = soundWaveBars[i];
+                    if (!ele) continue;
+                    let height = 2;
+                    if (hasData) {
+                        // Map the 20 bars to different frequency bins for a real
+                        // spectral visualizer (focus on speech frequencies).
+                        const binIndex = Math.floor((binCount / 40) * (i + 2));
+                        const binValue = micAnalyserDataArray[binIndex] || 0;
+                        // Scale value (0-255) to height (2px - 50px)
+                        height = Math.round(2 + (binValue / 255) * 48);
                     }
-                } else {
-                    for (let i = 0; i < 20; i++) {
-                        const ele = document.getElementById(`item-${i}`);
-                        if (ele) {
-                            ele.style.height = '2px';
-                        }
-                    }
+                    if (height === soundWaveHeights[i]) continue;
+                    soundWaveHeights[i] = height;
+                    ele.style.height = `${height}px`;
                 }
-            }, 80); // faster update rate for responsive spectral visualizer
+            };
+            soundWaveRafId = requestAnimationFrame(tick);
         }
         if (leftWave) leftWave.style.display = '';
         if (rightWave) rightWave.style.display = '';
     } else {
         // Stop animation, hide waves
-        if (soundWaveIntervalId) {
-            clearInterval(soundWaveIntervalId);
-            soundWaveIntervalId = null;
+        if (soundWaveRafId) {
+            cancelAnimationFrame(soundWaveRafId);
+            soundWaveRafId = null;
         }
         if (leftWave) leftWave.style.display = 'none';
         if (rightWave) rightWave.style.display = 'none';
@@ -1818,12 +1877,15 @@ function _playAudioPCM16(arrayBuffer) {
         nextPlaybackTime = 0;
     }
     const int16 = new Int16Array(arrayBuffer);
-    const float32 = new Float32Array(int16.length);
+    if (int16.length === 0) return;
+    // Convert straight into the AudioBuffer's channel data. The previous code
+    // allocated an intermediate Float32Array and then copied it in, doubling
+    // both the allocation and the memcpy for every 40ms chunk (~25/s per turn).
+    const buffer = playbackContext.createBuffer(1, int16.length, 24000);
+    const channel = buffer.getChannelData(0);
     for (let i = 0; i < int16.length; i++) {
-        float32[i] = int16[i] / 32768;
+        channel[i] = int16[i] / 32768;
     }
-    const buffer = playbackContext.createBuffer(1, float32.length, 24000);
-    buffer.getChannelData(0).set(float32);
     const source = playbackContext.createBufferSource();
     source.buffer = buffer;
     source.connect(analyserNode);
@@ -1874,8 +1936,15 @@ function startVolumeAnimation(animationType) {
     const calculateVolume = () => {
         if (analyserNode && analyserDataArray) {
             analyserNode.getByteFrequencyData(analyserDataArray);
-            const volume = Array.from(analyserDataArray).reduce((acc, v) => acc + v, 0) / analyserDataArray.length;
-            updateVolumeCircle(volume, animationType);
+            // Sum in place over the typed array. The previous
+            // `Array.from(...).reduce(...)` allocated a boxed 1024-element JS
+            // Array plus an iterator and ran 1024 closure calls EVERY frame
+            // (~60x/s for the whole session), which is pure GC churn on the
+            // animation hot path.
+            let sum = 0;
+            const len = analyserDataArray.length;
+            for (let i = 0; i < len; i++) sum += analyserDataArray[i];
+            updateVolumeCircle(sum / len, animationType);
         }
 
         if (isRecord) {
@@ -1929,17 +1998,30 @@ function stopVolumeAnimation() {
     stopPlayChunkAnimation();
 }
 
+// Last written circle size/type, so identical frames skip the style write
+// entirely (each write invalidates layout even when the value is unchanged).
+let lastVolumeSize = -1;
+let lastVolumeType = '';
+
 function updateVolumeCircle(volume, animationType) {
+    // Sub-pixel changes are invisible but each write invalidates layout, so
+    // quantise and skip no-op frames.
+    const size = Math.round(160 + volume);
+    if (size === lastVolumeSize && animationType === lastVolumeType) return;
     const circle = document.getElementById('volumeCircle');
     if (!circle) return;
-    const minSize = 160;
-    const size = minSize + volume;
-    circle.style.backgroundColor = animationType === 'record' ? 'lightgray' : 'lightblue';
+    if (animationType !== lastVolumeType) {
+        circle.style.backgroundColor = animationType === 'record' ? 'lightgray' : 'lightblue';
+        lastVolumeType = animationType;
+    }
+    lastVolumeSize = size;
     circle.style.width = size + 'px';
     circle.style.height = size + 'px';
 }
 
 function resetVolumeCircle() {
+    lastVolumeSize = -1;
+    lastVolumeType = '';
     const circle = document.getElementById('volumeCircle');
     if (!circle) return;
     circle.style.width = '';

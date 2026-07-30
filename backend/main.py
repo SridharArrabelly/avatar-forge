@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from .api import routes, websocket as ws
 from .acs import build_acs_router
 from .bot.app import build_bot_router, shutdown_bot
-from .config import HOST, PORT, configure_logging
+from .config import DEVELOPER_MODE, HOST, PORT, configure_logging
 from .voice.auth import close_credential, create_credential
 from .voice.catalog import close_search_client, prewarm_catalog
 
@@ -127,14 +127,27 @@ async def teams_frame_ancestors(request, call_next):
 
 
 @app.middleware("http")
-async def no_cache_static(request, call_next):
-    """Disable caching for static assets during development."""
+async def cache_static(request, call_next):
+    """Cache policy for static assets.
+
+    In developer mode we fully disable caching so edits show up on reload.
+
+    In production we send `Cache-Control: no-cache`, which still forces a
+    revalidation on every request (so a deploy is never served stale) but lets
+    StaticFiles answer with a 304 from its ETag/Last-Modified instead of
+    re-sending the payload. The previous unconditional `no-store` meant every
+    page load re-downloaded index.html + app.js + style.css in full (~150KB)
+    even when nothing had changed.
+    """
     response = await call_next(request)
     path = request.url.path
     if path.endswith((".js", ".css", ".html")) or path == "/":
-        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
-        response.headers["Pragma"] = "no-cache"
-        response.headers["Expires"] = "0"
+        if DEVELOPER_MODE:
+            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Expires"] = "0"
+        else:
+            response.headers["Cache-Control"] = "no-cache"
     return response
 
 
