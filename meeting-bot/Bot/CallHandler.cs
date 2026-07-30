@@ -45,10 +45,32 @@ public sealed class CallHandler : IAsyncDisposable
 
     // 20 ms of 16 kHz mono PCM16 = 16000 * 0.02 * 2 bytes = 640 bytes.
     private const int FrameBytes = 640;
+    private const int BytesPerMs = 32;              // 16 kHz * 2 bytes / 1000 ms
+    // Media timestamps are 100-ns ticks; one 20 ms PCM16 frame == 200,000 ticks.
+    private const long FrameTicks = 200_000;
     // A pre-allocated silent frame used to fill playout underruns so the outbound
     // stream stays contiguous (see PlayoutLoopAsync).
     private static readonly byte[] Silence = new byte[FrameBytes];
     private long _underruns;
+    private long _audioDropped;
+
+    // ── Jitter buffer ──────────────────────────────────────────────────────────
+    // The playout loop drains at exactly real time (one 20 ms frame per 20 ms).
+    // The producer also delivers at real time, but over a network, so it arrives
+    // in bursts. With no buffer the consumer sits permanently on the edge of empty
+    // and any jitter is an instant underrun. Holding a small amount of audio
+    // absorbs that jitter. Cheap insurance: TargetBufferMs of extra latency.
+    private const int TargetBufferMs = 120;
+    private const int MaxBufferMs = 400;
+    private const int TargetBufferBytes = TargetBufferMs * BytesPerMs;
+    private const int MaxBufferBytes = MaxBufferMs * BytesPerMs;
+    private int _bufferedBytes;                     // carry + everything queued
+    private bool _priming = true;                   // fill before draining
+    private short _lastSample;                      // for splice ramps
+    private bool _lastFrameWasSilence = true;
+    // A splice between real audio and silence is a step in the waveform, which is
+    // exactly what a click is. Ramp across ~2 ms instead of stepping.
+    private const int RampSamples = 32;
 
     // ── Slice 2A — outbound avatar video (only used when EnableVideo) ──
     // Real NV12 frames from Voice Live (forwarded by Python as VideoData) land
@@ -64,10 +86,14 @@ public sealed class CallHandler : IAsyncDisposable
     private long _videoUnderruns;
     private long _videoFormatMismatch;
     private long _videoDropped;
-    // Python decimates to the bot's playout fps, so producer and consumer match on
-    // average. Cap the queue anyway: if the producer ever runs ahead, an unbounded
-    // queue turns into unbounded lip-sync lag (and ~345 KB per frame of memory).
-    private const int MaxQueuedVideoFrames = 8;
+    // The last real avatar frame, re-sent whenever the queue runs dry. See
+    // VideoPlayoutLoopAsync for why this matters more than it sounds.
+    private VideoFrame? _lastRealFrame;
+    // Audio and video come from the SAME Voice Live stream, so they must be held
+    // to the SAME latency or the lips drift off the voice. Sized from
+    // MaxBufferMs, matching the audio jitter buffer, rather than a bare count.
+    private int MaxQueuedVideoFrames =>
+        Math.Max(2, Math.Clamp(_options.VideoFps, 1, 30) * MaxBufferMs / 1000);
 
     public CallHandler(ICall call, BotOptions options, ILoggerFactory loggerFactory)
     {
@@ -88,6 +114,7 @@ public sealed class CallHandler : IAsyncDisposable
         _bridge.AudioReceived += pcm =>
         {
             _playout.Enqueue(pcm);
+            System.Threading.Interlocked.Add(ref _bufferedBytes, pcm.Length);
             return Task.CompletedTask;
         };
 
@@ -96,6 +123,8 @@ public sealed class CallHandler : IAsyncDisposable
         {
             _flush = true;
             while (_playout.TryDequeue(out _)) { }
+            System.Threading.Interlocked.Exchange(ref _bufferedBytes, 0);
+            _priming = true;   // refill before the next answer starts
             _flush = false;
             return Task.CompletedTask;
         };
@@ -169,7 +198,6 @@ public sealed class CallHandler : IAsyncDisposable
         // are dropped (the room hears nothing even though Send() succeeds). One
         // 20 ms PCM16 frame == 200,000 ticks.
         long ts = System.Diagnostics.Stopwatch.GetTimestamp();
-        const long FrameTicks = 200_000;
         // DIAGNOSTIC test-tone generator state (440 Hz sine @ 16 kHz).
         double phase = 0;
         const double toneHz = 440.0;
@@ -200,51 +228,137 @@ public sealed class CallHandler : IAsyncDisposable
 
             if (_flush) { carry.Clear(); }
 
-            while (carry.Count < FrameBytes && _playout.TryDequeue(out var chunk))
-                carry.AddRange(chunk);
+            // ── Jitter buffer ─────────────────────────────────────────────────
+            //
+            // Draining at exactly real time from a queue fed at exactly real time
+            // over a network means sitting permanently on the edge of empty: any
+            // late packet is an instant underrun. That produced BOTH reported
+            // audio defects.
+            //
+            // Ticking: an underrun mid-word forces a splice to silence and back.
+            // Skipping the slot (the original code) left a hole; sending silence
+            // (the first fix) filled the hole but the STEP in the waveform was
+            // still there, so the click survived. Measured on a real call: 18% of
+            // outbound VIDEO frames were underruns, in short bursts — the audio
+            // path was jittering identically.
+            //
+            // Growing audio delay: every inserted silent frame adds 20 ms of
+            // stream time WITHOUT consuming any queued audio, so it pushes all
+            // subsequent speech later. Nothing ever gave that time back — a
+            // one-way ratchet. Video meanwhile was capped and dropped its oldest
+            // frames, so it stayed current. Hence the reported "mouth moves, voice
+            // arrives later", growing over the call.
+            //
+            // So: hold TargetBufferMs before starting to drain, and if the backlog
+            // ever exceeds MaxBufferMs, discard down to target to give the latency
+            // back. Cost is TargetBufferMs of extra latency, once.
+            int buffered = Volatile.Read(ref _bufferedBytes);
 
-            // Underrun handling — this is what stops the audible ticking.
-            //
-            // Previously an underrun did `continue`, which SKIPPED the 20 ms slot
-            // entirely and left a hole in the outbound stream. Every hole is a
-            // waveform discontinuity, i.e. an audible click. That was invisible
-            // before the avatar was enabled (audio only ever flowed during speech,
-            // so gaps were genuine silence between turns), but the avatar's muxed
-            // stream is CONTINUOUS — measured: video deltas at ~16/s and audio for
-            // 28.6s out of a 30s capture, with the idle stretches being digital
-            // silence. A continuous stream that jitters around the 50 frames/sec
-            // drain rate underruns constantly, producing the reported steady tick.
-            //
-            // Sending an explicit silent frame instead keeps the stream contiguous
-            // and the media timestamps monotonic, so there is nothing to click.
+            if (buffered > MaxBufferBytes)
+            {
+                // Too far behind: drop oldest audio down to the target. Better a
+                // single audible skip than permanent, growing lip-sync lag.
+                while (Volatile.Read(ref _bufferedBytes) > TargetBufferBytes
+                       && _playout.TryDequeue(out var stale))
+                {
+                    System.Threading.Interlocked.Add(ref _bufferedBytes, -stale.Length);
+                    System.Threading.Interlocked.Increment(ref _audioDropped);
+                }
+                carry.Clear();
+            }
+            else if (_priming)
+            {
+                if (buffered < TargetBufferBytes)
+                {
+                    // Still filling. Emit silence so the stream stays contiguous
+                    // and the media timestamps keep advancing.
+                    SendFrame(audioSocket, NextSilence(), ref ts);
+                    continue;
+                }
+                _priming = false;
+            }
+
+            while (carry.Count < FrameBytes && _playout.TryDequeue(out var chunk))
+            {
+                carry.AddRange(chunk);
+                System.Threading.Interlocked.Add(ref _bufferedBytes, -chunk.Length);
+            }
+
             byte[] frame;
             if (carry.Count >= FrameBytes)
             {
                 frame = carry.GetRange(0, FrameBytes).ToArray();
                 carry.RemoveRange(0, FrameBytes);
+                if (_lastFrameWasSilence) FadeIn(frame);
+                _lastSample = (short)(frame[FrameBytes - 2] | (frame[FrameBytes - 1] << 8));
+                _lastFrameWasSilence = false;
             }
             else
             {
-                frame = Silence;
+                // Genuine underrun. Emit silence and re-prime, so we refill the
+                // buffer instead of stuttering into the next underrun immediately.
+                frame = NextSilence();
+                _priming = true;
                 System.Threading.Interlocked.Increment(ref _underruns);
             }
 
-            try
-            {
-                // Send one 20 ms PCM16 frame into the meeting, with a monotonic
-                // media timestamp so the platform actually plays it out.
-                ts += FrameTicks;
-                var buffer = new AudioSendBuffer(frame, AudioFormat.Pcm16K, ts);
-                audioSocket.Send(buffer);
-                if (System.Threading.Interlocked.Increment(ref _framesSent) % 500 == 1)
-                    _logger.LogInformation(
-                        "Playout: sent {Count} frames (audioSendActive={Active}, underruns={Underruns}, queued={Queued})",
-                        _framesSent, _audioSendActive, _underruns, _playout.Count);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Outbound audio send failed.");
-            }
+            SendFrame(audioSocket, frame, ref ts);
+        }
+    }
+
+    /// <summary>
+    /// A silent 20 ms frame that ramps down from the last real sample instead of
+    /// stepping to zero. The step IS the click.
+    /// </summary>
+    private byte[] NextSilence()
+    {
+        if (_lastFrameWasSilence || _lastSample == 0)
+        {
+            _lastFrameWasSilence = true;
+            return Silence;
+        }
+        var buf = new byte[FrameBytes];
+        for (int i = 0; i < RampSamples; i++)
+        {
+            short s = (short)(_lastSample * (RampSamples - i) / RampSamples);
+            buf[i * 2] = (byte)(s & 0xFF);
+            buf[i * 2 + 1] = (byte)((s >> 8) & 0xFF);
+        }
+        _lastFrameWasSilence = true;
+        _lastSample = 0;
+        return buf;
+    }
+
+    /// <summary>Ramp a frame up from silence, for the same reason as <see cref="NextSilence"/>.</summary>
+    private static void FadeIn(byte[] frame)
+    {
+        for (int i = 0; i < RampSamples; i++)
+        {
+            short s = (short)(frame[i * 2] | (frame[i * 2 + 1] << 8));
+            s = (short)(s * i / RampSamples);
+            frame[i * 2] = (byte)(s & 0xFF);
+            frame[i * 2 + 1] = (byte)((s >> 8) & 0xFF);
+        }
+    }
+
+    private void SendFrame(IAudioSocket audioSocket, byte[] frame, ref long ts)
+    {
+        try
+        {
+            // Send one 20 ms PCM16 frame into the meeting, with a monotonic
+            // media timestamp so the platform actually plays it out.
+            ts += FrameTicks;
+            audioSocket.Send(new AudioSendBuffer(frame, AudioFormat.Pcm16K, ts));
+            if (System.Threading.Interlocked.Increment(ref _framesSent) % 500 == 1)
+                _logger.LogInformation(
+                    "Playout: sent {Count} frames (audioSendActive={Active}, underruns={Underruns}, "
+                    + "dropped={Dropped}, bufferedMs={BufferedMs})",
+                    _framesSent, _audioSendActive, _underruns, _audioDropped,
+                    Volatile.Read(ref _bufferedBytes) / BytesPerMs);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Outbound audio send failed.");
         }
     }
 
@@ -317,6 +431,7 @@ public sealed class CallHandler : IAsyncDisposable
             if (_videoQueue.TryDequeue(out var real))
             {
                 nv12 = real.Nv12;
+                _lastRealFrame = real;
                 // Never discard a real frame because it does not match the format
                 // the platform said it preferred. That is what made the avatar
                 // appear and then vanish mid-meeting: the platform raises
@@ -338,8 +453,27 @@ public sealed class CallHandler : IAsyncDisposable
                     }
                 }
             }
+            else if (_lastRealFrame is { } held)
+            {
+                // Queue ran dry for this slot. HOLD THE LAST REAL FRAME — never
+                // fall back to the placeholder once the avatar is live.
+                //
+                // The placeholder is a solid brand-blue fill. Sending it on every
+                // underrun meant the tile alternated face / solid blue several
+                // times a second: measured on a real call, 193 of 1052 recorded
+                // frames (18%) were solid blue, in 84 separate runs of ~2 frames
+                // each. That is the reported "background blue screen flickering".
+                // A held frame is invisible at these durations — the face simply
+                // pauses for 33 ms.
+                nv12 = held.Nv12;
+                if (held.Width != format.Width || held.Height != format.Height)
+                    format = MeetingBotService.VideoFormatFor(held.Width, held.Height, fps);
+                System.Threading.Interlocked.Increment(ref _videoUnderruns);
+            }
             else
             {
+                // No real frame has EVER arrived, so there is nothing to hold.
+                // The placeholder keeps the camera tile alive and proves the path.
                 nv12 = GetPlaceholder(format.Width, format.Height);
                 System.Threading.Interlocked.Increment(ref _videoUnderruns);
             }
@@ -353,9 +487,10 @@ public sealed class CallHandler : IAsyncDisposable
                 if (System.Threading.Interlocked.Increment(ref _videoFramesSent) % 300 == 1)
                 {
                     _logger.LogInformation(
-                        "Video: sent {Count} frames at {W}x{H} (queued={Queued}, placeholder={Underruns}, mismatched={Mismatch})",
+                        "Video: sent {Count} frames at {W}x{H} (queued={Queued}, held={Underruns}, "
+                        + "mismatched={Mismatch}, dropped={Dropped})",
                         _videoFramesSent, format.Width, format.Height,
-                        _videoQueue.Count, _videoUnderruns, _videoFormatMismatch);
+                        _videoQueue.Count, _videoUnderruns, _videoFormatMismatch, _videoDropped);
                 }
             }
             catch (Exception ex)
