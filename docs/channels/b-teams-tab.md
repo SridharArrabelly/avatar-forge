@@ -22,7 +22,7 @@ app is completely unaffected.
 
 **No Azure resources.** Only a Teams app package:
 
-```bash
+```powershell
 python teams/build_package.py
 ```
 

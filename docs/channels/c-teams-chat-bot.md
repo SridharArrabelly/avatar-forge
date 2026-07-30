@@ -26,7 +26,7 @@ or hear audio — that boundary is [channel D](d-in-call-media-bot.md)'s job.
 | --- | --- |
 | Azure Bot + Teams channel (`modules/botService.bicep`) | `BOT_APP_ID` being non-empty |
 
-```bash
+```powershell
 azd env set BOT_APP_ID <app-id>
 azd env set BOT_APP_PASSWORD <secret>
 azd up
@@ -52,9 +52,10 @@ See [`../admin-checklist.md`](../admin-checklist.md).
 
 ## 4. How to verify
 
-```bash
-# the messaging endpoint is mounted
-curl -i https://<your-app>.azurecontainerapps.io/api/messages
+```powershell
+# the messaging endpoint is mounted (405 = mounted, GET not allowed — that is correct)
+Invoke-WebRequest -Method Get -Uri https://<your-app>.azurecontainerapps.io/api/messages `
+  -SkipHttpErrorCheck | Select-Object StatusCode
 ```
 
 Then in Teams, `@mention` the bot in a chat and ask a grounded question. You

@@ -48,7 +48,7 @@ You need the **live HTTPS hostname** of the deployed app — the bare host of yo
 Azure Container App, e.g. `avatar-forge.<region>.azurecontainerapps.io` (no
 `https://`, no path, no port).
 
-```bash
+```powershell
 uv run python teams/build_package.py --hostname <your-app>.azurecontainerapps.io
 ```
 
@@ -56,8 +56,8 @@ For the **current deployment** the bare host is
 `ca-mtn-agent-forge-hz3cp52lid6xq.whitedune-5a2336c6.swedencentral.azurecontainerapps.io`,
 so the exact rebuild command is:
 
-```bash
-uv run python teams/build_package.py \
+```powershell
+uv run python teams/build_package.py `
   --hostname ca-mtn-agent-forge-hz3cp52lid6xq.whitedune-5a2336c6.swedencentral.azurecontainerapps.io
 ```
 
@@ -199,14 +199,14 @@ These cannot be done from this repo because they create an **app registration** 
 identity object), which lives outside the resource-group deployment:
 
 1. **Create the bot's Entra app registration** (single-tenant is simplest):
-   ```bash
+   ```powershell
    az ad app create --display-name "Avatar Forge Bot" --sign-in-audience AzureADMyOrg
    # note the appId (this is your BOT app id), then add a client secret:
    az ad app credential reset --id <bot-app-id> --append
    # note the returned password (client secret)
    ```
 2. **Give azd the bot values** (the infra wires the Azure Bot + container env from these):
-   ```bash
+   ```powershell
    azd env set BOT_APP_ID <bot-app-id>
    azd env set BOT_APP_PASSWORD <bot-client-secret>   # stored as an ACA secret
    azd env set TEAMS_APP_ID <teams-app-id>            # same id you build the package with
@@ -224,9 +224,9 @@ identity object), which lives outside the resource-group deployment:
 The bot is **additive and opt-in**: omit `--bot-id` to build the tab-only Phase 1 package
 (the `bots` entry is dropped). To include the bot, pass `--bot-id` (the bot app id from step 1):
 
-```bash
-uv run python teams/build_package.py \
-  --hostname <your-app>.azurecontainerapps.io \
+```powershell
+uv run python teams/build_package.py `
+  --hostname <your-app>.azurecontainerapps.io `
   --bot-id <bot-app-id>
 ```
 

@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.43.8.12551",
-      "templateHash": "11237784914017572100"
+      "templateHash": "11894516162551154979"
     }
   },
   "parameters": {
@@ -146,11 +146,11 @@
     },
     "photoAvatarName": {
       "type": "string",
-      "defaultValue": ""
+      "defaultValue": "Simone"
     },
     "isPhotoAvatar": {
       "type": "string",
-      "defaultValue": "false"
+      "defaultValue": "true"
     },
     "isCustomAvatar": {
       "type": "string",
@@ -210,6 +210,13 @@
         "description": "Foundry agent id override. Empty resolves the agent by AGENT_NAME."
       }
     },
+    "deployProfile": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Deployment profile from `scripts/set_profile.py` — one of \"web\", \"teams-tab\", \"teams-chat\", \"in-call\". Drives which optional channels deploy. Empty keeps the pre-profile behaviour (explicit flags only)."
+      }
+    },
     "enableAcs": {
       "type": "string",
       "defaultValue": "false",
@@ -228,7 +235,7 @@
       "type": "string",
       "defaultValue": "false",
       "metadata": {
-        "description": "\"true\"/\"false\". Serve the .NET Teams media-bot bridge without an ACS resource (sets MEETING_BOT_ENABLED). Independent of enableAcs."
+        "description": "\"true\"/\"false\". Serve the .NET Teams media-bot bridge without an ACS resource (sets MEETING_BOT_ENABLED). Implied by deployProfile=\"in-call\"."
       }
     },
     "acsAudioSampleRate": {
@@ -243,6 +250,62 @@
       "defaultValue": "",
       "metadata": {
         "description": "\"true\"/\"false\". In-call avatar only answers after a wake phrase."
+      }
+    },
+    "acsAvatarVideoEnabled": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "\"true\"/\"false\". In-call avatar sends an outgoing video tile so it is a visible participant."
+      }
+    },
+    "deployMeetingBotHost": {
+      "type": "string",
+      "defaultValue": "false",
+      "metadata": {
+        "description": "\"true\"/\"false\". Provision the Windows media host + calling bot registration. Implied by deployProfile=\"in-call\"."
+      }
+    },
+    "meetingBotAppId": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Entra app client id of the CALLING bot. Must differ from botAppId."
+      }
+    },
+    "meetingBotAppTenantId": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Tenant id of the calling bot app registration. Defaults to the deployment tenant when empty."
+      }
+    },
+    "meetingBotDnsLabel": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Globally-unique DNS label for the media host public IP (becomes <label>.<region>.cloudapp.azure.com)."
+      }
+    },
+    "meetingBotAdminPassword": {
+      "type": "securestring",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Local administrator password for the Windows media host."
+      }
+    },
+    "meetingBotVmSize": {
+      "type": "string",
+      "defaultValue": "Standard_D2s_v5",
+      "metadata": {
+        "description": "VM size for the media host. Standard_D2s_v5 is adequate for a single-meeting POC."
+      }
+    },
+    "meetingBotIconUrl": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Public URL of the bot icon shown for the in-call avatar in Teams."
       }
     },
     "modelName": {
@@ -278,7 +341,12 @@
       "workload": "avatar-forge"
     },
     "createFoundry": "[or(or(empty(parameters('foundryAccountName')), empty(parameters('foundryResourceGroup'))), empty(parameters('foundryProjectEndpoint')))]",
-    "createSearch": "[or(empty(parameters('searchServiceName')), empty(parameters('searchResourceGroup')))]"
+    "createSearch": "[or(empty(parameters('searchServiceName')), empty(parameters('searchResourceGroup')))]",
+    "profileInCall": "[equals(toLower(parameters('deployProfile')), 'in-call')]",
+    "wantMeetingBotBridge": "[or(variables('profileInCall'), equals(toLower(parameters('meetingBotEnabled')), 'true'))]",
+    "wantMeetingBotHost": "[or(variables('profileInCall'), equals(toLower(parameters('deployMeetingBotHost')), 'true'))]",
+    "meetingBotInputsReady": "[and(and(not(empty(parameters('meetingBotAppId'))), not(empty(parameters('meetingBotDnsLabel')))), not(empty(parameters('meetingBotAdminPassword'))))]",
+    "deployHost": "[and(variables('wantMeetingBotHost'), variables('meetingBotInputsReady'))]"
   },
   "resources": [
     {
@@ -432,14 +500,15 @@
           "acsDataLocation": {
             "value": "[parameters('acsDataLocation')]"
           },
-          "meetingBotEnabled": {
-            "value": "[parameters('meetingBotEnabled')]"
-          },
+          "meetingBotEnabled": "[if(variables('wantMeetingBotBridge'), createObject('value', 'true'), createObject('value', 'false'))]",
           "acsAudioSampleRate": {
             "value": "[parameters('acsAudioSampleRate')]"
           },
           "acsRequireWakePhrase": {
             "value": "[parameters('acsRequireWakePhrase')]"
+          },
+          "acsAvatarVideoEnabled": {
+            "value": "[parameters('acsAvatarVideoEnabled')]"
           }
         },
         "template": {
@@ -449,7 +518,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.43.8.12551",
-              "templateHash": "1794038029530991767"
+              "templateHash": "5190757614103222846"
             }
           },
           "parameters": {
@@ -648,6 +717,13 @@
               "metadata": {
                 "description": "\"true\"/\"false\". In-call avatar only answers after a wake phrase."
               }
+            },
+            "acsAvatarVideoEnabled": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "\"true\"/\"false\". In-call avatar sends an outgoing video tile (visible participant)."
+              }
             }
           },
           "variables": {
@@ -665,7 +741,10 @@
               "resourceGroup": "rg"
             },
             "acsEnabled": "[equals(toLower(parameters('enableAcs')), 'true')]",
-            "abbrs": "[variables('$fxv#0')]"
+            "abbrs": "[variables('$fxv#0')]",
+            "caEnvBudget": "[sub(sub(32, length(format('{0}-', variables('abbrs').containerApp))), length(format('-{0}', parameters('resourceToken'))))]",
+            "caEnvSegment": "[take(parameters('environmentName'), variables('caEnvBudget'))]",
+            "caEnvSegmentClean": "[if(endsWith(variables('caEnvSegment'), '-'), take(variables('caEnvSegment'), sub(length(variables('caEnvSegment')), 1)), variables('caEnvSegment'))]"
           },
           "resources": [
             {
@@ -1912,7 +1991,7 @@
                 "mode": "Incremental",
                 "parameters": {
                   "name": {
-                    "value": "[format('{0}-{1}-{2}', variables('abbrs').containerApp, parameters('environmentName'), parameters('resourceToken'))]"
+                    "value": "[toLower(format('{0}-{1}-{2}', variables('abbrs').containerApp, variables('caEnvSegmentClean'), parameters('resourceToken')))]"
                   },
                   "location": {
                     "value": "[parameters('location')]"
@@ -2013,6 +2092,9 @@
                   },
                   "acsRequireWakePhrase": {
                     "value": "[parameters('acsRequireWakePhrase')]"
+                  },
+                  "acsAvatarVideoEnabled": {
+                    "value": "[parameters('acsAvatarVideoEnabled')]"
                   }
                 },
                 "template": {
@@ -2022,7 +2104,7 @@
                     "_generator": {
                       "name": "bicep",
                       "version": "0.43.8.12551",
-                      "templateHash": "6283117768746242886"
+                      "templateHash": "8148263441507934792"
                     }
                   },
                   "parameters": {
@@ -2215,6 +2297,13 @@
                         "description": "\"true\"/\"false\" string. When \"true\", the in-call avatar only answers after a wake phrase so she never talks over humans."
                       }
                     },
+                    "acsAvatarVideoEnabled": {
+                      "type": "string",
+                      "defaultValue": "",
+                      "metadata": {
+                        "description": "\"true\"/\"false\" string. When \"true\", the in-call avatar sends an outgoing video tile so it is a visible participant instead of a faceless audio leg."
+                      }
+                    },
                     "containerImage": {
                       "type": "string",
                       "defaultValue": "mcr.microsoft.com/k8se/quickstart:latest",
@@ -2226,7 +2315,7 @@
                   "variables": {
                     "acsEnv": "[if(not(empty(parameters('acsEndpoint'))), createArray(createObject('name', 'ACS_ENDPOINT', 'value', parameters('acsEndpoint'))), createArray())]",
                     "meetingBotOn": "[equals(toLower(parameters('meetingBotEnabled')), 'true')]",
-                    "meetingBotEnv": "[concat(if(variables('meetingBotOn'), createArray(createObject('name', 'MEETING_BOT_ENABLED', 'value', 'true')), createArray()), if(not(empty(parameters('acsAudioSampleRate'))), createArray(createObject('name', 'ACS_AUDIO_SAMPLE_RATE', 'value', parameters('acsAudioSampleRate'))), createArray()), if(not(empty(parameters('acsRequireWakePhrase'))), createArray(createObject('name', 'ACS_REQUIRE_WAKE_PHRASE', 'value', parameters('acsRequireWakePhrase'))), createArray()))]",
+                    "meetingBotEnv": "[concat(if(variables('meetingBotOn'), createArray(createObject('name', 'MEETING_BOT_ENABLED', 'value', 'true')), createArray()), if(not(empty(parameters('acsAudioSampleRate'))), createArray(createObject('name', 'ACS_AUDIO_SAMPLE_RATE', 'value', parameters('acsAudioSampleRate'))), createArray()), if(not(empty(parameters('acsRequireWakePhrase'))), createArray(createObject('name', 'ACS_REQUIRE_WAKE_PHRASE', 'value', parameters('acsRequireWakePhrase'))), createArray()), if(not(empty(parameters('acsAvatarVideoEnabled'))), createArray(createObject('name', 'ACS_AVATAR_VIDEO_ENABLED', 'value', parameters('acsAvatarVideoEnabled'))), createArray()))]",
                     "botEnabled": "[not(empty(parameters('botAppId')))]",
                     "botSecrets": "[if(not(empty(parameters('botAppPassword'))), createArray(createObject('name', 'bot-app-password', 'value', parameters('botAppPassword'))), createArray())]",
                     "botEnv": "[if(variables('botEnabled'), concat(createArray(createObject('name', 'TEAMS_BOT_ID', 'value', parameters('botAppId')), createObject('name', 'TEAMS_APP_ID', 'value', parameters('teamsAppId')), createObject('name', 'AGENT_ID', 'value', parameters('agentId')), createObject('name', 'CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTID', 'value', parameters('botAppId')), createObject('name', 'CONNECTIONS__SERVICE_CONNECTION__SETTINGS__TENANTID', 'value', parameters('botAppTenantId'))), if(not(empty(parameters('botAppPassword'))), createArray(createObject('name', 'CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTSECRET', 'secretRef', 'bot-app-password')), createArray())), createArray())]"
@@ -2532,6 +2621,382 @@
       "dependsOn": [
         "[subscriptionResourceId('Microsoft.Resources/resourceGroups', parameters('resourceGroupName'))]"
       ]
+    },
+    {
+      "condition": "[variables('deployHost')]",
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "meeting-bot-host",
+      "resourceGroup": "[parameters('resourceGroupName')]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "tags": {
+            "value": "[variables('tags')]"
+          },
+          "botAppId": {
+            "value": "[parameters('meetingBotAppId')]"
+          },
+          "botAppTenantId": "[if(empty(parameters('meetingBotAppTenantId')), createObject('value', tenant().tenantId), createObject('value', parameters('meetingBotAppTenantId')))]",
+          "avatarDisplayName": "[if(empty(parameters('avatarDisplayName')), createObject('value', 'Avatar'), createObject('value', parameters('avatarDisplayName')))]",
+          "botIconUrl": {
+            "value": "[parameters('meetingBotIconUrl')]"
+          },
+          "adminPassword": {
+            "value": "[parameters('meetingBotAdminPassword')]"
+          },
+          "vmSize": {
+            "value": "[parameters('meetingBotVmSize')]"
+          },
+          "dnsLabel": {
+            "value": "[parameters('meetingBotDnsLabel')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.43.8.12551",
+              "templateHash": "2369142294307127952"
+            }
+          },
+          "parameters": {
+            "location": {
+              "type": "string",
+              "defaultValue": "[resourceGroup().location]",
+              "metadata": {
+                "description": "Location for the Windows host and networking."
+              }
+            },
+            "botAppId": {
+              "type": "string",
+              "metadata": {
+                "description": "Entra app client id (Microsoft App ID) of the calling bot."
+              }
+            },
+            "botAppTenantId": {
+              "type": "string",
+              "metadata": {
+                "description": "Tenant id of the single-tenant calling bot app registration."
+              }
+            },
+            "avatarDisplayName": {
+              "type": "string",
+              "defaultValue": "Avatar",
+              "metadata": {
+                "description": "The avatar brand/display name (sourced from AVATAR_DISPLAY_NAME). Becomes the meeting roster name via the Azure Bot resource. Never hardcode the custom avatar name."
+              }
+            },
+            "botDisplayName": {
+              "type": "string",
+              "defaultValue": "[parameters('avatarDisplayName')]",
+              "metadata": {
+                "description": "Display name for the Azure Bot resource. Defaults to the avatar name so the meeting roster shows the avatar brand."
+              }
+            },
+            "botIconUrl": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Public URL of the bot icon (the avatar logo). Shown for the bot in Teams. Leave empty to use the default Bot Framework icon."
+              }
+            },
+            "adminUsername": {
+              "type": "string",
+              "defaultValue": "avatarbot",
+              "metadata": {
+                "description": "Local administrator username for the Windows VM."
+              }
+            },
+            "adminPassword": {
+              "type": "securestring",
+              "metadata": {
+                "description": "Local administrator password for the Windows VM."
+              }
+            },
+            "vmSize": {
+              "type": "string",
+              "defaultValue": "Standard_D2s_v5",
+              "metadata": {
+                "description": "VM size. Standard_D2s_v5 is adequate for a single-meeting POC."
+              }
+            },
+            "dnsLabel": {
+              "type": "string",
+              "metadata": {
+                "description": "Globally-unique DNS label for the public IP (becomes <label>.<region>.cloudapp.azure.com)."
+              }
+            },
+            "signalingPort": {
+              "type": "int",
+              "defaultValue": 9441,
+              "metadata": {
+                "description": "HTTPS signaling/webhook port (Bot Framework calling notifications)."
+              }
+            },
+            "mediaPort": {
+              "type": "int",
+              "defaultValue": 8445,
+              "metadata": {
+                "description": "Media platform public TCP port (Real-Time Media Platform)."
+              }
+            },
+            "tags": {
+              "type": "object",
+              "defaultValue": {},
+              "metadata": {
+                "description": "Resource tags."
+              }
+            }
+          },
+          "variables": {
+            "prefix": "avatar-meetingbot",
+            "publicFqdn": "[format('{0}.{1}.cloudapp.azure.com', parameters('dnsLabel'), parameters('location'))]"
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Network/networkSecurityGroups",
+              "apiVersion": "2023-09-01",
+              "name": "[format('{0}-nsg', variables('prefix'))]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "properties": {
+                "securityRules": [
+                  {
+                    "name": "Allow-Signaling-HTTPS",
+                    "properties": {
+                      "priority": 1000,
+                      "direction": "Inbound",
+                      "access": "Allow",
+                      "protocol": "Tcp",
+                      "sourcePortRange": "*",
+                      "sourceAddressPrefix": "Internet",
+                      "destinationAddressPrefix": "*",
+                      "destinationPortRange": "[string(parameters('signalingPort'))]"
+                    }
+                  },
+                  {
+                    "name": "Allow-Media",
+                    "properties": {
+                      "priority": 1010,
+                      "direction": "Inbound",
+                      "access": "Allow",
+                      "protocol": "Tcp",
+                      "sourcePortRange": "*",
+                      "sourceAddressPrefix": "Internet",
+                      "destinationAddressPrefix": "*",
+                      "destinationPortRange": "[string(parameters('mediaPort'))]"
+                    }
+                  },
+                  {
+                    "name": "Allow-ACME-HTTP",
+                    "properties": {
+                      "priority": 1015,
+                      "direction": "Inbound",
+                      "access": "Allow",
+                      "protocol": "Tcp",
+                      "sourcePortRange": "*",
+                      "sourceAddressPrefix": "Internet",
+                      "destinationAddressPrefix": "*",
+                      "destinationPortRange": "80"
+                    }
+                  },
+                  {
+                    "name": "Allow-RDP",
+                    "properties": {
+                      "priority": 1020,
+                      "direction": "Inbound",
+                      "access": "Allow",
+                      "protocol": "Tcp",
+                      "sourcePortRange": "*",
+                      "sourceAddressPrefix": "Internet",
+                      "destinationAddressPrefix": "*",
+                      "destinationPortRange": "3389"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "type": "Microsoft.Network/virtualNetworks",
+              "apiVersion": "2023-09-01",
+              "name": "[format('{0}-vnet', variables('prefix'))]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "properties": {
+                "addressSpace": {
+                  "addressPrefixes": [
+                    "10.20.0.0/24"
+                  ]
+                },
+                "subnets": [
+                  {
+                    "name": "default",
+                    "properties": {
+                      "addressPrefix": "10.20.0.0/25",
+                      "networkSecurityGroup": {
+                        "id": "[resourceId('Microsoft.Network/networkSecurityGroups', format('{0}-nsg', variables('prefix')))]"
+                      }
+                    }
+                  }
+                ]
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Network/networkSecurityGroups', format('{0}-nsg', variables('prefix')))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Network/publicIPAddresses",
+              "apiVersion": "2023-09-01",
+              "name": "[format('{0}-pip', variables('prefix'))]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "sku": {
+                "name": "Standard"
+              },
+              "properties": {
+                "publicIPAllocationMethod": "Static",
+                "dnsSettings": {
+                  "domainNameLabel": "[parameters('dnsLabel')]"
+                }
+              }
+            },
+            {
+              "type": "Microsoft.Network/networkInterfaces",
+              "apiVersion": "2023-09-01",
+              "name": "[format('{0}-nic', variables('prefix'))]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "properties": {
+                "ipConfigurations": [
+                  {
+                    "name": "ipconfig1",
+                    "properties": {
+                      "subnet": {
+                        "id": "[reference(resourceId('Microsoft.Network/virtualNetworks', format('{0}-vnet', variables('prefix'))), '2023-09-01').subnets[0].id]"
+                      },
+                      "privateIPAllocationMethod": "Dynamic",
+                      "publicIPAddress": {
+                        "id": "[resourceId('Microsoft.Network/publicIPAddresses', format('{0}-pip', variables('prefix')))]"
+                      }
+                    }
+                  }
+                ]
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Network/publicIPAddresses', format('{0}-pip', variables('prefix')))]",
+                "[resourceId('Microsoft.Network/virtualNetworks', format('{0}-vnet', variables('prefix')))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Compute/virtualMachines",
+              "apiVersion": "2023-09-01",
+              "name": "[format('{0}-vm', variables('prefix'))]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "properties": {
+                "hardwareProfile": {
+                  "vmSize": "[parameters('vmSize')]"
+                },
+                "osProfile": {
+                  "computerName": "avatarbot",
+                  "adminUsername": "[parameters('adminUsername')]",
+                  "adminPassword": "[parameters('adminPassword')]"
+                },
+                "storageProfile": {
+                  "imageReference": {
+                    "publisher": "MicrosoftWindowsServer",
+                    "offer": "WindowsServer",
+                    "sku": "2022-datacenter-azure-edition",
+                    "version": "latest"
+                  },
+                  "osDisk": {
+                    "createOption": "FromImage",
+                    "managedDisk": {
+                      "storageAccountType": "Premium_LRS"
+                    }
+                  }
+                },
+                "networkProfile": {
+                  "networkInterfaces": [
+                    {
+                      "id": "[resourceId('Microsoft.Network/networkInterfaces', format('{0}-nic', variables('prefix')))]"
+                    }
+                  ]
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Network/networkInterfaces', format('{0}-nic', variables('prefix')))]"
+              ]
+            },
+            {
+              "type": "Microsoft.BotService/botServices",
+              "apiVersion": "2022-09-15",
+              "name": "[format('{0}-registration', variables('prefix'))]",
+              "location": "global",
+              "tags": "[parameters('tags')]",
+              "sku": {
+                "name": "F0"
+              },
+              "kind": "azurebot",
+              "properties": {
+                "displayName": "[parameters('botDisplayName')]",
+                "iconUrl": "[if(empty(parameters('botIconUrl')), null(), parameters('botIconUrl'))]",
+                "endpoint": "[format('https://{0}:{1}/api/messages', variables('publicFqdn'), parameters('signalingPort'))]",
+                "msaAppId": "[parameters('botAppId')]",
+                "msaAppType": "SingleTenant",
+                "msaAppTenantId": "[parameters('botAppTenantId')]"
+              }
+            },
+            {
+              "type": "Microsoft.BotService/botServices/channels",
+              "apiVersion": "2022-09-15",
+              "name": "[format('{0}/{1}', format('{0}-registration', variables('prefix')), 'MsTeamsChannel')]",
+              "location": "global",
+              "properties": {
+                "channelName": "MsTeamsChannel",
+                "properties": {
+                  "isEnabled": true,
+                  "enableCalling": true,
+                  "callingWebhook": "[format('https://{0}:{1}/api/calling', variables('publicFqdn'), parameters('signalingPort'))]"
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.BotService/botServices', format('{0}-registration', variables('prefix')))]"
+              ]
+            }
+          ],
+          "outputs": {
+            "botRegistrationId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.BotService/botServices', format('{0}-registration', variables('prefix')))]"
+            },
+            "publicFqdn": {
+              "type": "string",
+              "value": "[variables('publicFqdn')]"
+            },
+            "signalingEndpoint": {
+              "type": "string",
+              "value": "[format('https://{0}:{1}/api/calling', variables('publicFqdn'), parameters('signalingPort'))]"
+            },
+            "operatorApi": {
+              "type": "string",
+              "value": "[format('https://{0}:{1}/api/join', variables('publicFqdn'), parameters('signalingPort'))]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "[subscriptionResourceId('Microsoft.Resources/resourceGroups', parameters('resourceGroupName'))]"
+      ]
     }
   ],
   "outputs": {
@@ -2631,6 +3096,26 @@
       "type": "string",
       "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('resourceGroupName')), 'Microsoft.Resources/deployments', 'resources'), '2025-04-01').outputs.acsEndpoint.value]"
     },
+    "DEPLOY_PROFILE": {
+      "type": "string",
+      "value": "[parameters('deployProfile')]"
+    },
+    "MEETING_BOT_HOST_DEPLOYED": {
+      "type": "string",
+      "value": "[if(variables('deployHost'), 'true', 'false')]"
+    },
+    "MEETING_BOT_FQDN": {
+      "type": "string",
+      "value": "[if(variables('deployHost'), reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('resourceGroupName')), 'Microsoft.Resources/deployments', 'meeting-bot-host'), '2025-04-01').outputs.publicFqdn.value, '')]"
+    },
+    "MEETING_BOT_OPERATOR_API": {
+      "type": "string",
+      "value": "[if(variables('deployHost'), reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('resourceGroupName')), 'Microsoft.Resources/deployments', 'meeting-bot-host'), '2025-04-01').outputs.operatorApi.value, '')]"
+    },
+    "MEETING_BOT_SIGNALING_ENDPOINT": {
+      "type": "string",
+      "value": "[if(variables('deployHost'), reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('resourceGroupName')), 'Microsoft.Resources/deployments', 'meeting-bot-host'), '2025-04-01').outputs.signalingEndpoint.value, '')]"
+    },
     "FOUNDRY_ACCOUNT_NAME": {
       "type": "string",
       "value": "[parameters('foundryAccountName')]"
@@ -2658,6 +3143,62 @@
     "APPINSIGHTS_RESOURCE_GROUP": {
       "type": "string",
       "value": "[parameters('appInsightsResourceGroup')]"
+    },
+    "AGENT_MODEL": {
+      "type": "string",
+      "value": "[parameters('agentModel')]"
+    },
+    "EMBEDDING_DEPLOYMENT": {
+      "type": "string",
+      "value": "[parameters('embeddingDeployment')]"
+    },
+    "VOICELIVE_VOICE": {
+      "type": "string",
+      "value": "[parameters('voiceLiveVoice')]"
+    },
+    "SR_MODEL": {
+      "type": "string",
+      "value": "[parameters('srModel')]"
+    },
+    "RECOGNITION_LANGUAGE": {
+      "type": "string",
+      "value": "[parameters('recognitionLanguage')]"
+    },
+    "AVATAR_NAME": {
+      "type": "string",
+      "value": "[parameters('avatarName')]"
+    },
+    "CUSTOM_AVATAR_NAME": {
+      "type": "string",
+      "value": "[parameters('customAvatarName')]"
+    },
+    "PHOTO_AVATAR_NAME": {
+      "type": "string",
+      "value": "[parameters('photoAvatarName')]"
+    },
+    "AVATAR_DISPLAY_NAME": {
+      "type": "string",
+      "value": "[parameters('avatarDisplayName')]"
+    },
+    "AVATAR_TAGLINE": {
+      "type": "string",
+      "value": "[parameters('avatarTagline')]"
+    },
+    "AVATAR_BACKGROUND_IMAGE_URL": {
+      "type": "string",
+      "value": "[parameters('avatarBackgroundImageUrl')]"
+    },
+    "IS_PHOTO_AVATAR": {
+      "type": "string",
+      "value": "[parameters('isPhotoAvatar')]"
+    },
+    "IS_CUSTOM_AVATAR": {
+      "type": "string",
+      "value": "[parameters('isCustomAvatar')]"
+    },
+    "AGENT_ID": {
+      "type": "string",
+      "value": "[parameters('agentId')]"
     }
   }
 }

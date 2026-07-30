@@ -30,7 +30,7 @@ The default `azd up`, with **no flags set**:
 Nothing Teams-related is provisioned. `botService.bicep` and
 `communicationServices.bicep` are both skipped.
 
-```bash
+```powershell
 azd up
 ```
 
@@ -51,9 +51,9 @@ Deployment mechanics: [`../deployment.md`](../deployment.md).
 
 ## 4. How to verify
 
-```bash
+```powershell
 # the app answers
-curl https://<your-app>.azurecontainerapps.io/api/health
+Invoke-RestMethod https://<your-app>.azurecontainerapps.io/api/health
 ```
 
 Then open the endpoint in a browser, allow the microphone, and ask a question
@@ -68,6 +68,6 @@ If the avatar appears but never answers, check
 The container app scales to a low floor but the Foundry and Search resources bill
 continuously. To stop paying entirely:
 
-```bash
+```powershell
 azd down
 ```

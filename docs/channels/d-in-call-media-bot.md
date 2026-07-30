@@ -40,30 +40,40 @@ stays in Python where the rest of the product lives.
 
 ## 2. What deploys
 
-Two deployments today — the container side via `azd`, the VM side separately:
+**One deployment.** The container side and the Windows host both come from `azd up`
+when the `in-call` profile is selected:
 
-```bash
-# 1. container side: serve the media-bot bridge at /ws/acs/audio
-azd env set MEETING_BOT_ENABLED true
-azd env set BOT_APP_ID <app-id>          # the Azure Bot registration D also needs
+```powershell
+uv run python scripts/set_profile.py --profile in-call
+
+# inputs Bicep cannot invent — its own Entra app, a unique DNS label, a VM password
+azd env set MEETING_BOT_APP_ID <calling-bot-app-id>
+azd env set MEETING_BOT_APP_TENANT_ID <tenant-id>
+azd env set MEETING_BOT_DNS_LABEL <globally-unique-label>
+azd env set MEETING_BOT_ADMIN_PASSWORD "<strong-password>"
+
+uv run python scripts/preflight.py    # verifies all of the above before you spend money
 azd up
 
-# 2. VM side
-az deployment group create -g <rg> -f meeting-bot/infra/host.bicep
-#    then install/refresh the service on the host:
+# then install/refresh the bot service on the host
 pwsh meeting-bot/scripts/setup-host.ps1
 ```
 
 | Resource | Notes |
 | --- | --- |
-| Windows Server VM + NIC + NSG + public IP with DNS label | `meeting-bot/infra/host.bicep` |
+| Windows Server VM + NIC + NSG + public IP with DNS label | `infra/modules/meetingBotHost.bicep` |
 | Azure Bot with **calling** enabled | Webhook points at the VM FQDN |
 | Open ports **9441** (control API) and **8445** (media/signalling) | NSG |
 | `MEETING_BOT_ENABLED=true` on the container app | Serves `/ws/acs/audio` |
 
-> **Known gap:** the VM is provisioned outside the `azd` flow. Folding
-> `host.bicep` into the main deployment gated on `MEETING_BOT_ENABLED` is the
-> obvious next improvement, so channel D becomes one command like the others.
+> **The calling bot needs its OWN Entra app.** An Entra app can back only one Azure
+> Bot resource, so `MEETING_BOT_APP_ID` must differ from the chat bot's `BOT_APP_ID`.
+> Reusing it fails deployment with `MsaAppId is already in use` — an error that reads
+> like a transient Azure problem and is not. Preflight checks for this collision.
+
+The host is skipped unless all of `MEETING_BOT_APP_ID`, `MEETING_BOT_DNS_LABEL` and
+`MEETING_BOT_ADMIN_PASSWORD` are set, so a bypassed preflight degrades to "no VM"
+rather than a failure partway through provisioning.
 
 Independent of `ENABLE_ACS` — the media bot does not require an ACS resource.
 
@@ -126,7 +136,7 @@ caused four separate defects.
 **The VM runs about $140/month** and is by far the dominant cost of this channel.
 It does not scale to zero.
 
-```bash
+```powershell
 # stop paying for compute between test sessions (keeps the disk and the FQDN)
 az vm deallocate -n <vm-name> -g <rg>
 az vm start -n <vm-name> -g <rg>      # when you next need it

@@ -59,12 +59,12 @@ Teams JS SDK is never loaded outside Teams.
 You need Python 3.10+, [`uv`](https://docs.astral.sh/uv/), and a Foundry resource in a
 Voice Live region (see [docs/development.md](docs/development.md) for prerequisites).
 
-```bash
-# 1. Install uv (macOS/Linux; see docs for Windows)
-curl -LsSf https://astral.sh/uv/install.sh | sh
+```powershell
+# 1. Install uv
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 
 # 2. Configure — copy the template and fill in the required values
-cp .env.example .env        # edit AZURE_VOICELIVE_ENDPOINT, AGENT_*, PROJECT_ENDPOINT
+Copy-Item .env.example .env   # edit AZURE_VOICELIVE_ENDPOINT, AGENT_*, PROJECT_ENDPOINT
 
 # 3. Authenticate (the agent path requires Entra ID — no API key)
 az login
@@ -75,6 +75,49 @@ uv run avatar-forge         # → http://localhost:3000
 
 Full walkthrough — building the search index, smoke tests, developer mode — in
 **[docs/development.md](docs/development.md)**.
+
+## Deploy to Azure
+
+Deploying is a *sequence*, not one command: some steps Bicep performs, some only a
+person with the right directory role can, and they interleave. Rather than make you
+discover that halfway through, the tooling tells you the whole sequence up front.
+
+> **Platform: Windows + PowerShell.** All commands are written for PowerShell. On
+> macOS or Linux the `azd` and Python steps work unchanged — translate the shell
+> syntax yourself. Channel D requires Windows regardless (the Teams Real-Time Media
+> Platform runs on nothing else).
+
+```powershell
+azd auth login
+azd env new <environment-name>
+
+# 1. Choose which channel you are deploying. Sets DEPLOY_PROFILE and prints
+#    the full numbered plan, marking who performs each step.
+uv run python scripts/set_profile.py
+
+# 2. Check you can actually finish it — region support, providers, tooling and
+#    every input your channel needs. Cheap now; expensive after a 20-minute deploy.
+uv run python scripts/preflight.py
+
+# 3. Deploy. Preflight runs again automatically and blocks a doomed deploy.
+azd up
+```
+
+`azd up` ends by printing the steps that remain for your channel — the manual and
+administrator ones. Re-print them at any time:
+
+```powershell
+uv run python scripts/preflight.py --steps-only    # the whole plan
+uv run python scripts/preflight.py --remaining     # only what is left
+```
+
+Profiles map onto the channel ladder: `web` · `teams-tab` · `teams-chat` · `in-call`.
+The profile is stored in the azd environment rather than prompted for at deploy time,
+so `azd up` stays non-interactive and re-deploys and CI keep working.
+
+Details: **[docs/deployment.md](docs/deployment.md)** ·
+**[docs/channels/README.md](docs/channels/README.md)** ·
+**[docs/admin-checklist.md](docs/admin-checklist.md)**.
 
 ## Documentation
 

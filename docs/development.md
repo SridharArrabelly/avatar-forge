@@ -20,10 +20,7 @@ or `azd` for local development — just `uv` and `az login`. For env vars see
 
 ## 1. Install uv (one-time)
 
-```bash
-# macOS/Linux
-curl -LsSf https://astral.sh/uv/install.sh | sh
-# Windows (PowerShell)
+```powershell
 powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
@@ -32,7 +29,7 @@ the app.
 
 ## 2. Configure your environment
 
-```bash
+```powershell
 cp .env.example .env
 ```
 
@@ -43,19 +40,19 @@ Fill in at least the required runtime vars (`AZURE_VOICELIVE_ENDPOINT`, `AGENT_N
 
 Authenticate (the Voice Live agent path requires Entra ID — no API key):
 
-```bash
+```powershell
 az login
 ```
 
 ## 3. Run the server
 
-```bash
+```powershell
 uv run avatar-forge
 ```
 
 Or with uvicorn directly (auto-reload):
 
-```bash
+```powershell
 uv run uvicorn backend.main:app --host 0.0.0.0 --port 3000 --reload
 ```
 
@@ -89,7 +86,7 @@ Required roles for the signed-in user: **Search Index Data Contributor** + **Sea
 Service Contributor** on AI Search, and **Azure AI User** (or equivalent) on the
 Foundry project with access to the embedding deployment.
 
-```bash
+```powershell
 uv run python scripts/setup_aisearch_index.py
 # wipe + rebuild from scratch:
 RECREATE_INDEX=true uv run python scripts/setup_aisearch_index.py
@@ -97,7 +94,7 @@ RECREATE_INDEX=true uv run python scripts/setup_aisearch_index.py
 
 ## Smoke-test the index
 
-```bash
+```powershell
 uv run python scripts/test_aisearch_query.py "what was discussed about dividends"
 uv run python scripts/test_aisearch_query.py -k 3 "board chair election"
 ```
@@ -107,7 +104,7 @@ reranker scores.
 
 ## Smoke-test the live agent
 
-```bash
+```powershell
 uv run python scripts/test_foundry_agent.py
 ```
 
@@ -121,7 +118,7 @@ test checklist + model-shootout results live in
 After editing the prompts in [`prompts/agent/`](../prompts/agent/) or changing
 `AGENT_MODEL` / tool wiring, re-register the agent:
 
-```bash
+```powershell
 uv run python scripts/setup_foundry_agent.py
 ```
 

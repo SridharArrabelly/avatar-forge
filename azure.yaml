@@ -20,10 +20,46 @@ services:
       remoteBuild: true
 
 hooks:
-  # Runs after every successful `azd provision` / `azd up`. Three jobs:
+  # The first checkpoint. Blocks `azd up` when the environment cannot possibly
+  # produce a working deployment — wrong region for Voice Live, unregistered
+  # providers, or inputs the selected channel needs and does not have.
+  #
+  # Failing here costs seconds. The same problems found after provisioning cost
+  # twenty minutes and a partially-created resource group.
+  #
+  # Escape hatch: `azd env set PREFLIGHT_SKIP true`. Nobody should ever be stuck
+  # behind their own tooling.
+  preprovision:
+    windows:
+      shell: pwsh
+      run: |
+        if ($env:PREFLIGHT_SKIP -eq 'true') {
+          Write-Host "PREFLIGHT_SKIP=true - skipping preflight checks." -ForegroundColor Yellow
+        } else {
+          uv run python scripts/preflight.py
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "Preflight failed. Fix the items above, or set PREFLIGHT_SKIP=true to bypass."
+            exit 1
+          }
+        }
+    posix:
+      shell: sh
+      run: |
+        if [ "$PREFLIGHT_SKIP" = "true" ]; then
+          echo "PREFLIGHT_SKIP=true - skipping preflight checks."
+        else
+          uv run python scripts/preflight.py || {
+            echo "Preflight failed. Fix the items above, or set PREFLIGHT_SKIP=true to bypass." >&2
+            exit 1
+          }
+        fi
+
+  # Runs after every successful `azd provision` / `azd up`. Four jobs:
   #   1. Grant BYO RBAC idempotently (handles RoleAssignmentExists gracefully).
   #   2. Build the AI Search index from data/*.docx (greenfield search only).
   #   3. Create/update the Foundry agent (greenfield foundry only).
+  #   4. Print the steps that remain for the selected channel — the manual and
+  #      administrator ones Bicep cannot perform.
   postprovision:
     windows:
       shell: pwsh
@@ -66,6 +102,16 @@ hooks:
 
         Write-Host ""
         Write-Host "App ready: $env:SERVICE_APP_URI" -ForegroundColor Green
+
+        if ($env:MEETING_BOT_HOST_DEPLOYED -eq 'true') {
+          Write-Host "Media host: $env:MEETING_BOT_FQDN" -ForegroundColor Green
+          Write-Host "Operator API: $env:MEETING_BOT_OPERATOR_API" -ForegroundColor Green
+        } elseif ($env:DEPLOY_PROFILE -eq 'in-call') {
+          Write-Host "WARNING: profile is 'in-call' but the Windows media host was NOT deployed." -ForegroundColor Yellow
+          Write-Host "         MEETING_BOT_APP_ID, MEETING_BOT_DNS_LABEL and MEETING_BOT_ADMIN_PASSWORD must all be set." -ForegroundColor Yellow
+        }
+
+        uv run python scripts/preflight.py --remaining
     posix:
       shell: sh
       run: |
@@ -100,6 +146,16 @@ hooks:
 
         echo ""
         echo "App ready: $SERVICE_APP_URI"
+
+        if [ "$MEETING_BOT_HOST_DEPLOYED" = "true" ]; then
+          echo "Media host: $MEETING_BOT_FQDN"
+          echo "Operator API: $MEETING_BOT_OPERATOR_API"
+        elif [ "$DEPLOY_PROFILE" = "in-call" ]; then
+          echo "WARNING: profile is 'in-call' but the Windows media host was NOT deployed."
+          echo "         MEETING_BOT_APP_ID, MEETING_BOT_DNS_LABEL and MEETING_BOT_ADMIN_PASSWORD must all be set."
+        fi
+
+        uv run python scripts/preflight.py --remaining
 
   # Defense-in-depth: ensure vars the `azure.ai.agents` azd extension expects are set
   # in the azd env BEFORE `azd deploy` invokes its postdeploy hook. The extension

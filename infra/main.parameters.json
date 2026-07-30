@@ -57,6 +57,15 @@
     "meetingBotEnabled":   { "value": "${MEETING_BOT_ENABLED=false}" },
     "acsAudioSampleRate":  { "value": "${ACS_AUDIO_SAMPLE_RATE=}" },
     "acsRequireWakePhrase":{ "value": "${ACS_REQUIRE_WAKE_PHRASE=}" },
-    "acsAvatarVideoEnabled":{ "value": "${ACS_AVATAR_VIDEO_ENABLED=}" }
+    "acsAvatarVideoEnabled":{ "value": "${ACS_AVATAR_VIDEO_ENABLED=}" },
+
+    "deployProfile":            { "value": "${DEPLOY_PROFILE=}" },
+    "deployMeetingBotHost":     { "value": "${DEPLOY_MEETING_BOT_HOST=false}" },
+    "meetingBotAppId":          { "value": "${MEETING_BOT_APP_ID=}" },
+    "meetingBotAppTenantId":    { "value": "${MEETING_BOT_APP_TENANT_ID=}" },
+    "meetingBotDnsLabel":       { "value": "${MEETING_BOT_DNS_LABEL=}" },
+    "meetingBotAdminPassword":  { "value": "${MEETING_BOT_ADMIN_PASSWORD=}" },
+    "meetingBotVmSize":         { "value": "${MEETING_BOT_VM_SIZE=Standard_D2s_v5}" },
+    "meetingBotIconUrl":        { "value": "${MEETING_BOT_ICON_URL=}" }
   }
 }

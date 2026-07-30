@@ -2,6 +2,9 @@
 
 **Read this before deploying anything beyond the web app.**
 
+> Commands are PowerShell on Windows — see [`channels/README.md`](channels/README.md)
+> for the platform note.
+
 Most failed deployments of this project do not fail on Azure resources. They fail
 because someone reaches step 4 of 6, discovers they need a Teams administrator,
 and stops. This page exists so you discover that on day zero instead.

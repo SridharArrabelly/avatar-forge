@@ -27,6 +27,18 @@ For local development see [development.md](development.md); for env vars see
 
 ## Pre-deployment checks (run this first)
 
+Deploying is a *sequence*, not one command: some steps Bicep performs and some only
+an administrator can, and they interleave. Step 0 is therefore choosing **which
+channel** you are deploying — everything else follows from it:
+
+```powershell
+uv run python scripts/set_profile.py
+```
+
+That records `DEPLOY_PROFILE` (`web` · `teams-tab` · `teams-chat` · `in-call`), sets
+the flags that profile implies, and prints the full numbered plan marking who
+performs each step. See [`channels/README.md`](channels/README.md) to choose.
+
 Two things have caused silent failures in past deployments:
 
 1. **Voice Live is only available in a small set of regions** — `eastus2`,
@@ -37,21 +49,27 @@ Two things have caused silent failures in past deployments:
 2. **TTS Avatar is only available in** `eastus2`, `westus2`, `northeurope`,
    `westeurope`, `swedencentral`, `southeastasia`.
 
-Run the preflight before `azd up`:
+Preflight checks both, plus providers, tooling and every input your profile needs:
 
-```bash
-# All-in-one (Foundry in same region as everything else)
-uv run python scripts/preflight.py --location <your-region>
+```powershell
+uv run python scripts/preflight.py
 
-# Split regions (app stack in southafricanorth, Foundry+VoiceLive in eastus2)
+# override the regions it checks (otherwise taken from the azd env)
 uv run python scripts/preflight.py --location southafricanorth --voicelive-location eastus2
+
+uv run python scripts/preflight.py --steps-only    # just print the plan
+uv run python scripts/preflight.py --remaining     # only the steps left after deploying
 ```
+
+It also runs automatically as the `preprovision` hook, so a doomed `azd up` stops in
+seconds instead of failing twenty minutes in. Bypass with
+`azd env set PREFLIGHT_SKIP true` if you ever need to.
 
 If your primary `AZURE_LOCATION` is **not** a Voice Live region, set
 `FOUNDRY_LOCATION` to one that is — the Foundry account+project (and the avatar voice
 path) are created there while the rest of the stack stays in `AZURE_LOCATION`:
 
-```bash
+```powershell
 azd env set AZURE_LOCATION   southafricanorth
 azd env set FOUNDRY_LOCATION eastus2
 ```
@@ -63,7 +81,7 @@ azd env set FOUNDRY_LOCATION eastus2
 > [`data/`](../data/) **before** `azd up`; otherwise the index is empty and you must
 > rerun `scripts/setup_aisearch_index.py` manually. BYO Search skips this.
 
-```bash
+```powershell
 # 1. Authenticate
 az login
 azd auth login
@@ -97,7 +115,7 @@ or vice versa.
 
 ### Full BYO walkthrough
 
-```bash
+```powershell
 # 1. Authenticate
 az login
 azd auth login
@@ -191,7 +209,7 @@ doesn't notice any difference between BYO and freshly-created resources.
 
 Same flow, set only one BYO triplet. Example — BYO Foundry, fresh Search:
 
-```bash
+```powershell
 azd env set FOUNDRY_ACCOUNT_NAME     your-foundry-prod
 azd env set FOUNDRY_RESOURCE_GROUP   rg-shared-ai
 azd env set FOUNDRY_PROJECT_ENDPOINT https://your-foundry-prod.services.ai.azure.com/api/projects/avatar-forge
@@ -240,7 +258,7 @@ Make sure your `AGENT_NAME` / `AGENT_PROJECT_NAME` / `SEARCH_CONNECTION_NAME` /
 You can always rerun them manually (point your local `.env` at the deployed endpoints
 via `azd env get-values`):
 
-```bash
+```powershell
 uv run python scripts/setup_aisearch_index.py     # rebuild the index
 uv run python scripts/setup_foundry_agent.py      # re-register the agent + tools
 ```

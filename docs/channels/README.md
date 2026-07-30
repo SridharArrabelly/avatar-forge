@@ -1,5 +1,13 @@
 # Channels — how the avatar reaches people
 
+> **Platform: Windows + PowerShell.** Every command in this documentation is
+> written for PowerShell on Windows, which is the only combination that is
+> routinely tested here. Channel D *requires* Windows regardless — the Teams
+> Real-Time Media Platform runs on nothing else. On macOS or Linux the Python
+> and `azd` steps work unchanged, but you will need to translate the shell
+> syntax yourself (`Invoke-RestMethod` → `curl`, backtick continuations → `\`,
+> `$env:VAR` → `$VAR`).
+
 The avatar is **one brain with several front doors**. Everything below shares the
 same core: the FastAPI backend, the Azure Voice Live session, the Foundry agent,
 and its grounding (AI Search over meeting minutes + Bing Custom Search for news).
@@ -60,21 +68,36 @@ can create. Confirm that before investing in the VM.
 
 ## What actually deploys
 
-Everything is **additive and conditional**, following the pattern already in
-`infra/resources.bicep`: a deploy that does not opt in behaves exactly as it did
-before the feature existed.
+Start by choosing a profile — it sets the flags for you and prints the full
+numbered plan:
 
-| Flag | Default | Effect |
+```powershell
+uv run python scripts/set_profile.py       # interactive
+uv run python scripts/set_profile.py --profile in-call
+```
+
+The profile lives in the azd environment, **not** in an `azd up` prompt. `azd up`
+must stay non-interactive so re-deploys and CI keep working; the picker is
+convenience over the flags, never a substitute for them.
+
+Everything is **additive and conditional**: a deploy that does not opt in behaves
+exactly as it did before the feature existed. The profile only ever *raises*
+capability, so environments created before profiles existed are unaffected.
+
+| Flag | Set by profile | Effect |
 | --- | --- | --- |
-| *(none)* | — | Channel **A**. Container app, Foundry agent, AI Search, ACR, identity, roles. |
-| `BOT_APP_ID` set | empty | Provisions `modules/botService.bicep` (Azure Bot + Teams channel). Needed by **C**, and **also by D** — see below. |
-| `MEETING_BOT_ENABLED` | `false` | Serves the media-bot bridge (`/ws/acs/audio`) for **D**. |
-| `ENABLE_ACS` | `false` | Provisions `modules/communicationServices.bicep`. Independent of the above. |
+| `DEPLOY_PROFILE` | — | `web` · `teams-tab` · `teams-chat` · `in-call`. Drives everything below. |
+| *(none)* | `web`, `teams-tab` | Channel **A**. Container app, Foundry agent, AI Search, ACR, identity, roles. |
+| `BOT_APP_ID` | you supply | Provisions `modules/botService.bicep` (Azure Bot + Teams channel) for **C**. |
+| `MEETING_BOT_ENABLED` | `in-call` | Serves the media-bot bridge (`/ws/acs/audio`) for **D**. |
+| `DEPLOY_MEETING_BOT_HOST` | `in-call` | Provisions the Windows media host + calling bot registration. |
+| `MEETING_BOT_APP_ID` / `_DNS_LABEL` / `_ADMIN_PASSWORD` | you supply | Required for **D**; the host is skipped if any is missing. |
+| `ENABLE_ACS` | — | Provisions `modules/communicationServices.bicep`. Independent of the above. |
 
-> **The Azure Bot resource is shared between C and D.** A Graph calling bot
-> *requires* an Azure Bot registration, so "the chat bot feature" and "the bot
-> registration resource" are not the same thing. You can deploy **D without
-> enabling C's chat behaviour**, but you cannot deploy D without the registration.
+> **C and D each need an Azure Bot registration, and they cannot share one.** An
+> Entra app can back only *one* Azure Bot resource, so the chat bot (`BOT_APP_ID`)
+> and the calling bot (`MEETING_BOT_APP_ID`) must be different app registrations.
+> Reusing one fails with `MsaAppId is already in use`. Preflight catches this.
 
 Full variable reference: [`../configuration.md`](../configuration.md).
 Deployment mechanics: [`../deployment.md`](../deployment.md).

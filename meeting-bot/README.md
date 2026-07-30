@@ -61,7 +61,7 @@ already set on the deployed app and wired through bicep.
 | `Bridge/VoiceLiveBridgeClient.cs` | **The Python contract.** WS client speaking the AcsVoiceBridge protocol. Unit-tested, no media-SDK deps. |
 | `Http/JoinController.cs` | Operator API: `POST /api/join`, `POST /api/leave`. |
 | `Http/CallingController.cs` | Bot Framework calling webhook (`POST /api/calling`). |
-| `infra/host.bicep` | **Standalone** Windows VM + NSG + calling-bot registration. |
+| *(moved)* | The host template now lives at `infra/modules/meetingBotHost.bicep` and deploys with `azd up`. |
 
 ## Configuration
 
@@ -72,7 +72,7 @@ Set via `appsettings.json` or environment (`Bot__*`). **Never commit the secret.
 | `Bot:AppId` | `fcae883a-6107-42ec-8fd5-c24023ada525` (`avatar-forge-meeting-bot`, multi-tenant) |
 | `Bot:TenantId` | `b1cd5b73-a77b-4002-a5a6-1599e4c4ee37` |
 | `Bot:AppSecret` | from env `BOT_CLIENT_SECRET` (stored in azd env, git-ignored) |
-| `Bot:ServiceFqdn` | `avatar-meetingbot-newtenant.swedencentral.cloudapp.azure.com` (`host.bicep` output) |
+| `Bot:ServiceFqdn` | `avatar-meetingbot-newtenant.swedencentral.cloudapp.azure.com` (`meetingBotHost.bicep` output) |
 | `Bot:CertificateThumbprint` | a publicly-trusted cert in `LocalMachine\My` matching the FQDN |
 | `Bot:BridgeWebSocketUrl` | `wss://ca-avatar-newtenan-ahfjen5fzzjgi.purpleocean-4494944c.swedencentral.azurecontainerapps.io/ws/acs/audio` |
 | `Bot:BridgeSampleRate` | `16000` |
@@ -112,7 +112,7 @@ Set via `appsettings.json` or environment (`Bot__*`). **Never commit the secret.
 
 ## Deployed host (rg-avatar-newtenant) — already provisioned
 
-`host.bicep` is **deployed**. Live resources:
+The host template is **deployed**. Live resources:
 
 | Resource | Value |
 | --- | --- |
@@ -177,15 +177,20 @@ cert issuance + a real meeting):
 
 ## Runbook (operator — Windows host required)
 
-1. ✅ **Host + calling registration** — already deployed (`host.bicep`). To
-   re-deploy/update:
+1. ✅ **Host + calling registration** — deployed by `azd up` when the in-call
+   channel is selected. To provision or update:
    ```pwsh
-   az deployment group create -g rg-avatar-newtenant `
-     -f meeting-bot/infra/host.bicep `
-     -p botAppId=fcae883a-6107-42ec-8fd5-c24023ada525 `
-        botAppTenantId=b1cd5b73-a77b-4002-a5a6-1599e4c4ee37 `
-        adminPassword='<strong-password>' dnsLabel=avatar-meetingbot-newtenant
+   uv run python scripts/set_profile.py --profile in-call
+   azd env set MEETING_BOT_APP_ID fcae883a-6107-42ec-8fd5-c24023ada525
+   azd env set MEETING_BOT_APP_TENANT_ID b1cd5b73-a77b-4002-a5a6-1599e4c4ee37
+   azd env set MEETING_BOT_DNS_LABEL avatar-meetingbot-newtenant
+   azd env set MEETING_BOT_ADMIN_PASSWORD '<strong-password>'
+   uv run python scripts/preflight.py
+   azd up
    ```
+   The template is `infra/modules/meetingBotHost.bicep`. It needs its **own** Entra
+   app — an app can back only one Azure Bot resource, so `MEETING_BOT_APP_ID` must
+   differ from the chat bot's `BOT_APP_ID`.
 2. ✅ **Python side** — already live: `MEETING_BOT_ENABLED=true`,
    `ACS_AUDIO_SAMPLE_RATE=16000`, `ACS_REQUIRE_WAKE_PHRASE=true` on the container app
    (and persisted in the azd env, wired through bicep so a full `azd up` keeps them).
@@ -251,7 +256,7 @@ This mirrors how third-party meeting bots join customer tenants. Two facts must 
 - ✅ **`VoiceLiveBridgeClient` — the Python contract — is unit-tested** (metadata,
   outbound `AudioData`, inbound `AudioData` dispatch, `StopAudio` barge-in all pass
   a round-trip against a mock server).
-- ✅ `infra/host.bicep` compiles clean (`az bicep build`).
+- ✅ `infra/modules/meetingBotHost.bicep` compiles clean (`az bicep build`).
 - ✅ **The media-SDK code builds, publishes and RUNS on the Windows host** — the bot
   starts as a Windows service, initializes the Real-Time Media platform, binds HTTPS
   with a publicly-trusted cert, and serves its API from the public internet. The

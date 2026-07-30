@@ -82,11 +82,13 @@ param teamsAppId string = ''
 param agentId string = ''
 
 // ───────── Phase 2b in-call media (#27) ─────────
+@description('Deployment profile from `scripts/set_profile.py` — one of "web", "teams-tab", "teams-chat", "in-call". Drives which optional channels deploy. Empty keeps the pre-profile behaviour (explicit flags only).')
+param deployProfile string = ''
 @description('Enable Phase 2b ACS Call Automation media participant ("true"/"false"). When not "true" (default), no ACS resource is created and the deployment behaves exactly as today.')
 param enableAcs string = 'false'
 @description('ACS data residency geography (NOT an Azure region), e.g. "United States", "Europe", "Africa".')
 param acsDataLocation string = 'United States'
-@description('"true"/"false". Serve the .NET Teams media-bot bridge without an ACS resource (sets MEETING_BOT_ENABLED). Independent of enableAcs.')
+@description('"true"/"false". Serve the .NET Teams media-bot bridge without an ACS resource (sets MEETING_BOT_ENABLED). Implied by deployProfile="in-call".')
 param meetingBotEnabled string = 'false'
 @description('PCM sample rate (Hz) the Teams media bot streams (16000).')
 param acsAudioSampleRate string = ''
@@ -94,6 +96,25 @@ param acsAudioSampleRate string = ''
 param acsRequireWakePhrase string = ''
 @description('"true"/"false". In-call avatar sends an outgoing video tile so it is a visible participant.')
 param acsAvatarVideoEnabled string = ''
+
+// ───────── Phase 2b Windows media host (#27) ─────────
+// Deployed only for the in-call channel. Requires its own Entra app — an app can
+// back only ONE Azure Bot resource, so this cannot reuse botAppId.
+@description('"true"/"false". Provision the Windows media host + calling bot registration. Implied by deployProfile="in-call".')
+param deployMeetingBotHost string = 'false'
+@description('Entra app client id of the CALLING bot. Must differ from botAppId.')
+param meetingBotAppId string = ''
+@description('Tenant id of the calling bot app registration. Defaults to the deployment tenant when empty.')
+param meetingBotAppTenantId string = ''
+@description('Globally-unique DNS label for the media host public IP (becomes <label>.<region>.cloudapp.azure.com).')
+param meetingBotDnsLabel string = ''
+@description('Local administrator password for the Windows media host.')
+@secure()
+param meetingBotAdminPassword string = ''
+@description('VM size for the media host. Standard_D2s_v5 is adequate for a single-meeting POC.')
+param meetingBotVmSize string = 'Standard_D2s_v5'
+@description('Public URL of the bot icon shown for the in-call avatar in Teams.')
+param meetingBotIconUrl string = ''
 
 // ───────── Model deployment (used only when creating Foundry) ─────────
 param modelName string = 'gpt-5.4'
@@ -111,6 +132,21 @@ var tags = {
 
 var createFoundry = empty(foundryAccountName) || empty(foundryResourceGroup) || empty(foundryProjectEndpoint)
 var createSearch  = empty(searchServiceName) || empty(searchResourceGroup)
+
+// ───────── Profile derivation ─────────
+// The profile RAISES capability; it never lowers it. Explicit flags still work
+// on their own, so environments created before profiles existed deploy exactly
+// as they did before (deployProfile is empty -> every term below is false).
+var profileInCall = toLower(deployProfile) == 'in-call'
+var wantMeetingBotBridge = profileInCall || toLower(meetingBotEnabled) == 'true'
+var wantMeetingBotHost = profileInCall || toLower(deployMeetingBotHost) == 'true'
+
+// The host needs inputs Bicep cannot invent: its own Entra app, a globally
+// unique DNS label and a VM password. `scripts/preflight.py` blocks the deploy
+// when they are missing; this guard means a bypassed preflight degrades to
+// "host not deployed" rather than a mid-deployment failure.
+var meetingBotInputsReady = !empty(meetingBotAppId) && !empty(meetingBotDnsLabel) && !empty(meetingBotAdminPassword)
+var deployHost = wantMeetingBotHost && meetingBotInputsReady
 
 resource rg 'Microsoft.Resources/resourceGroups@2024-03-01' = {
   name: resourceGroupName
@@ -167,10 +203,28 @@ module resources 'resources.bicep' = {
     agentId: agentId
     enableAcs: enableAcs
     acsDataLocation: acsDataLocation
-    meetingBotEnabled: meetingBotEnabled
+    meetingBotEnabled: wantMeetingBotBridge ? 'true' : 'false'
     acsAudioSampleRate: acsAudioSampleRate
     acsRequireWakePhrase: acsRequireWakePhrase
     acsAvatarVideoEnabled: acsAvatarVideoEnabled
+  }
+}
+
+// ───────── Phase 2b: Windows media host + calling bot registration ─────────
+// Conditional and additive. Only instantiated for the in-call channel.
+module meetingBotHost 'modules/meetingBotHost.bicep' = if (deployHost) {
+  name: 'meeting-bot-host'
+  scope: rg
+  params: {
+    location: location
+    tags: tags
+    botAppId: meetingBotAppId
+    botAppTenantId: empty(meetingBotAppTenantId) ? tenant().tenantId : meetingBotAppTenantId
+    avatarDisplayName: empty(avatarDisplayName) ? 'Avatar' : avatarDisplayName
+    botIconUrl: meetingBotIconUrl
+    adminPassword: meetingBotAdminPassword
+    vmSize: meetingBotVmSize
+    dnsLabel: meetingBotDnsLabel
   }
 }
 
@@ -207,6 +261,13 @@ output TEAMS_APP_ID string = teamsAppId
 
 // Phase 2b in-call media (#27). Empty unless enableAcs=true.
 output ACS_ENDPOINT string = resources.outputs.acsEndpoint
+
+// Phase 2b Windows media host. Empty strings unless the in-call channel deployed.
+output DEPLOY_PROFILE string = deployProfile
+output MEETING_BOT_HOST_DEPLOYED string = deployHost ? 'true' : 'false'
+output MEETING_BOT_FQDN string = deployHost ? meetingBotHost.outputs.publicFqdn : ''
+output MEETING_BOT_OPERATOR_API string = deployHost ? meetingBotHost.outputs.operatorApi : ''
+output MEETING_BOT_SIGNALING_ENDPOINT string = deployHost ? meetingBotHost.outputs.signalingEndpoint : ''
 
 // Echo BYO inputs back as outputs so they end up in the azd env and the postprovision
 // RBAC script can read them without needing the original GitHub vars / .env values.

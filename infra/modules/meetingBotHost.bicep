@@ -1,11 +1,11 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Avatar-Forge Teams meeting media bot — Windows host + calling registration.
 //
-// Phase 2b, issue #27 (Slice 1: audio). This is a STANDALONE, additive
-// deployment that is SEPARATE from the main Linux Container App (infra/main.bicep).
-// It is never part of `azd up` for the web app, so deploying the web app alone
-// behaves exactly as today. Deploy this only when you are bringing up the
-// .NET/Windows media bot.
+// Phase 2b, issue #27. Deployed by `azd up` ONLY when the in-call channel is
+// selected — either `DEPLOY_PROFILE=in-call` or `DEPLOY_MEETING_BOT_HOST=true`,
+// and only once the required inputs (app id, DNS label, admin password) are
+// present. A deploy that does not opt in never instantiates this module, so it
+// behaves exactly as it did before the module existed.
 //
 // What it provisions:
 //   1. A Windows Server VM (the only OS the Real-Time Media Platform supports)
@@ -15,11 +15,12 @@
 //   3. An Azure Bot registration with the Teams channel CALLING webhook enabled,
 //      pointing at this host's signaling endpoint.
 //
-// Deploy (example):
-//   az deployment group create -g rg-avatar-mngenv \
-//     -f meeting-bot/infra/host.bicep \
-//     -p botAppId=860ecee0-... botAppTenantId=349b3dac-... \
-//        adminPassword='<strong-pwd>' dnsLabel=avatar-meeting-bot
+// NOTE: this registration needs its OWN Entra app — an app can back only one
+// Azure Bot resource, so it cannot be the same app as the Phase 2a chat bot.
+// `scripts/preflight.py` checks for that collision before you deploy.
+//
+// Operational docs: docs/channels/d-in-call-media-bot.md
+// Design record:    docs/channels/d-design-media-bot.md
 // ─────────────────────────────────────────────────────────────────────────────
 targetScope = 'resourceGroup'
 

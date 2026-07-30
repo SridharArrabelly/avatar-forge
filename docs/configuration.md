@@ -6,16 +6,28 @@ template that mirrors it.
 
 Copy the template, then fill in the required values:
 
-```bash
-cp .env.example .env
+```powershell
+Copy-Item .env.example .env
 ```
 
 Conventions:
 
+- Commands are **PowerShell on Windows**; translate the syntax yourself on macOS/Linux.
 - **Required** vars must be set for the runtime backend to start and answer.
 - Booleans accept `true`/`false` (also `1`/`0`, `yes`/`no`, `on`/`off`).
 - Vars marked *(provisioning only)* are read by `scripts/*.py` or `azd`, **not**
   by the running server — a brownfield (BYO) deploy can leave them unset.
+
+---
+
+## Deployment profile *(provisioning only)*
+
+Set with `uv run python scripts/set_profile.py` rather than by hand.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `DEPLOY_PROFILE` | *(empty)* | `web` · `teams-tab` · `teams-chat` · `in-call`. Selects which channel deploys, and drives the numbered step plan `scripts/preflight.py` prints. Empty keeps the pre-profile behaviour (explicit flags only). |
+| `PREFLIGHT_SKIP` | `false` | `true` bypasses the preprovision preflight gate. An escape hatch — nobody should be stuck behind their own tooling. |
 
 ---
 
@@ -239,3 +251,21 @@ unchanged. Audio-only and non-recording by design. See
 | `ACS_WAKE_PHRASES` | `hey nuru,nuru` | Comma-separated, case-insensitive phrases that invoke a spoken answer (turn-taking, so she never talks over the room). |
 | `ACS_REQUIRE_WAKE_PHRASE` | `true` | Require a wake phrase before answering (half-duplex). Set `false` in a 1:1 test meeting to answer every turn. |
 | `ACS_IDLE_TIMEOUT_S` | `0` | Leave the call after N seconds of inactivity (`0` disables). |
+
+### Windows media host *(azd/infra only)*
+
+Provisioned by `azd up` when `DEPLOY_PROFILE=in-call` (or `DEPLOY_MEETING_BOT_HOST=true`)
+**and** all three required inputs are present. If any is missing the host is skipped
+rather than failing partway through provisioning — `scripts/preflight.py` blocks the
+deploy first and tells you which one.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `MEETING_BOT_ENABLED` | `false` | Serves the media-bot bridge at `/ws/acs/audio` on the container app. Implied by `DEPLOY_PROFILE=in-call`. Independent of `ENABLE_ACS`. |
+| `DEPLOY_MEETING_BOT_HOST` | `false` | Provisions `infra/modules/meetingBotHost.bicep` — Windows VM, public IP, NSG, and the Azure Bot registration with the Teams **calling** webhook. Implied by `DEPLOY_PROFILE=in-call`. |
+| `MEETING_BOT_APP_ID` | — | **Required.** Entra app client id of the calling bot. **Must differ from `BOT_APP_ID`** — an Entra app can back only one Azure Bot resource; reusing it fails with `MsaAppId is already in use`. |
+| `MEETING_BOT_APP_TENANT_ID` | *(deployment tenant)* | Tenant of that app registration. |
+| `MEETING_BOT_DNS_LABEL` | — | **Required.** Globally-unique DNS label; becomes `<label>.<region>.cloudapp.azure.com` and must resolve for the TLS certificate. Preflight checks availability. |
+| `MEETING_BOT_ADMIN_PASSWORD` | — | **Required.** Local administrator password for the Windows host (12–123 chars, 3 of 4 character classes). |
+| `MEETING_BOT_VM_SIZE` | `Standard_D2s_v5` | Adequate for a single concurrent meeting. |
+| `MEETING_BOT_ICON_URL` | *(empty)* | Public URL of the bot icon shown in Teams. |
