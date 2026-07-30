@@ -72,6 +72,19 @@ Set via `appsettings.json` or environment (`Bot__*`). **Never commit the secret.
 | `Bot:BridgeSampleRate` | `16000` |
 | `Bot:EnableVideo` | `true` (Slice 2A — the avatar camera tile) |
 | `Bot:VideoWidth` / `Bot:VideoHeight` / `Bot:VideoFps` | `640` / `360` / `15` (only used when `EnableVideo=true`) |
+| `Bot:ValidateInboundRequests` | `true` (default) — validate the bearer token on inbound calling notifications |
+
+> **Inbound notification validation.** The signaling port is deliberately reachable from
+> the internet (Teams must call it), so `/api/calling` validates the bearer token
+> Microsoft's calling service signs its notifications with: the signature is checked
+> against the keys published at
+> `https://api.aps.skype.com/v1/.well-known/OpenIdConfiguration` and the audience must be
+> this bot's `Bot:AppId`. Without it, anything that can reach the port could inject
+> fabricated call notifications.
+>
+> `Bot__ValidateInboundRequests=false` is an escape hatch only — use it to confirm a
+> diagnosis if genuine callbacks are ever rejected, then turn it back on. It logs a
+> warning on every notification while disabled.
 
 > **Slice 2A — the avatar's video face (now built end to end).** With
 > `Bot__EnableVideo=true` the bot adds an outbound NV12 `VideoSocket` and appears as a
@@ -237,12 +250,15 @@ This mirrors how third-party meeting bots join customer tenants. Two facts must 
   starts as a Windows service, initializes the Real-Time Media platform, binds HTTPS
   with a publicly-trusted cert, and serves its API from the public internet. The
   previously-`TODO(prod)` cert/TLS binding in `Program.cs` is implemented and verified.
+- ✅ **Inbound calling notifications are validated** — `AuthenticationProvider` now checks
+  the notification's bearer token against the calling service's published signing keys and
+  this bot's app id, instead of accepting everything. Verified against the deployed build:
+  a missing header, a non-bearer scheme, a garbage token, and a forged token carrying the
+  correct audience *and* issuer but an invalid signature are all rejected.
 - ⏳ **In-meeting behaviour is the only thing left to confirm live:** join + lobby
   admission, hearing the mixed room audio, answering aloud, barge-in, and end-to-end
   latency. This needs the Teams manifest uploaded (`--enable-calling`), a tenant meeting
-  policy allowing bots, and a real meeting — see the runbook steps 7–8. Inbound
-  notification validation in `AuthenticationProvider` is still stubbed (`TODO(prod)`)
-  and should be hardened once the live calling webhook flow is exercised.
+  policy allowing bots, and a real meeting — see the runbook steps 7–8.
 
 ## Cost / honesty note
 

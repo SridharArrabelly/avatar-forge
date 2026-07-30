@@ -43,7 +43,10 @@ public sealed class MeetingBotService : IDisposable
             _options.AppId,
             _options.AppSecret,
             _options.TenantId,
-            graphLogger);
+            graphLogger)
+        {
+            ValidateInboundRequests = _options.ValidateInboundRequests,
+        };
 
         // Build the calling client. The media platform is configured with our
         // public FQDN, media port and TLS cert (see BotOptions) so the

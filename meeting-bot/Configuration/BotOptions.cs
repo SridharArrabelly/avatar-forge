@@ -118,6 +118,14 @@ public sealed class BotOptions
     /// </summary>
     public bool TestTone { get; set; } = false;
 
+    /// <summary>
+    /// Validate the bearer token on inbound calling notifications. Defaults to
+    /// on; set to false only as a temporary escape hatch if a genuine callback is
+    /// ever rejected, since disabling it lets any host that can reach the public
+    /// signaling port inject fabricated call notifications.
+    /// </summary>
+    public bool ValidateInboundRequests { get; set; } = true;
+
     public void Validate()
     {
         if (string.IsNullOrWhiteSpace(AppId)) throw new InvalidOperationException("Bot:AppId is required.");
