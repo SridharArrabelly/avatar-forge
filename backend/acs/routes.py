@@ -47,10 +47,19 @@ _ACTIVE_CALLS: set[str] = set()
 # Config for the in-call Voice Live session. Audio-only (no avatar/WebRTC, D2),
 # no proactive greeting (she must not announce herself over the room on connect),
 # semantic VAD + barge-in so she yields to humans.
+#
+# Turn-taking latency: without `eouDetectionType` the VAD can only end a turn by
+# waiting out `turnDetectionSilenceMs` of silence on EVERY question. Semantic
+# end-of-utterance detection lets it commit as soon as the sentence is complete,
+# which is the difference between a natural reply and one that lands a beat late.
+# The silence window stays as the fallback for trailing-off speech, trimmed to
+# 400ms; raise it again if people who pause mid-sentence get cut off.
 _IN_CALL_CONFIG = {
     "avatarEnabled": False,
     "enableProactive": False,
     "turnDetectionType": "azure_semantic_vad",
+    "eouDetectionType": "semantic_detection_v1",
+    "turnDetectionSilenceMs": 400,
     "enableBargeIn": True,
     "useEC": True,
     "useNS": True,
