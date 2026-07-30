@@ -10,10 +10,20 @@ without chasing string literals across the codebase.
 prompts/
 ├── README.md                          # this file
 └── agent/
-    ├── description.md                 # short, one-line agent description (UI / catalog)
+    ├── description.md                 # one-line agent description (UI / catalog)
     ├── instructions-nonreasoning.md   # full system instructions, gpt-4.x / gpt-4o family
-    └── instructions-reasoning.md      # full system instructions, o-series / gpt-5 family
+    ├── instructions-reasoning.md      # full system instructions, o-series / gpt-5 family
+    └── routing-test-questions.md      # manual checklist: does each question hit the right tool?
 ```
+
+`description.md` is deliberately a single line — it is the agent's short
+description shown in the Foundry catalog, not a document. It looks empty in
+an editor preview; it is not.
+
+`routing-test-questions.md` is the only file here that is **not** pushed to the
+agent. It is the regression checklist you run *after* editing either
+`instructions-*.md`, to confirm internal questions still route to
+`azure_ai_search` and external ones to `bing_custom_search`.
 
 `setup_foundry_agent.py` selects ONE of the two `instructions-*.md` files
 at agent-provisioning time based on `AGENT_MODEL` — reasoning models

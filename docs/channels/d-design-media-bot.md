@@ -175,32 +175,37 @@ needed. (`ACS_AUDIO_SAMPLE_RATE` already governs this on the Python side.)
 
 ## 6. Identity, permissions & admission
 
-**Reused (already provisioned in the MngEnv tenant):**
+The bot needs its **own** Entra app registration — separate from the chat bot's,
+because an Entra app can back only one Azure Bot resource (reusing one fails with
+`MsaAppId is already in use`).
 
-- **Entra app `avatar-forge-meeting-bot`** (`860ecee0-…`). Its four Graph **application**
-  permissions are **already admin-consented** (verified live):
-  `Calls.JoinGroupCall.All`, `Calls.JoinGroupCallAsGuest.All`,
-  **`Calls.AccessMedia.All`** (this is what unlocks the room's audio), `OnlineMeetings.Read.All`.
+**Graph application permissions** (admin-consented once per tenant that hosts meetings):
 
-**New / still required for Slice 1:**
+- `Calls.JoinGroupCall.All`
+- `Calls.JoinGroupCallAsGuest.All`
+- **`Calls.AccessMedia.All`** — this is the one that unlocks the room's raw audio
+- `OnlineMeetings.Read.All`
 
-1. **A client secret** on that app (none exists yet) — the bot authenticates to Graph with
-   it. (`az ad app credential reset`.)
-2. **An Azure Bot registration with a *calling* webhook** — Graph delivers call signaling
-   (incoming/established/participants) to this HTTPS endpoint. Reuses the
-   `infra/modules/botService.bicep` pattern, plus the calling webhook URL.
-3. **Teams app manifest** with the bot marked `supportsCalling: true` so it can be added to
-   a meeting, and a **tenant policy** that allows bots/automated participants in meetings.
+**Also required:**
 
-**Admission (lobby vs auto-admit):** the bot joins via `JoinGroupCall` using the meeting's
-join information. Whether it lands in the lobby or is auto-admitted is governed by the
-meeting's options; for a smooth demo the organizer sets the bot/everyone to auto-admit, or
-admits it once from the lobby.
+1. **A client secret** on that app — the bot authenticates to Graph with it
+   (`az ad app credential reset`).
+2. **An Azure Bot registration with a *calling* webhook** — Graph delivers call
+   signaling (incoming/established/participants) to this HTTPS endpoint. Follows the
+   `infra/modules/botService.bicep` pattern plus the calling webhook URL; codified in
+   `infra/modules/meetingBotHost.bicep`.
+3. **Teams app manifest** with `supportsCalling: true`, and a **tenant policy** that
+   allows bots in meetings.
 
-> **Status correction:** earlier notes said this was "blocked on admin consent." That was
-> from the *old* tenant. In **MngEnv you are global admin and consent is already granted** —
-> so the remaining work is **build + host**, not access.
+The bot acquires its token against the **meeting organizer's** tenant, not its own, so
+any tenant can host the meeting provided it has admin-consented the app. A tenant
+whose admin you cannot reach is a hard blocker — see
+[`admin-checklist.md`](../admin-checklist.md).
 
+**Admission (lobby vs auto-admit):** the bot joins via `JoinGroupCall` using the
+meeting's join information. Whether it lands in the lobby or is auto-admitted is
+governed by the meeting's options; for a smooth demo the organizer sets the
+bot/everyone to auto-admit, or admits it once from the lobby.
 ---
 
 ## 7. Turn-taking & barge-in
@@ -279,28 +284,13 @@ re-confirmed before any production use.
 
 **Outcome:** the avatar is a real audio participant that answers the room. No face yet.
 
-> **Build status (Slice 1 scaffold landed).** Steps 1–4 are implemented in the
-> repo: the client secret is minted and stored in the azd env (`BOT_CLIENT_SECRET`,
-> git-ignored); the calling-bot registration + Windows host are codified as
-> standalone additive bicep (`meeting-bot/infra/host.bicep`, compiles clean); and
-> the .NET media bot is scaffolded under `meeting-bot/` (`MeetingBot`, `CallHandler`,
-> `AuthenticationProvider`, and the `VoiceLiveBridgeClient` that speaks the
-> `/ws/acs/audio` protocol). **The bridge client — the actual Python↔.NET contract —
-> is unit-tested green** (AudioMetadata, outbound/inbound AudioData, StopAudio
-> barge-in). What remains is operator-only and Windows-only (steps 4–6 runtime): a
-> Windows host with a trusted cert, restoring the Graph media packages and building
-> there, the Teams manifest `supportsCalling`, and the live meeting test. The full
-> runbook is in [`meeting-bot/README.md`](../../meeting-bot/README.md). The Python side
-> needs two flags — `MEETING_BOT_ENABLED=true` (serves `/ws/acs/audio` without an ACS
-> resource) and `ACS_AUDIO_SAMPLE_RATE=16000` — both already live on the deployed app
-> and wired through bicep.
->
-> **Update (deployed):** `host.bicep` is now deployed to `rg-avatar-mngenv` — Windows VM
-> `avatar-meetingbot-vm` (FQDN `avatar-meetingbot-mngenv.swedencentral.cloudapp.azure.com`),
-> NSG (9441/8445/80/3389), and the `avatar-meetingbot-registration` calling bot. The
-> Prep stage (firewall + .NET 8 SDK) ran on the VM; `/ws/acs/audio` is live-verified.
-> Remaining is operator-only: cert (`setup-host.ps1 -Stage Cert`), build, run, and the
-> live meeting test.
+> **Status: built and live-verified.** Steps 1–6 are complete. The calling-bot
+> registration and Windows host are codified in `infra/modules/meetingBotHost.bicep`
+> and deploy with `azd up`; the .NET bot lives under `meeting-bot/`; the Python↔.NET
+> bridge contract (`VoiceLiveBridgeClient`) is unit-tested. The bot joins real
+> meetings, hears every participant, and answers aloud. Operating instructions:
+> [`d-in-call-media-bot.md`](./d-in-call-media-bot.md); code-local detail and the
+> traps that cost debugging time: [`meeting-bot/README.md`](../../meeting-bot/README.md).
 
 ### Step 2 — **Face**: Nuru is visible in the meeting
 
@@ -322,21 +312,16 @@ Same bot foundation; a second slice. The route is **decided**:
 synthesis, component changes, the aiortc↔Voice Live feasibility risk, and the phased
 increments — is in [`d-design-avatar-video.md`](./d-design-avatar-video.md).**
 
-**Build order:** Slice 1 (audio, DONE) → Slice 2A scaffold (flag-gated `VideoSocket` +
-placeholder NV12 tile, compiles) → the hard increment (server-side avatar WebRTC capture
-→ real NV12 frames over the bridge). Audio value is never blocked on the video work.
+**Build order (as executed):** Slice 1 (audio) → Slice 2A scaffold (flag-gated
+`VideoSocket` + placeholder NV12 tile) → the hard increment (server-side avatar WebRTC
+capture → real NV12 frames over the bridge). Audio value was never blocked on the video
+work, and `Bot:EnableVideo=false` still yields the byte-for-byte audio-only session.
 
-> **Build status (Slice 2A scaffold landed).** The .NET camera-tile path is in place and
-> compiles against the real SDK, gated on `Bot:EnableVideo` (default off = byte-for-byte
-> the audio-only Slice 1 session). `MeetingBotService.CreateLocalMediaSession` adds an
-> outbound NV12 `VideoSocket`; `CallHandler` wires a video playout loop that sends frames
-> at the configured fps — real avatar frames from the bridge (`VideoData`) when present,
-> otherwise a static placeholder so the tile is provable before the Python video source
-> exists. The bridge contract (`VoiceLiveBridgeClient`) carries a new `VideoData` inbound
-> frame + `VideoReceived` event. What remains is the Python video source (enable the
-> avatar on the bridge session, capture its WebRTC video, forward NV12) — see
-> `docs/channels/d-design-avatar-video.md`.
-
+> **Status: complete and live-verified.** `MeetingBotService.CreateLocalMediaSession`
+> adds the outbound NV12 `VideoSocket`; `CallHandler` runs the playout loop; the bridge
+> carries `VideoData` frames decoded from Voice Live's avatar stream in Python. Lip-sync
+> is driven by both streams coming from one synthesis, as designed. Implementation
+> detail: [`d-design-avatar-video.md`](./d-design-avatar-video.md).
 ---
 
 ## 11. Risks, costs & open questions
@@ -348,10 +333,11 @@ placeholder NV12 tile, compiles) → the hard increment (server-side avatar WebR
 | **Added latency** (extra PCM hop) on top of Voice Live first-token | Slower replies | Co-locate bot + backend in the same region; 16 kHz, 20 ms frames; measure |
 | **Lobby/admission** friction | Bot stuck in lobby | Set auto-admit for the demo, or admit once |
 | **Media-stack setup** (certs, ports, public reachability) is fiddly | Slow first join | Follow the Graph Communications sample topology; single VM first |
-| **Route A video** transcode cost | High CPU / latency | Prefer Route B first; treat A as optional |
+| **Route A video** transcode cost | High CPU / latency | Sized the host at 4 vCPU (`D4s_v5`); 360p/15fps; measured at ~125 ms added transport |
 
-**The genuinely hard parts** are (1) standing up the Windows media host + endpoint and
-(2) Route A video. Everything else reuses code/identity that already exists.
+**The genuinely hard parts** were (1) standing up the Windows media host + endpoint and
+(2) Route A video. Both are now done; everything else reuses code/identity that already
+existed.
 
 ---
 
@@ -375,4 +361,5 @@ placeholder NV12 tile, compiles) → the hard increment (server-side avatar WebR
 ---
 
 *See also: [`architecture.md`](../architecture.md) for the overall system, and
-[`../teams/README.md`](../../teams/README.md) for the operator steps and admin requests.*
+[`d-in-call-media-bot.md`](./d-in-call-media-bot.md) for the operator steps and admin
+requests.*

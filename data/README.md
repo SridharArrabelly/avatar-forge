@@ -19,10 +19,14 @@ that script.
 
 ## (Re)build the index
 
-```bash
+```powershell
 uv run python scripts/setup_aisearch_index.py
-# or, to wipe and recreate:
-RECREATE_INDEX=true uv run python scripts/setup_aisearch_index.py
+
+# or, to wipe and recreate (required after changing embedding model —
+# vector dimensions are immutable on an existing index):
+$env:RECREATE_INDEX = "true"
+uv run python scripts/setup_aisearch_index.py
+Remove-Item Env:\RECREATE_INDEX
 ```
 
 The folder location is configurable via the `DATA_DIR` env var (default `./data`).

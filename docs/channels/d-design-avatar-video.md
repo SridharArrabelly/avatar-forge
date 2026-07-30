@@ -1,7 +1,7 @@
 # Slice 2A — the avatar's synced video face in a Teams meeting
 
-> **Status:** design + .NET scaffold landed (flag-gated `VideoSocket` + placeholder
-> tile, compiles green). The Python video source is the remaining hard increment.
+> **Status: built, shipped and live-verified.** The avatar appears as a lip-synced
+> camera tile in real meetings.
 > **Decision owner:** the user explicitly required a *synced* face (video and audio
 > from the **same** avatar synthesis), and rejected an unsynced shared-stage face as
 > misleading. This doc is the canonical design for that synced face.
@@ -174,7 +174,7 @@ and the wire protocol don't change between options.
 
 ## 5. Component changes
 
-### 5.1 .NET meeting bot (`meeting-bot/`) — DONE (scaffold)
+### 5.1 .NET meeting bot (`meeting-bot/`)
 
 All additive and gated on `Bot:EnableVideo` (default **false** = byte-for-byte the
 audio-only Slice 1 session). Verified to compile against the real SDK on Windows.
@@ -203,7 +203,7 @@ audio-only Slice 1 session). Verified to compile against the real SDK on Windows
 > shows up as a solid-colour tile that tracks send-status, the `VideoSocket` plumbing is
 > correct and only the frame *source* remains.
 
-### 5.2 Python backend (`backend/`) — DONE
+### 5.2 Python backend (`backend/`)
 
 - **`backend/acs/avatar_stream.py`** (new) — `AvatarStreamDecoder`: streaming fMP4 demuxer
   that splits the Voice Live avatar stream back into NV12 video and PCM16 audio. Runs PyAV
@@ -226,7 +226,7 @@ audio-only Slice 1 session). Verified to compile against the real SDK on Windows
 - Gated on `MEETING_BOT_VIDEO_ENABLED`, default **off**: with the flag off no decoder is
   created, video deltas are ignored, and the session config is identical to before.
 
-### 5.2b Browser joiner (`frontend/acs-join.js`) — DONE
+### 5.2b Browser joiner (`frontend/acs-join.js`)
 
 The browser joiner already sent an outgoing video tile, but it painted a **static branded
 placard**. It now paints the live avatar instead. Enabled by
@@ -297,28 +297,39 @@ for the decode + an extra `VideoSocket` (the D4s_v5 already sized for media is a
 | **Extra bandwidth/CPU on the Windows host** | Cost | Keep 360p/15fps default; gate entirely behind `EnableVideo`; 720p/30fps is opt-in |
 | **Photo (vasa-1) vs standard avatar** differences in websocket video | Source may vary by avatar type | Test with the deployed avatar (currently Simone/photo); fall back to a standard full-body avatar if websocket video is only emitted for one type |
 
-**Genuinely hard part:** getting clean, low-latency NV12 frames out of Voice Live in
-Python (§4). Everything on the .NET side is done and proven to compile; the wire contract
-is fixed; the placeholder de-risks the camera path. The remaining work is a contained
-Python decode-and-forward increment.
+**What the hard part turned out to be.** The predicted risk was H264→NV12 decode cost.
+The actual defect was subtler and cost the most debugging time: `_handle_audio` used
+`bytes(af.planes[0])`, but **PyAV allocates audio planes with alignment padding**, so
+every 1536-sample chunk carried ~64 stale samples. That produced an audible tick every
+64 ms *and* inflated stream duration by 4.1 %, which drifted the lips away from the
+voice over a long answer. Fix: `memoryview(af.planes[0])[:af.samples * 2]`.
+
+The lesson worth keeping: **when a fix does not move the measurement, stop fixing and
+re-measure upstream of everything already touched.** Several plausible A/V-sync fixes
+were applied before the real cause was found, because the symptom (drift) pointed at
+pacing rather than at a buffer-slicing bug two layers up.
 
 ---
 
-## 8. Phased increments (build order)
+## 8. Phased increments (as executed)
 
-1. **✅ .NET scaffold** — `EnableVideo` + `VideoSocket` + placeholder NV12 playout +
-   `VideoData`/`VideoReceived` contract. Compiles green on Windows. *(this change)*
-2. **Live placeholder proof** — run the bot with `Bot__EnableVideo=true` on a real
-   meeting; confirm Nuru appears as a **camera tile** (solid placeholder) that activates
-   on `VideoSendStatusChanged`. Proves the whole send path independent of the source.
-3. **Python source spike (Option 1)** — enable the avatar in **websocket** mode on the
-   bridge session; capture `response.video.delta`; decode one H264 GOP → dump NV12/PNG to
-   verify the frames are real and correctly sized. *(answers the §4 unknown)*
-4. **Wire real frames** — stream decoded NV12 as `VideoData` down the bridge; the bot's
-   existing loop plays them instead of the placeholder. Verify lip-sync against the audio.
-5. **Tune** — resolution/fps, decode performance, drift, barge-in flush, CPU headroom;
-   measure added latency vs Slice 1.
-6. **(Contingency) Option 2** — only if Option 1's websocket video is unusable: aiortc
-   server-side WebRTC capture, same `VideoData` output so steps 4–5 are unchanged.
+All six steps are complete. Recorded because the *ordering* is the reusable part: each
+step proved one unknown in isolation, so a failure was always attributable.
 
-Audio value (Slice 1) is never blocked on any of this; `EnableVideo=false` ships today.
+1. **.NET scaffold** — `EnableVideo` + `VideoSocket` + placeholder NV12 playout +
+   `VideoData`/`VideoReceived` contract.
+2. **Live placeholder proof** — ran with `Bot__EnableVideo=true` on a real meeting;
+   confirmed a **camera tile** (solid placeholder) activating on
+   `VideoSendStatusChanged`. Proved the send path independently of the source.
+3. **Python source spike (Option 1)** — enabled the avatar in **websocket** mode on the
+   bridge session, captured `response.video.delta`, decoded a GOP and dumped frames to
+   verify they were real and correctly sized.
+4. **Wire real frames** — streamed decoded NV12 as `VideoData`; the bot's existing loop
+   plays them instead of the placeholder.
+5. **Tune** — resolution/fps, decode performance, drift, barge-in flush. This is where
+   the PyAV padding bug surfaced (§7).
+6. **Option 2 (aiortc) was never needed** — Option 1's websocket video was usable, so the
+   contingency path was not built.
+
+Audio value (Slice 1) was never blocked on any of this; `EnableVideo=false` still yields
+the audio-only session unchanged.

@@ -88,8 +88,11 @@ Foundry project with access to the embedding deployment.
 
 ```powershell
 uv run python scripts/setup_aisearch_index.py
+
 # wipe + rebuild from scratch:
-RECREATE_INDEX=true uv run python scripts/setup_aisearch_index.py
+$env:RECREATE_INDEX = "true"
+uv run python scripts/setup_aisearch_index.py
+Remove-Item Env:\RECREATE_INDEX
 ```
 
 ## Smoke-test the index

@@ -208,7 +208,7 @@ call is what actually stops her.
 
 ```
 avatar-forge/
-├── backend/                       # FastAPI server (Python)
+├── backend/                       # FastAPI server (Python) — the one brain
 │   ├── main.py                    # App factory, lifespan, middleware, static mount, run()
 │   ├── config.py                  # .env loading, logging, UI defaults (get_ui_defaults)
 │   ├── api/
@@ -221,56 +221,67 @@ avatar-forge/
 │   │   ├── catalog.py             # Meeting catalogue fetch from AI Search (injected at session start)
 │   │   ├── functions.py           # Built-in tool implementations (get_time, get_weather, calculate)
 │   │   └── auth.py                # DefaultAzureCredential + caching wrapper
-│   ├── bot/                       # Teams conversational bot (Phase 2a)
+│   ├── bot/                       # Channel C — Teams conversational bot
 │   │   ├── app.py                 # M365 Agents SDK app + POST /api/messages route
 │   │   ├── agent_runtime.py       # Foundry-agent bridge (reuses the voice agent)
 │   │   └── cards.py               # Adaptive Card + deep link back to the tab
-│   └── acs/                       # In-call audio participant (Phase 2b, issue #27; opt-in)
-│       ├── client.py              # ACS Call Automation + Identity clients, connect_call, media options
+│   └── acs/                       # Channels D/E — in-call media bridge (opt-in)
+│       ├── client.py              # ACS Call Automation + Identity clients (browser-joiner path)
 │       ├── bridge.py              # AcsVoiceBridge / BrowserVoiceBridge <-> VoiceSessionHandler
 │       ├── avatar_stream.py       # fMP4 demux + H.264 decode -> NV12 frames for the media bot
 │       └── routes.py              # /api/acs/{config,status,token,call,callback} + /ws/acs/{audio,browser}
 │
-├── frontend/                      # Static client assets (served at /)
+├── frontend/                      # Static client assets (served at /) — channels A and B
 │   ├── index.html                 # Avatar stage: video, identity lockup, composer, stop, mic, captions
 │   ├── style.css                  # Styles (speaking-state colour, caption band, stop button, chips)
 │   ├── app.js                     # Audio capture/playback, WebRTC, WebSocket, UI logic, Teams host gate
-│   ├── acs-join.html              # Phase 2b browser joiner: join a Teams meeting via ACS Calling Web SDK
-│   ├── acs-join.js                # ACS Calling SDK join flow -> ServerCallId -> POST /api/acs/call
-│   ├── companion.html             # Phase 2b optional meeting control panel (side panel/stage)
-│   ├── companion.js               # Control panel: /api/acs/status + launches the joiner
-│   ├── companion-config.html      # configurableTabs configuration page for the control panel
-│   ├── companion-config.js        # TeamsJS pages.config save handler
+│   ├── acs-join.html / .js        # Browser joiner: join a Teams meeting via the ACS Calling Web SDK
+│   ├── companion*.html / .js      # Optional in-meeting control panel + its configurableTabs page
 │   └── teams.js                   # No-op unless in Teams: loads Teams JS SDK, mirrors host theme
 │
+├── meeting-bot/                   # Channel D — .NET/Windows Graph media bot (separate host)
+│   ├── Bot/                       # MeetingBot, CallHandler, AuthenticationProvider
+│   ├── Bridge/                    # VoiceLiveBridgeClient — the Python contract, unit-tested
+│   ├── Http/                      # JoinController (operator API), CallingController (Graph webhook)
+│   ├── Configuration/BotOptions.cs
+│   ├── scripts/setup-host.ps1     # 4-stage Windows host setup: Prep, Cert, Build, Run
+│   └── README.md                  # Build, configuration, and the traps that cost debugging time
+│
+├── docs/                          # Documentation hub (see docs/channels/README.md to choose a channel)
+│   ├── channels/                  # One page per delivery channel (a-web … e-in-call-headless) + design records
+│   ├── architecture.md            # This file — the shared core
+│   ├── admin-checklist.md         # Every manual step and who must perform it
+│   ├── configuration.md           # Every environment variable
+│   ├── deployment.md              # azd mechanics, greenfield and brownfield
+│   ├── development.md             # Local dev, index build, smoke tests
+│   ├── auth.md                    # Identity and RBAC model
+│   └── testing-meetings.md        # Runbook for the two in-meeting paths
+│
 ├── scripts/                       # Utility / one-off scripts (not part of the server)
+│   ├── channels.py                # Single source of truth for deploy profiles and their steps
+│   ├── set_profile.py             # Step 0: choose a channel, record DEPLOY_PROFILE, print the plan
+│   ├── preflight.py               # Gate before azd up: regions, providers, tooling, per-profile inputs
 │   ├── setup_foundry_agent.py     # Creates the Foundry agent with AI Search + Bing Custom Search tools
 │   ├── setup_aisearch_index.py    # Creates/updates the AI Search index and ingests data/
 │   ├── test_aisearch_query.py     # Smoke-tests the index (hybrid + semantic query)
 │   ├── test_foundry_agent.py      # Smoke-tests the live agent end-to-end
-│   ├── grant_byo_rbac.py          # Idempotently grants BYO runtime RBAC (brownfield)
-│   └── preflight.py               # Region/capability checks (Voice Live + Avatar) before azd up
+│   └── grant_byo_rbac.py          # Idempotently grants BYO runtime RBAC (brownfield)
 │
-├── teams/                         # Microsoft Teams app package (tab + Phase 2a bot)
-│   ├── README.md                  # Sideload + bot setup walkthrough + validation checklist
+├── teams/                         # Teams app package for channels B and C
 │   ├── manifest.template.json     # Manifest (schema v1.17): staticTabs + bots, templated placeholders
-│   └── build_package.py           # Stdlib-only: renders the manifest and zips a sideloadable package
-│
-├── assets/brand/                  # Canonical brand assets (single source of truth)
-│   ├── color.png                  # 192×192 logo — Teams app icon, meeting-bot iconUrl, served at /brand/
-│   ├── outline.png                # 32×32 Teams outline icon
-│   ├── favicon.svg                # Web favicon (served at /brand/favicon.svg)
-│   └── generate_icons.py          # Regenerates color.png/outline.png (Pillow, isolated)
+│   ├── build_package.py           # Stdlib-only: renders the manifest and zips a sideloadable package
+│   └── README.md                  # Packaging mechanics + sideload walkthrough
 │
 ├── infra/                         # Bicep IaC consumed by azd (azure.yaml)
-│   ├── main.bicep                 # Deployment entry point
+│   ├── main.bicep                 # Deployment entry point; derives what to deploy from DEPLOY_PROFILE
 │   ├── resources.bicep            # Resource composition (BYO/create switches)
-│   └── modules/                   # Per-resource modules (containerApp, foundry, aiSearch, botService, RBAC, ...)
+│   └── modules/                   # containerApp, foundry, aiSearch, botService, meetingBotHost, RBAC, ...
 │
+├── assets/brand/                  # Canonical brand assets (logo, outline icon, favicon, generator)
 ├── assets/avatar/                 # Source photo(s) for custom photo-avatar training (not runtime)
 ├── data/                          # Source corpus ingested into the AI Search index (.docx/.pdf/.md/.txt)
 ├── prompts/agent/                 # Agent prompt content (Markdown), loaded by setup_foundry_agent.py
-├── azure.yaml                     # azd service + hooks (infra path, postprovision/predeploy)
+├── azure.yaml                     # azd service + hooks (infra path, preprovision/postprovision)
 ├── pyproject.toml / uv.lock       # Project metadata + locked dependencies
 ├── Dockerfile                     # Container build (python:3.12-slim + uv)
 └── .env.example                   # Template for .env (copy and fill)

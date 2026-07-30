@@ -12,7 +12,7 @@ after changing the routing rules in `instructions-reasoning.md` /
 
 After editing the prompts, re-provision the agent so the change goes live:
 
-```bash
+```powershell
 uv run python scripts/setup_foundry_agent.py
 ```
 

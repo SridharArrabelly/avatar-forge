@@ -16,3 +16,7 @@ reproducibility (re-training, swapping characters, audit trail).
 - **Source / consent:** `Generated image, not a real person`
 
 ## Notes
+
+The photo is kept for reproducibility only. Retraining or swapping the character is
+done in the Foundry / Speech resource, not here — replacing this file does **not**
+change the avatar the app talks to.
