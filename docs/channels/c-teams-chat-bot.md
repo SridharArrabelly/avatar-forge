@@ -45,18 +45,15 @@ flowchart LR
     AG --> NW
 ```
 
-**No voice and no media** — this channel is text only, and it never joins a call.
-That boundary is deliberate: live in-call presence is [channel D](d-in-call-media-bot.md).
+**No voice and no media** — this channel is text only and never joins a call. That
+boundary is deliberate: live in-call presence is [channel D](d-in-call-media-bot.md).
 The bot is hosted *inside* the existing container app, so there is no second service
 to run.
 
 ## 2. What you get
 
-Text answers (and adaptive cards) in Teams chat, hosted in-process by the same
-FastAPI app at `POST /api/messages` via the Microsoft 365 Agents SDK.
-
-**Explicitly not in scope:** live in-call media. The bot does not join meetings
-or hear audio — that boundary is [channel D](d-in-call-media-bot.md)'s job.
+Text answers and adaptive cards in Teams chat, served in-process by the same FastAPI
+app at `POST /api/messages` via the Microsoft 365 Agents SDK.
 
 ## 3. What deploys
 
@@ -92,10 +89,13 @@ See [`../admin-checklist.md`](../admin-checklist.md).
 ## 5. How to verify
 
 ```powershell
-# the messaging endpoint is mounted (405 = mounted, GET not allowed — that is correct)
-Invoke-WebRequest -Method Get -Uri https://<your-app>.azurecontainerapps.io/api/messages `
-  -SkipHttpErrorCheck | Select-Object StatusCode
+# is the bot mounted, and did its Entra settings reach the container?
+Invoke-RestMethod https://<your-app>.azurecontainerapps.io/api/messages
+# -> status ok, endpoint messages, configured True
 ```
+
+`configured: False` means the container is running without the bot's Entra settings, so
+`POST /api/messages` will answer 503 — the registration reached Azure but not the app.
 
 Then in Teams, `@mention` the bot in a chat and ask a grounded question. You
 should get a text answer from the same agent the voice channels use — if the web
@@ -104,7 +104,9 @@ not the agent.
 
 ## 6. Cost & teardown
 
-The Azure Bot resource itself is inexpensive; the cost is essentially channel A's.
+The Azure Bot resource is F0 (free); the cost is essentially channel A's.
 
-To remove: unset `BOT_APP_ID` and redeploy — the module is skipped and the bot
-resource is removed.
+To remove: uninstall the app in Teams, then delete the Azure Bot resource explicitly —
+`az bot delete`. Unsetting `BOT_APP_ID` stops the module being *deployed*, but azd
+provisions at subscription scope, which ARM only supports in incremental mode, so
+nothing is ever deleted just by disappearing from the template.

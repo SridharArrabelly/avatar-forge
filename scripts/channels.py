@@ -178,7 +178,11 @@ PROFILES: dict[str, Profile] = {
         channels="A",
         summary="The standalone browser app. No Teams, no manifest, no administrator.",
         steps=_core_steps(),
-        cost_note="Container app + Foundry + AI Search. Scales to zero when idle.",
+        cost_note=(
+            "Container app + Foundry + AI Search. Note this does NOT scale to zero: AI "
+            "Search is a `basic` service billed hourly and the container app holds a floor "
+            "of 1 replica. `azd down` is the only way to stop paying."
+        ),
     ),
     "teams-tab": Profile(
         key="teams-tab",

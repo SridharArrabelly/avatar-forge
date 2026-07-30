@@ -115,8 +115,12 @@ failure modes of each stage are in [`meeting-bot/README.md`](../../meeting-bot/R
 | --- | --- |
 | Windows Server VM (`Standard_D4s_v5`) + NIC + NSG + public IP with DNS label | `infra/modules/meetingBotHost.bicep` |
 | Azure Bot with **calling** enabled | Webhook points at the VM FQDN |
-| Open ports **9441** (control API) and **8445** (media/signalling) | NSG |
+| NSG opening **9441** (signalling + control API), **8445** (media), **80** (ACME cert issuance), **3389** (RDP) | All four are open to `Internet` |
 | `MEETING_BOT_ENABLED=true` on the container app | Serves `/ws/acs/audio` |
+
+> **RDP is open to the whole internet** so you can run the `setup-host.ps1` stages.
+> Restrict rule `Allow-RDP` in `meetingBotHost.bicep` to your own address before this
+> is anything but a test host.
 
 > **The calling bot needs its OWN Entra app.** An Entra app can back only one Azure
 > Bot resource, so `MEETING_BOT_APP_ID` must differ from the chat bot's `BOT_APP_ID`.

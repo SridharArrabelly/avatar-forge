@@ -27,6 +27,16 @@
     <!-- The native media stack is win-x64 only. -->
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <Platforms>x64</Platforms>
+    <!--
+      The contract-test project lives at tests/BridgeContract.Tests, i.e. INSIDE
+      this project's own folder, so the SDK's default **/*.cs glob would sweep its
+      xunit sources (and its obj/ artefacts) into the bot's compilation. That makes
+      `dotnet publish meeting-bot\MeetingBot.csproj` — exactly what
+      scripts/setup-host.ps1 -Stage Build runs — fail on a fresh clone with
+      CS0246 (Xunit not found) and CS0579 (duplicate AssemblyInfo attributes).
+      Excluding once here covers every default item glob, not just Compile.
+    -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);tests\**</DefaultItemExcludes>
   </PropertyGroup>
 
   <ItemGroup>

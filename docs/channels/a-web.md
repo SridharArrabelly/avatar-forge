@@ -94,9 +94,13 @@ is no portal step and no `.env` edit.
 Invoke-RestMethod https://<your-app>.azurecontainerapps.io/health
 # -> status healthy, service avatar-forge
 
-# and it is bound to the agent (voice, avatar and agent name come back here)
+# the SPA's boot settings: voice, avatar and the conversation defaults
 Invoke-RestMethod https://<your-app>.azurecontainerapps.io/api/config
 ```
+
+Neither endpoint tells you whether the **agent** is wired up — that is settled by the
+`--- Data plane ---` summary printed at the end of `azd up`, and proved for real by
+asking a grounded question.
 
 Then open the endpoint in a browser, allow the microphone, and ask a question
 that requires grounding (for example, about a recent board meeting). You should

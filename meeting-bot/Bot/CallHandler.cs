@@ -67,7 +67,21 @@ public sealed class CallHandler : IAsyncDisposable
     // cadence onto the AudioSocket. A queue (not direct send) lets barge-in
     // flush everything instantly.
     private readonly ConcurrentQueue<byte[]> _playout = new();
-    private volatile bool _flush;
+    // Barge-in is a momentary event, but the playout loop only looks once per tick.
+    // A transient bool flag was therefore almost never observed, so the loop's local
+    // `carry` survived the flush and the avatar kept speaking for a frame or more
+    // after being told to stop. A monotonic counter cannot be missed: the loop
+    // compares it to the last generation it acted on.
+    private int _flushGeneration;
+    private int _flushSeen;
+
+    // The playout loops outlive nothing: without a cancellation token they keep
+    // ticking after the call ends, sending frames to a disposed media socket for
+    // the lifetime of the process. Every call used to leak two such loops, so a
+    // long-lived host degraded with each meeting it handled.
+    private readonly CancellationTokenSource _loopCts = new();
+    private Task? _audioLoop;
+    private Task? _videoLoop;
     // Whether the media platform is currently accepting outbound audio. When the
     // bot is muted this is Inactive and audioSocket.Send() is silently dropped.
     private volatile bool _audioSendActive;
@@ -151,7 +165,7 @@ public sealed class CallHandler : IAsyncDisposable
         // 3. Barge-in: flush queued playout so she stops mid-sentence.
         _bridge.StopAudioRequested += () =>
         {
-            _flush = true;
+            System.Threading.Interlocked.Increment(ref _flushGeneration);
             while (_playout.TryDequeue(out _)) { }
             System.Threading.Interlocked.Exchange(ref _bufferedBytes, 0);
             _priming = true;   // refill before the next answer starts
@@ -159,7 +173,6 @@ public sealed class CallHandler : IAsyncDisposable
             // exactly what we were asked to stop playing.
             Array.Clear(_lastAudioFrame);
             _concealed = MaxConcealFrames;
-            _flush = false;
             return Task.CompletedTask;
         };
 
@@ -220,10 +233,10 @@ public sealed class CallHandler : IAsyncDisposable
 
         // ── Outbound: Python -> room ──
         // Drain the playout queue at 20 ms cadence onto the AudioSocket.
-        _ = Task.Run(() => PlayoutLoopAsync(audioSocket));
+        _audioLoop = Task.Run(() => PlayoutLoopAsync(audioSocket, _loopCts.Token));
     }
 
-    private async Task PlayoutLoopAsync(IAudioSocket audioSocket)
+    private async Task PlayoutLoopAsync(IAudioSocket audioSocket, CancellationToken ct)
     {
         var carry = new List<byte>(FrameBytes * 2);
         // Tick FASTER than the frame rate and pace off a Stopwatch instead of
@@ -233,7 +246,7 @@ public sealed class CallHandler : IAsyncDisposable
         // time, and the queue silts up or starves depending on which way it slips.
         // Deriving "how many frames are due by now" from elapsed time is immune to
         // that: the loop self-corrects however coarsely the timer actually fires.
-        var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(5));
+        using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(5));
         var clock = System.Diagnostics.Stopwatch.StartNew();
         long framesDue = 0;
         // Monotonic media timestamp in 100-ns ticks. The Real-Time Media Platform
@@ -245,7 +258,7 @@ public sealed class CallHandler : IAsyncDisposable
         double phase = 0;
         const double toneHz = 440.0;
         const double phaseStep = 2 * Math.PI * toneHz / 16000.0;
-        while (await timer.WaitForNextTickAsync().ConfigureAwait(false))
+        while (await timer.WaitForNextTickAsync(ct).ConfigureAwait(false))
         {
             long due = clock.ElapsedMilliseconds / 20;
             // Cap the catch-up burst so a long GC pause can't dump a wall of audio
@@ -277,7 +290,10 @@ public sealed class CallHandler : IAsyncDisposable
                 continue;
             }
 
-            if (_flush) { carry.Clear(); }
+            // Drop any audio already pulled out of the queue when a barge-in
+            // happened, however briefly the flush flag itself was set.
+            int gen = Volatile.Read(ref _flushGeneration);
+            if (gen != _flushSeen) { _flushSeen = gen; carry.Clear(); }
 
             // ── Jitter buffer ─────────────────────────────────────────────────
             //
@@ -452,16 +468,16 @@ public sealed class CallHandler : IAsyncDisposable
             return Task.CompletedTask;
         };
 
-        _ = Task.Run(() => VideoPlayoutLoopAsync(videoSocket));
+        _videoLoop = Task.Run(() => VideoPlayoutLoopAsync(videoSocket, _loopCts.Token));
     }
 
-    private async Task VideoPlayoutLoopAsync(IVideoSocket videoSocket)
+    private async Task VideoPlayoutLoopAsync(IVideoSocket videoSocket, CancellationToken ct)
     {
         int fps = Math.Clamp(_options.VideoFps, 1, 30);
-        var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(1000.0 / fps));
+        using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(1000.0 / fps));
         var sw = System.Diagnostics.Stopwatch.StartNew();
 
-        while (await timer.WaitForNextTickAsync().ConfigureAwait(false))
+        while (await timer.WaitForNextTickAsync(ct).ConfigureAwait(false))
         {
             if (!_videoActive) continue;
 
@@ -583,6 +599,19 @@ public sealed class CallHandler : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        // Stop the playout loops BEFORE tearing the bridge down, so neither keeps
+        // writing to a media socket that is on its way out.
+        try { _loopCts.Cancel(); } catch { /* ignore */ }
+        foreach (var loop in new[] { _audioLoop, _videoLoop })
+        {
+            if (loop is null) continue;
+            // WaitForNextTickAsync throws OperationCanceledException on cancel; that
+            // is the loop exiting normally, not a fault.
+            try { await loop.ConfigureAwait(false); }
+            catch (OperationCanceledException) { /* expected */ }
+            catch (Exception ex) { _logger.LogWarning(ex, "Playout loop ended with an error."); }
+        }
+        _loopCts.Dispose();
         await _bridge.DisposeAsync().ConfigureAwait(false);
     }
 }

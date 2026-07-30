@@ -41,6 +41,21 @@ public sealed class VoiceLiveBridgeClient : IAsyncDisposable
     private CancellationTokenSource? _cts;
     private Task? _receiveLoop;
 
+    // ClientWebSocket permits exactly ONE outstanding SendAsync. Room audio is
+    // pushed from the Graph media callback (a new 20 ms frame every 20 ms, and the
+    // callback is async so the SDK does not wait for the previous one to finish),
+    // while control frames are sent from other threads entirely. Without this gate
+    // two sends overlap, SendAsync throws InvalidOperationException, and the frame
+    // of room audio is swallowed by the caller's catch — the avatar silently
+    // mishears the question rather than failing visibly.
+    //
+    // Not covered by BridgeContract.Tests, deliberately: those run over loopback
+    // where a send completes in sub-microseconds, so the overlap never occurs and
+    // such a test passes with the gate removed. In production this socket crosses
+    // VM -> Container App at ~3.6 ms median, which is what keeps a send in flight
+    // while the next 20 ms frame arrives. Don't "prove" this with a local test.
+    private readonly SemaphoreSlim _sendGate = new(1, 1);
+
     // Single JSON options instance (camelCase ignored — we emit explicit names).
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
@@ -108,7 +123,17 @@ public sealed class VoiceLiveBridgeClient : IAsyncDisposable
     {
         if (_ws is not { State: WebSocketState.Open }) return;
         var json = JsonSerializer.SerializeToUtf8Bytes(frame, JsonOpts);
-        await _ws.SendAsync(json, WebSocketMessageType.Text, endOfMessage: true, ct).ConfigureAwait(false);
+        await _sendGate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            // Re-check: the socket can close while we were queued on the gate.
+            if (_ws is not { State: WebSocketState.Open }) return;
+            await _ws.SendAsync(json, WebSocketMessageType.Text, endOfMessage: true, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            _sendGate.Release();
+        }
     }
 
     private async Task ReceiveLoopAsync(CancellationToken ct)
@@ -197,6 +222,7 @@ public sealed class VoiceLiveBridgeClient : IAsyncDisposable
             _ws.Dispose();
         }
         _cts?.Dispose();
+        _sendGate.Dispose();
     }
 
     // ── inbound DTOs (PascalCase, matching the Python outbound frames) ──

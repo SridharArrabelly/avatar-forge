@@ -1,4 +1,5 @@
 using AvatarForge.MeetingBot.Configuration;
+using System.Collections.Concurrent;
 using Microsoft.Extensions.Options;
 
 // Graph Communications SDK namespaces — resolve on a Windows build host once the
@@ -27,7 +28,10 @@ public sealed class MeetingBotService : IDisposable
     private readonly ILogger<MeetingBotService> _logger;
     private readonly ICommunicationsClient _client;
     private readonly AuthenticationProvider _authProvider;
-    private readonly Dictionary<string, CallHandler> _handlers = new();
+    // Mutated from the SDK's call-update callbacks and from the operator HTTP
+    // endpoints (/api/join, /api/leave, /api/stats) at the same time. A plain
+    // Dictionary corrupts under concurrent writes rather than failing cleanly.
+    private readonly ConcurrentDictionary<string, CallHandler> _handlers = new();
 
     public MeetingBotService(IOptions<BotOptions> options, ILoggerFactory loggerFactory)
     {
@@ -178,7 +182,7 @@ public sealed class MeetingBotService : IDisposable
 
     /// <summary>Leave / end a joined call.</summary>
     public async Task LeaveAsync(string callId)    {
-        if (_handlers.Remove(callId, out var handler))
+        if (_handlers.TryRemove(callId, out var handler))
         {
             try { await handler.Call.DeleteAsync().ConfigureAwait(false); }
             finally { await handler.DisposeAsync().ConfigureAwait(false); }
@@ -347,7 +351,7 @@ public sealed class MeetingBotService : IDisposable
             _logger.LogInformation(
                 "Call {CallId} removed (state: {State}, result: {ResultCode})",
                 call.Id, call.Resource?.State, call.Resource?.ResultInfo?.Code);
-            if (_handlers.Remove(call.Id, out var handler))
+            if (_handlers.TryRemove(call.Id, out var handler))
             {
                 _logger.LogInformation("Call {CallId} ended; tearing down handler.", call.Id);
                 _ = handler.DisposeAsync();

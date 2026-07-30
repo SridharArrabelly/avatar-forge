@@ -155,6 +155,22 @@ and wires the AI Search + Grounding-with-Bing-Custom-Search tools. See
 [`prompts/README.md`](../prompts/README.md) and
 [architecture.md](architecture.md#tool-calling-accuracy).
 
+## Regenerate the brand icons
+
+[`assets/brand/`](../assets/brand/) is the single source for the app mark, shared by the
+web app, the Teams package and the meeting bot. `color.png` (192×192) and `outline.png`
+(32×32) are **drawn procedurally** by `generate_icons.py` — there is no source image, so
+changing the mark means editing the drawing code in that script, then:
+
+```powershell
+uv run --with pillow python assets/brand/generate_icons.py
+```
+
+Pillow is deliberately not a project dependency (the repo is stdlib-only), hence
+`--with`. Both PNGs are committed: re-run, then commit the result. The web app and bot
+serve them from `/brand/*` immediately; the Teams package picks them up on its next
+`build_package.py` run.
+
 ## Docker (local) — not recommended
 
 You do **not** need Docker to run locally. The `Dockerfile` exists so `azd` can build
