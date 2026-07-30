@@ -335,8 +335,8 @@ PROFILES: dict[str, Profile] = {
             ]
         ),
         cost_note=(
-            "Adds an always-on Windows VM (~$140/month). Deallocate it when not testing: "
-            "`az vm deallocate -n avatar-meetingbot-vm -g <rg>`."
+            "Adds an always-on Windows VM, Standard_D4s_v5 (~$283/month). Deallocate it "
+            "when not testing: `az vm deallocate -n avatar-meetingbot-vm -g <rg>`."
         ),
     ),
 }

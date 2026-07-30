@@ -111,8 +111,8 @@ param meetingBotDnsLabel string = ''
 @description('Local administrator password for the Windows media host.')
 @secure()
 param meetingBotAdminPassword string = ''
-@description('VM size for the media host. Standard_D2s_v5 is adequate for a single-meeting POC.')
-param meetingBotVmSize string = 'Standard_D2s_v5'
+@description('VM size for the media host. Standard_D4s_v5 (4 vCPU) is the size proven to run the Real-Time Media Platform; a 2-vCPU host had to be resized. Lowering it is a false economy.')
+param meetingBotVmSize string = 'Standard_D4s_v5'
 @description('Public URL of the bot icon shown for the in-call avatar in Teams.')
 param meetingBotIconUrl string = ''
 

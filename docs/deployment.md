@@ -14,7 +14,13 @@ For local development see [development.md](development.md); for env vars see
 - **Log Analytics + Application Insights** — observability
 - **Azure AI Foundry** (account + project + model deployment) — created or BYO
 - **Azure AI Search** (Basic, AAD auth) — created or BYO
-- **Azure Bot + Teams channel** *(optional, Phase 2a)* — created only when a bot app id is supplied
+- **Azure Bot + Teams channel** *(channel C only)* — created only when a chat bot app id is supplied
+- **Windows VM + NSG + public FQDN, and a second Azure Bot with the Teams calling
+  channel** *(channel D only)* — the media host; created only when the in-call profile
+  is selected and its inputs are set. This is the one costly addition (~$283/month).
+
+Everything after the first six lines is additive and conditional: a `web` profile
+deploys exactly the first six and nothing else.
 
 ## Prerequisites
 
@@ -86,13 +92,23 @@ azd env set FOUNDRY_LOCATION eastus2
 az login
 azd auth login
 
-# 2. Initialise an azd environment
-azd init
+# 2. Create an azd environment
+azd env new <environment-name>
 
-# 3. Provision infra + build + deploy app
-#    azd prompts for: Subscription, Location, Environment name, Resource Group name
+# 3. Choose the channel (step 0 above) — records DEPLOY_PROFILE and prints the plan
+uv run python scripts/set_profile.py
+
+# 4. Verify you can actually finish that plan
+uv run python scripts/preflight.py
+
+# 5. Provision infra + build + deploy app
+#    azd prompts for anything still missing: Subscription, Location, Resource Group name
 azd up
 ```
+
+Steps 3 and 4 are not optional extras — they are what makes the rest predictable.
+Preflight also re-runs automatically as the `preprovision` hook, so skipping step 4
+only means you find out at `azd up` instead of before it.
 
 After `azd up` the URL of the running container app is printed (and stored as
 `SERVICE_APP_URI` in the azd env).
@@ -121,7 +137,7 @@ az login
 azd auth login
 
 # 2. Initialise the azd environment
-azd init     # prompts for env name (e.g. demo-dev)
+azd env new <environment-name>
 
 # 3. Subscription / region / RG
 azd env set AZURE_SUBSCRIPTION_ID     <sub-guid>

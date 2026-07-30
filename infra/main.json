@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.43.8.12551",
-      "templateHash": "11894516162551154979"
+      "templateHash": "465350186044158148"
     }
   },
   "parameters": {
@@ -296,9 +296,9 @@
     },
     "meetingBotVmSize": {
       "type": "string",
-      "defaultValue": "Standard_D2s_v5",
+      "defaultValue": "Standard_D4s_v5",
       "metadata": {
-        "description": "VM size for the media host. Standard_D2s_v5 is adequate for a single-meeting POC."
+        "description": "VM size for the media host. Standard_D4s_v5 (4 vCPU) is the size proven to run the Real-Time Media Platform; a 2-vCPU host had to be resized. Lowering it is a false economy."
       }
     },
     "meetingBotIconUrl": {
@@ -2665,7 +2665,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.43.8.12551",
-              "templateHash": "2369142294307127952"
+              "templateHash": "8751560305722944788"
             }
           },
           "parameters": {
@@ -2724,9 +2724,9 @@
             },
             "vmSize": {
               "type": "string",
-              "defaultValue": "Standard_D2s_v5",
+              "defaultValue": "Standard_D4s_v5",
               "metadata": {
-                "description": "VM size. Standard_D2s_v5 is adequate for a single-meeting POC."
+                "description": "VM size. Standard_D4s_v5 (4 vCPU) is the smallest size the Teams Real-Time Media Platform runs reliably on — a 2-vCPU host was tried and had to be resized. Do not lower this without re-testing a live meeting."
               }
             },
             "dnsLabel": {

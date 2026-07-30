@@ -79,7 +79,7 @@ Recorded honestly, before any work:
 - Audio fidelity and added latency versus D's measured budget
 - Stability over long meetings, and behaviour when the lobby is enabled
 - Container cost and whether it can scale to zero (a real advantage over D's
-  always-on VM at ~$140/month)
+  always-on VM at ~$283/month)
 - Whether it violates any acceptable-use terms — **check this first**, because a
   negative answer ends the evaluation immediately
 
@@ -95,7 +95,7 @@ add or drop criteria afterwards.
 | Publishes a camera tile (the face) | Yes | ? |
 | Added latency over the Voice Live budget | ~125 ms transport | ? |
 | Audio fidelity | Verified clean | ? |
-| Idle cost | ~$140/month VM, no scale-to-zero | ? |
+| Idle cost | ~$283/month VM (`D4s_v5`), no scale-to-zero | ? |
 | Operational fragility | Native Windows media stack; documented traps | ? |
 | Terms-of-use standing | Supported, first-party API | ? |
 | Effort to reach parity | Built | ? |

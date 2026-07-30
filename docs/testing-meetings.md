@@ -11,11 +11,17 @@ meeting at the same time.
 | WebSocket | `/ws/acs/browser` | `/ws/acs/audio` |
 | **Hears** | **only your machine's mic / shared audio** | **everyone in the meeting** |
 | Face | browser decodes fMP4 → canvas → ACS tile | Python decodes → NV12 → `VideoSocket` |
-| Needs the VM running | no | **yes** (~$140/mo if left on) |
-| Status | proven in real meetings | **never yet joined a meeting** |
+| Needs the VM running | no | **yes** (~$283/mo if left on) |
+| Status | proven in real meetings | **proven in real meetings** — joins, hears the room, answers aloud with a lip-synced tile |
 
 > ⚠️ **Never run both in one meeting.** Two assistants would hear each other's answers and
 > feed back. Leave one before starting the other.
+
+> **About the URLs below.** The hostnames, resource group and VM name in this runbook are
+> from the reference deployment. Substitute your own: the app URL is `SERVICE_APP_URI` in
+> your azd env, and the bot FQDN is `<MEETING_BOT_DNS_LABEL>.<region>.cloudapp.azure.com`.
+> Resource names (`avatar-meetingbot-vm`, `avatar-meetingbot-nsg`) are deterministic, so
+> those work as written.
 
 The single most important difference is the "Hears" row. The browser joiner captures the
 *operator's* audio, so it can only answer what **you** say into your own mic. The media bot
@@ -110,7 +116,9 @@ az containerapp update -n ca-avatar-newtenan-ahfjen5fzzjgi -g rg-avatar-newtenan
 
 ## Path B — media bot (the one that hears the room)
 
-This is the milestone that actually closes #27. **It has never joined a real meeting.**
+This is the milestone that closes #27, and it is **working end to end**: the avatar
+joins, hears every participant, and answers aloud with a lip-synced camera tile.
+Use this runbook to re-verify after a change.
 
 ### 1. Confirm the VM is up
 

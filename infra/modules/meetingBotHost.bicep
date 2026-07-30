@@ -49,8 +49,8 @@ param adminUsername string = 'avatarbot'
 @secure()
 param adminPassword string
 
-@description('VM size. Standard_D2s_v5 is adequate for a single-meeting POC.')
-param vmSize string = 'Standard_D2s_v5'
+@description('VM size. Standard_D4s_v5 (4 vCPU) is the smallest size the Teams Real-Time Media Platform runs reliably on — a 2-vCPU host was tried and had to be resized. Do not lower this without re-testing a live meeting.')
+param vmSize string = 'Standard_D4s_v5'
 
 @description('Globally-unique DNS label for the public IP (becomes <label>.<region>.cloudapp.azure.com).')
 param dnsLabel string

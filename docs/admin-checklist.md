@@ -68,7 +68,7 @@ without the policy.
 
 | # | Step | Who | Notes |
 | --- | --- | --- | --- |
-| 1 | Entra app registration + client secret | You / Entra admin | Can be the same app as C |
+| 1 | Entra app registration + client secret | You / Entra admin | **Must be a SECOND app, separate from C.** One Entra app can back only one Azure Bot resource; reusing C's fails with `MsaAppId is already in use` |
 | 2 | Graph **application** permissions: `Calls.JoinGroupCall.All`, `Calls.JoinGroupCallAsGuest.All`, **`Calls.AccessMedia.All`**, `OnlineMeetings.Read.All` | Entra admin to add | `Calls.AccessMedia.All` is what unlocks the room audio |
 | 3 | **Admin consent** for all of the above | **Entra admin** | One-time. Nothing works without it |
 | 4 | Azure Bot resource with **calling enabled**, calling webhook → the VM's public HTTPS FQDN | You (bicep + portal) | The webhook URL cannot be known until the VM has its DNS label |

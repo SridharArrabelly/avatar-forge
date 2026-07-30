@@ -55,9 +55,8 @@ its [channel page](docs/channels/README.md).
 
 ## Channel support
 
-The avatar is **one brain with several front doors** — all channels share the same
-backend, Voice Live session, Foundry agent and grounding. What differs is only how
-audio and video get in and out, which drives cost and, more importantly, **how much
+Five front doors onto that one brain. What differs between them is only how audio and
+video get in and out — which drives cost and, more importantly, **how much
 administrator access you need**.
 
 | | Channel | Status | Extra Azure infra | Admin burden | Doc |
@@ -68,10 +67,9 @@ administrator access you need**.
 | **D** | **Teams — in-call avatar** (Graph media bot) | ✅ Working | Azure Bot + **Windows VM** + DNS + TLS | **Highest** — incl. **Teams app access policy** | [d-in-call-media-bot.md](docs/channels/d-in-call-media-bot.md) |
 | **E** | **Teams — in-call avatar** (headless browser) | 🔜 Placeholder | Container/job | TBD | [e-in-call-headless.md](docs/channels/e-in-call-headless.md) |
 
-**A → B → C is a ladder, not a menu** — each step is additive on the one before, and
-**B adds a Teams surface for zero extra Azure resources**. **D and E are rivals**: two
-implementations of the *same* capability (live in-call presence), to be compared and
-narrowed to one.
+They are not five equal options: **A → B → C is a ladder** (each additive on the one
+before), while **D and E are rivals** — two implementations of the same capability.
+The [channel hub](docs/channels/README.md) explains how to choose.
 
 👉 **Start here: [docs/channels/README.md](docs/channels/README.md)** for the decision
 guide, and **[docs/admin-checklist.md](docs/admin-checklist.md)** for every manual step

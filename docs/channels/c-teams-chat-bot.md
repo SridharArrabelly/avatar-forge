@@ -73,10 +73,11 @@ azd up
 If `BOT_APP_ID` / `TEAMS_BOT_ID` is unset, the bot infra is skipped entirely and
 the deployment behaves exactly as channel A.
 
-> **The Azure Bot resource is shared with [channel D](d-in-call-media-bot.md).**
-> A Graph calling bot requires a bot registration too. So "the chat feature" and
-> "the bot registration" are separable: D needs the resource, but not this
-> channel's chat behaviour.
+> **[Channel D](d-in-call-media-bot.md) needs its own, separate Azure Bot — not this
+> one.** A Graph calling bot also needs a bot registration, but an Entra app can back
+> only *one* Azure Bot resource, so `MEETING_BOT_APP_ID` must be a **different app
+> registration** from this channel's `BOT_APP_ID`. Reusing one fails deployment with
+> `MsaAppId is already in use`. Preflight catches the collision before you deploy.
 
 ## 4. Manual / admin steps
 

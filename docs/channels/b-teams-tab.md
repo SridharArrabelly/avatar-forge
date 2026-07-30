@@ -12,9 +12,8 @@ Requires: [channel A](a-web.md) deployed.
 
 ## 1. How it works
 
-Teams renders **the same page as channel A** in an iframe. That is the entire
-channel — which is why it adds a Teams surface for **zero extra Azure resources**.
-The app package is just a manifest telling Teams which URL to frame.
+Teams renders **the same page as channel A** in an iframe. That is the entire channel:
+the app package is just a manifest telling Teams which URL to frame.
 
 ```mermaid
 flowchart LR
@@ -43,9 +42,6 @@ unaffected. Nothing new is provisioned in Azure — the only new artefact is the
 
 The avatar available inside Teams, using the Teams client's own microphone and
 speaker. Same voice, same grounding, same agent — no second deployment.
-
-The Teams JS SDK is only loaded when running inside Teams, so the standalone web
-app is completely unaffected.
 
 ## 3. What deploys
 

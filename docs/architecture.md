@@ -62,22 +62,34 @@ The **Teams bot** (Phase 2a) is hosted inside the same FastAPI app as a `POST
 /api/messages` route and reuses the same Foundry agent — see
 [`teams/README.md`](../teams/README.md).
 
-The **in-call audio participant** (Phase 2b, issue #27) reuses the same Voice Live +
-Foundry pipeline for a *live Teams meeting*. Because ACS Call Automation has no
-join-by-URL API, a browser page (`frontend/acs-join.html`) joins the meeting with the
-ACS Calling Web SDK (anonymous, lobby-governed — no Teams admin, no server Node
-toolchain) and hands the resulting `ServerCallId` to the server, which calls ACS
-`connect_call(...)` with bidirectional MIXED audio over a server-hosted WebSocket
-(`/ws/acs/audio`). [`backend/acs/bridge.py`](../backend/acs/bridge.py)'s
-`AcsVoiceBridge` adapts that media socket onto the unchanged `VoiceSessionHandler`
-(PCM16 in/out, wake-phrase turn-taking, barge-in). Audio-only by design, non-recording,
-and fully opt-in behind `ACS_ENABLED` (every `/api/acs/*` route returns 503 when off).
-An optional Teams meeting **side-panel control panel** (`frontend/companion.html`,
-opt-in `configurableTabs` via `build_package.py --enable-companion`) is the in-meeting
-front door: it shows live call status (`GET /api/acs/status`) and launches the joiner in
-a separate window. It is a control plane only — deliberately not an (unsynced) avatar
-face on the stage.
-See [`teams/README.md`](../teams/README.md#phase-2b--in-call-audio-participant-issue-27).
+The **in-call avatar** (issue #27) reuses the same Voice Live + Foundry pipeline inside a
+*live Teams meeting*. Two transports exist, and they are not equivalent:
+
+- **Graph media bot (channel D — the shipped design).** A thin .NET service on a Windows
+  host joins the meeting through the Graph Real-Time Media Platform, which is the only
+  way to receive the **mixed audio of every participant**. It forwards raw PCM16 over a
+  WebSocket (`/ws/acs/audio`) to [`backend/acs/bridge.py`](../backend/acs/bridge.py)'s
+  `AcsVoiceBridge`, which adapts it onto the unchanged `VoiceSessionHandler`
+  (wake-phrase turn-taking, barge-in). The avatar's face is decoded from Voice Live's
+  fragmented-MP4 avatar stream to NV12 in Python and sent back as a camera tile.
+- **Browser joiner (`frontend/acs-join.html`) — a fallback for demos.** Joins with the
+  ACS Calling Web SDK (anonymous, lobby-governed, no admin) over `/ws/acs/browser`. It
+  can only ever hear **the operator's own microphone**, because Teams isolates
+  per-client audio. Useful when you have no admin rights; not a substitute for D.
+
+Both are non-recording and fully opt-in — every `/api/acs/*` route returns 503 when
+disabled. An optional Teams meeting **side-panel control panel**
+(`frontend/companion.html`, opt-in `configurableTabs` via
+`build_package.py --enable-companion`) shows live call status (`GET /api/acs/status`)
+and launches the joiner in a separate window; it is a control plane only, deliberately
+not an unsynced avatar face on the stage.
+
+> An earlier design attempted ACS Call Automation `connect_call` media streaming from
+> the server. Live testing proved it does **not** carry Teams *meeting* audio (every
+> inbound frame arrived silent), which is why the Graph media bot exists.
+
+Details: [`docs/channels/d-in-call-media-bot.md`](channels/d-in-call-media-bot.md) and
+[`d-design-media-bot.md`](channels/d-design-media-bot.md).
 
 ## Tool-calling accuracy
 

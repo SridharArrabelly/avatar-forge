@@ -231,14 +231,18 @@ skipped and the deploy behaves exactly like Phase 1 (tab-only).
 | `TEAMS_TAB_ENTITY_ID` | `avatarForgeHome` | The static-tab entity id the bot deep-links to. |
 | `BOT_RUN_TIMEOUT_S` | `60` | Max seconds a grounded Foundry run executes in the background before a "took too long" reply. Answers are delivered as a proactive message (ack-then-background-run), so this is **not** bound by the Teams ~15s turn window. |
 
-## Teams in-call audio participant (Phase 2b, issue #27)
+## Teams in-call avatar (channel D, issue #27)
 
-Opt-in. The avatar joins a Teams **meeting** as an audio participant via Azure
-Communication Services (ACS) Call Automation and answers spoken questions aloud using
-the same Voice Live + Foundry pipeline. **Off unless ACS is configured** — every
-`/api/acs/*` endpoint returns 503 and the bridge never runs, so a deploy without it is
-unchanged. Audio-only and non-recording by design. See
-[`teams/README.md`](../teams/README.md#phase-2b--in-call-audio-participant-issue-27).
+Opt-in. The avatar joins a Teams **meeting**, hears every participant, and answers
+spoken questions aloud with a lip-synced camera tile, using the same Voice Live +
+Foundry pipeline. **Off unless enabled** — every `/api/acs/*` endpoint returns 503 and
+the bridge never runs, so a deploy without it is unchanged. Non-recording by design.
+
+The `ACS_*` prefix is historical: these settings govern the in-call media bridge
+regardless of which transport feeds it (the Graph media bot on `/ws/acs/audio`, or the
+browser joiner on `/ws/acs/browser`). `MEETING_BOT_ENABLED=true` is enough on its own —
+it serves the media bot **without** provisioning an ACS resource. See
+[`docs/channels/d-in-call-media-bot.md`](channels/d-in-call-media-bot.md).
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -267,5 +271,5 @@ deploy first and tells you which one.
 | `MEETING_BOT_APP_TENANT_ID` | *(deployment tenant)* | Tenant of that app registration. |
 | `MEETING_BOT_DNS_LABEL` | — | **Required.** Globally-unique DNS label; becomes `<label>.<region>.cloudapp.azure.com` and must resolve for the TLS certificate. Preflight checks availability. |
 | `MEETING_BOT_ADMIN_PASSWORD` | — | **Required.** Local administrator password for the Windows host (12–123 chars, 3 of 4 character classes). |
-| `MEETING_BOT_VM_SIZE` | `Standard_D2s_v5` | Adequate for a single concurrent meeting. |
+| `MEETING_BOT_VM_SIZE` | `Standard_D4s_v5` | 4 vCPU. This is the size proven to run the Real-Time Media Platform — a 2-vCPU host was tried and had to be resized. ~$283/month; lowering it is a false economy. |
 | `MEETING_BOT_ICON_URL` | *(empty)* | Public URL of the bot icon shown in Teams. |

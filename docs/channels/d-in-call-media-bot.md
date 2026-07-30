@@ -97,13 +97,21 @@ azd env set MEETING_BOT_ADMIN_PASSWORD "<strong-password>"
 uv run python scripts/preflight.py    # verifies all of the above before you spend money
 azd up
 
-# then install/refresh the bot service on the host
-pwsh meeting-bot/scripts/setup-host.ps1
+# then, ON THE WINDOWS VM (RDP in), install/refresh the bot service
+.\meeting-bot\scripts\setup-host.ps1 -Stage Prep
+.\meeting-bot\scripts\setup-host.ps1 -Stage Cert -Email you@example.com
+.\meeting-bot\scripts\setup-host.ps1 -Stage Build
+.\meeting-bot\scripts\setup-host.ps1 -Stage Run -Thumbprint <cert-tp> `
+    -BridgeUrl wss://<your-container-app>/ws/acs/audio -BotSecret <secret>
 ```
+
+The `setup-host.ps1` stages run **on the VM**, not on your workstation — they install
+the .NET runtime, issue the TLS cert and register the Windows service. Details and the
+failure modes of each stage are in [`meeting-bot/README.md`](../../meeting-bot/README.md).
 
 | Resource | Notes |
 | --- | --- |
-| Windows Server VM + NIC + NSG + public IP with DNS label | `infra/modules/meetingBotHost.bicep` |
+| Windows Server VM (`Standard_D4s_v5`) + NIC + NSG + public IP with DNS label | `infra/modules/meetingBotHost.bicep` |
 | Azure Bot with **calling** enabled | Webhook points at the VM FQDN |
 | Open ports **9441** (control API) and **8445** (media/signalling) | NSG |
 | `MEETING_BOT_ENABLED=true` on the container app | Serves `/ws/acs/audio` |
@@ -175,13 +183,17 @@ caused four separate defects.
 
 ## 6. Cost & teardown
 
-**The VM runs about $140/month** and is by far the dominant cost of this channel.
-It does not scale to zero.
+**The VM runs about $283/month** (`Standard_D4s_v5`, 4 vCPU) and is by far the
+dominant cost of this channel. It does not scale to zero.
+
+That size is not padding: a 2-vCPU host was tried and had to be resized before the
+Real-Time Media Platform would run. Halving it does not halve the bill, it breaks
+the channel.
 
 ```powershell
 # stop paying for compute between test sessions (keeps the disk and the FQDN)
-az vm deallocate -n <vm-name> -g <rg>
-az vm start -n <vm-name> -g <rg>      # when you next need it
+az vm deallocate -n avatar-meetingbot-vm -g <rg>
+az vm start -n avatar-meetingbot-vm -g <rg>      # when you next need it
 ```
 
 Deallocating preserves the DNS label and the Teams access policy, so restarting
