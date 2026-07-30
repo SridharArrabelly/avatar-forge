@@ -61,43 +61,59 @@ already set on the deployed app and wired through bicep.
 
 Set via `appsettings.json` or environment (`Bot__*`). **Never commit the secret.**
 
-| Key | Value (MngEnv) |
+| Key | Value (current deployment) |
 | --- | --- |
-| `Bot:AppId` | `860ecee0-c226-4930-8c00-e37bae4a3ae5` (`avatar-forge-meeting-bot`) |
-| `Bot:TenantId` | `349b3dac-8649-4410-acdc-ef8bbcb7a46f` |
+| `Bot:AppId` | `fcae883a-6107-42ec-8fd5-c24023ada525` (`avatar-forge-meeting-bot`, multi-tenant) |
+| `Bot:TenantId` | `b1cd5b73-a77b-4002-a5a6-1599e4c4ee37` |
 | `Bot:AppSecret` | from env `BOT_CLIENT_SECRET` (stored in azd env, git-ignored) |
-| `Bot:ServiceFqdn` | `avatar-meetingbot-mngenv.swedencentral.cloudapp.azure.com` (`host.bicep` output) |
+| `Bot:ServiceFqdn` | `avatar-meetingbot-newtenant.swedencentral.cloudapp.azure.com` (`host.bicep` output) |
 | `Bot:CertificateThumbprint` | a publicly-trusted cert in `LocalMachine\My` matching the FQDN |
-| `Bot:BridgeWebSocketUrl` | `wss://ca-avatar-mngenv-ha2avgzxshnbo.orangepebble-e59f7bd5.swedencentral.azurecontainerapps.io/ws/acs/audio` |
+| `Bot:BridgeWebSocketUrl` | `wss://ca-avatar-newtenan-ahfjen5fzzjgi.purpleocean-4494944c.swedencentral.azurecontainerapps.io/ws/acs/audio` |
 | `Bot:BridgeSampleRate` | `16000` |
-| `Bot:EnableVideo` | `false` (Slice 2A — set `true` to add the avatar camera tile) |
+| `Bot:EnableVideo` | `true` (Slice 2A — the avatar camera tile) |
 | `Bot:VideoWidth` / `Bot:VideoHeight` / `Bot:VideoFps` | `640` / `360` / `15` (only used when `EnableVideo=true`) |
 
-> **Slice 2A — the avatar's video face.** With `Bot__EnableVideo=true` the bot adds an
-> outbound NV12 `VideoSocket` and shows up as a **camera tile**. Until the Python video
-> source is wired it sends a static placeholder frame (so the tile/path is provable);
-> once Python forwards real `VideoData` (NV12) frames from the same Voice Live avatar
-> synthesis as the audio, the face is lip-synced to the voice. Default `false` = the
-> audio-only Slice 1 bot, byte-for-byte unchanged. Full design:
-> [`docs/teams-avatar-video.md`](../docs/teams-avatar-video.md).
+> **Slice 2A — the avatar's video face (now built end to end).** With
+> `Bot__EnableVideo=true` the bot adds an outbound NV12 `VideoSocket` and appears as a
+> **camera tile**. The frames come from Python: the bridge runs its Voice Live session in
+> avatar/`websocket` mode, decodes the resulting stream and forwards real `VideoData`
+> (NV12) frames, so the face is lip-synced to the voice it is speaking.
+>
+> **This must be enabled on BOTH sides** — `Bot__EnableVideo=true` here *and*
+> `MEETING_BOT_VIDEO_ENABLED=true` on the container app. The sizes must also agree:
+> `Bot__VideoWidth/Height/Fps` map to a supported `NV12_*` format via `VideoFormatFor`,
+> and the bot drops any frame whose dimensions differ, falling back to its placeholder.
+>
+> Enabling video changes the **audio** source too, which is why the Python flag is a
+> single switch rather than a cosmetic one: in avatar/`websocket` mode Voice Live stops
+> emitting `response.audio.delta` and muxes the answer audio (AAC) into the same
+> fragmented-MP4 stream, so the bridge recovers the audio from there instead. Both
+> defaults are `false` = the audio-only Slice 1 bot, byte-for-byte unchanged. Full
+> design: [`docs/teams-avatar-video.md`](../docs/teams-avatar-video.md).
 
-## Deployed host (MngEnv, rg-avatar-mngenv) — already provisioned
+## Deployed host (rg-avatar-newtenant) — already provisioned
 
 `host.bicep` is **deployed**. Live resources:
 
 | Resource | Value |
 | --- | --- |
 | Windows VM | `avatar-meetingbot-vm` (running, `Standard_D4s_v5`, swedencentral) |
-| Public FQDN | `avatar-meetingbot-mngenv.swedencentral.cloudapp.azure.com` |
+| Public FQDN | `avatar-meetingbot-newtenant.swedencentral.cloudapp.azure.com` |
 | Signaling endpoint | `https://<fqdn>:9441/api/calling` |
 | Operator API | `https://<fqdn>:9441/api/join` |
 | Calling-bot registration | `avatar-meetingbot-registration` (Teams channel, `callingWebhook` on) |
 | NSG | `avatar-meetingbot-nsg` — 9441 (signaling), 8445 (media), 80 (ACME), 3389 (RDP) |
 
 The Python side is **already live**: the container app has `MEETING_BOT_ENABLED=true`,
-`ACS_AUDIO_SAMPLE_RATE=16000`, `ACS_REQUIRE_WAKE_PHRASE=true`, and `/ws/acs/audio`
-accepts the bot's handshake (verified with a websockets probe). `MEETING_BOT_ENABLED`
-makes the bridge serve the bot **without** provisioning an ACS resource.
+`MEETING_BOT_VIDEO_ENABLED=true` and `/ws/acs/audio` accepts the bot's handshake.
+`MEETING_BOT_ENABLED` makes the bridge serve the bot **without** provisioning an ACS
+resource.
+
+> **Restarting the service:** stop it and wait for port **8445** to actually clear before
+> starting again. The Real-Time Media platform binds that port, and if the previous
+> process still holds it the new one dies at startup with
+> `Media platform failed to initialize -> AddressInUse`, which looks alarmingly like a
+> media-stack fault but is only a restart race.
 
 ## Bot status — BUILT, DEPLOYED & RUNNING on the host ✅
 
@@ -107,7 +123,7 @@ scaffolded:
 | Item | Status |
 | --- | --- |
 | VM resized to 4 vCPU (`Standard_D4s_v5`) | ✅ media platform needs ≥ 2 cores |
-| TLS cert (Let's Encrypt via win-acme) | ✅ thumbprint `0C3A419EE79746A8FA0625D66721E26B68B6C9D6`, auto-renew scheduled |
+| TLS cert (Let's Encrypt via win-acme) | ✅ thumbprint `C6B8756C3015D51F6916A192EA4FF460BF88AE6F`, expires 2026-10-28 |
 | VC++ x64 redistributable | ✅ installed (native media stack links `vcruntime140`/`msvcp140`) |
 | `dotnet publish -r win-x64 --self-contained` | ✅ builds; native media DLLs auto-bundled by the `CopySkypeNativeMedia` target |
 | `AvatarForgeMeetingBot` Windows service | ✅ **Running**, HTTPS bound on `:9441` |
@@ -133,7 +149,7 @@ cert issuance + a real meeting):
 .\meeting-bot\scripts\setup-host.ps1 -Stage Cert  -Email you@example.com   # win-acme Let's Encrypt (HTTP-01, port 80)
 .\meeting-bot\scripts\setup-host.ps1 -Stage Build                          # git clone + dotnet publish -r win-x64
 .\meeting-bot\scripts\setup-host.ps1 -Stage Run   -Thumbprint <cert-tp> `
-    -BridgeUrl wss://ca-avatar-mngenv-ha2avgzxshnbo.orangepebble-e59f7bd5.swedencentral.azurecontainerapps.io/ws/acs/audio `
+    -BridgeUrl wss://ca-avatar-newtenan-ahfjen5fzzjgi.purpleocean-4494944c.swedencentral.azurecontainerapps.io/ws/acs/audio `
     -BotSecret <BOT_CLIENT_SECRET>                                         # set Bot__* + install/start the Windows service
 ```
 
@@ -145,11 +161,11 @@ cert issuance + a real meeting):
 1. ✅ **Host + calling registration** — already deployed (`host.bicep`). To
    re-deploy/update:
    ```pwsh
-   az deployment group create -g rg-avatar-mngenv `
+   az deployment group create -g rg-avatar-newtenant `
      -f meeting-bot/infra/host.bicep `
-     -p botAppId=860ecee0-c226-4930-8c00-e37bae4a3ae5 `
-        botAppTenantId=349b3dac-8649-4410-acdc-ef8bbcb7a46f `
-        adminPassword='<strong-password>' dnsLabel=avatar-meetingbot-mngenv
+     -p botAppId=fcae883a-6107-42ec-8fd5-c24023ada525 `
+        botAppTenantId=b1cd5b73-a77b-4002-a5a6-1599e4c4ee37 `
+        adminPassword='<strong-password>' dnsLabel=avatar-meetingbot-newtenant
    ```
 2. ✅ **Python side** — already live: `MEETING_BOT_ENABLED=true`,
    `ACS_AUDIO_SAMPLE_RATE=16000`, `ACS_REQUIRE_WAKE_PHRASE=true` on the container app
@@ -157,7 +173,7 @@ cert issuance + a real meeting):
 3. ✅ **Prep stage** — firewall + .NET 8 SDK/ASP.NET runtime + VC++ x64 redist installed
    on the VM; VM sized to 4 vCPU for the media platform.
 4. ✅ **TLS cert installed** — Let's Encrypt cert issued via `setup-host.ps1 -Stage Cert`
-   (win-acme, HTTP-01). Thumbprint `0C3A419EE79746A8FA0625D66721E26B68B6C9D6`, auto-renew
+   (win-acme, HTTP-01). Thumbprint `C6B8756C3015D51F6916A192EA4FF460BF88AE6F`, auto-renew
    task scheduled.
 5. ✅ **Bot built & published on the VM** — `dotnet publish -r win-x64 --self-contained`;
    native media DLLs auto-bundled by the csproj `CopySkypeNativeMedia` target.
@@ -172,7 +188,7 @@ cert issuance + a real meeting):
    app to be installed in the meeting.
 8. **(USER) Live test:** start a Teams meeting **in a tenant that has Teams *and* has
    admin-consented this bot** (see below), then
-   `POST https://avatar-meetingbot-mngenv.swedencentral.cloudapp.azure.com:9441/api/join { "joinUrl": "<classic meetup-join link>" }`.
+   `POST https://avatar-meetingbot-newtenant.swedencentral.cloudapp.azure.com:9441/api/join { "joinUrl": "<classic meetup-join link>" }`.
    Nuru should appear in the roster, hear the room, and answer aloud on the wake phrase
    ("nuru" / "hey nuru"). Watch latency (joiner + media hop on top of Voice Live
    first-token).
@@ -188,11 +204,11 @@ This mirrors how third-party meeting bots join customer tenants. Two facts must 
   form.** The new short `…/meet/<id>?p=…` share link carries no thread id or tenant and
   cannot be joined. Get the classic link from the invite body ("Click here to join the
   meeting" → right-click → Copy Link).
-- **The organizer's tenant must have admin-consented the bot app** (`860ecee0-…`, now
+- **The organizer's tenant must have admin-consented the bot app** (`fcae883a-…`, now
   registered **multi-tenant**). A directory admin in that tenant grants this **once** via:
 
   ```
-  https://login.microsoftonline.com/<TARGET_TENANT_ID_OR_DOMAIN>/adminconsent?client_id=860ecee0-c226-4930-8c00-e37bae4a3ae5
+  https://login.microsoftonline.com/<TARGET_TENANT_ID_OR_DOMAIN>/adminconsent?client_id=fcae883a-6107-42ec-8fd5-c24023ada525
   ```
 
   This creates the bot's service principal in that tenant and grants the declared Graph
@@ -200,12 +216,16 @@ This mirrors how third-party meeting bots join customer tenants. Two facts must 
   `Calls.JoinGroupCallAsGuest.All`, `OnlineMeetings.Read.All`). The bot needs **no Teams
   license** in that tenant.
 
-> ⚠️ **MngEnv has no Teams.** The MngEnv host tenant (`349b3dac…`) is licensed for free
-> Power BI only — no Microsoft 365 / Teams — so meetings cannot be *organized* there.
-> Either (a) add a Microsoft 365 / Teams trial to MngEnv and organize meetings there, or
-> (b) admin-consent the bot in a tenant that already has Teams (e.g. your corporate
-> tenant) and join meetings organized there. Option (b) needs the one-time admin consent
-> above from someone with directory rights in that tenant.
+> ✅ **The host tenant now has Teams.** The current host tenant
+> (`b1cd5b73-a77b-4002-a5a6-1599e4c4ee37`, `diax18547011.onmicrosoft.com`) is licensed for
+> Microsoft 365, and you hold global admin there — so meetings can be **organized in the
+> same tenant that hosts the bot**, and the admin consent above is self-service. This is
+> the first configuration in which the media bot is actually testable; the previous host
+> tenant had no Teams licence, which is precisely why in-meeting behaviour went untested
+> for so long.
+>
+> If you organize the meeting somewhere else instead, that tenant needs the one-time
+> admin consent above from someone with directory rights in it.
 
 ## What is verified vs. pending
 
