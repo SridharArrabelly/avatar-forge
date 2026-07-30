@@ -62,13 +62,23 @@ agent-creation time; the runtime backend never talks to Bing directly.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `BING_CONNECTION_NAME` | *(unset — web tool disabled)* | **Optional.** Foundry connection for Grounding with Bing Custom Search (the agent's only external tool). Leave unset for a search-only agent; naming a connection that doesn't exist skips the tool with a warning rather than failing. |
-| `BING_CUSTOM_CONFIG_NAME` | *(unset — web tool disabled)* | **Optional.** Bing Custom Search configuration name — the curated domain allow-list the web tool is restricted to. Required only alongside `BING_CONNECTION_NAME`. |
+| `DEPLOY_BING_GROUNDING` | `false` | **Optional, infra-only.** When `true`, `azd up` deploys the whole web tool — the Bing account, the curated site allow-list and the Foundry connection — and sets the two variables below automatically. Off by default because it provisions a billable resource. Only takes effect on a greenfield deploy (there must be a Foundry project to attach the connection to). |
+| `BING_SKU_NAME` | `G2` | **Optional, infra-only.** Bing pricing tier when `DEPLOY_BING_GROUNDING=true`. `G2` is the tier this project has run on; `G1` is the lower tier. |
+| `BING_CONNECTION_NAME` | *(unset — web tool disabled)* | **Optional.** Foundry connection for Grounding with Bing Custom Search (the agent's only external tool). Set for you when `DEPLOY_BING_GROUNDING=true`; otherwise name an existing connection. Leave unset for a search-only agent; naming a connection that doesn't exist skips the tool with a warning rather than failing. |
+| `BING_CUSTOM_CONFIG_NAME` | *(unset — web tool disabled)* | **Optional.** Bing Custom Search configuration name — the curated domain allow-list the web tool is restricted to. Set for you when `DEPLOY_BING_GROUNDING=true`; otherwise required alongside `BING_CONNECTION_NAME`. |
 | `AGENT_MODEL` | `gpt-5.4` | Foundry model deployment the agent runs on. Recommended: `gpt-5.4` + `AGENT_REASONING_EFFORT=none` (best tool routing; 30/30 on the harness). `gpt-5.4-mini` is a cheaper fallback; `gpt-4.1-mini` is the documented baseline. See [architecture.md](architecture.md#tool-calling-accuracy). |
 | `AGENT_REASONING_EFFORT` | `none` | Reasoning effort. **Model-dependent:** `gpt-4.x`/`gpt-4o` reject it (leave **unset** — they 400, manifesting as a silently non-speaking avatar); `gpt-5.x` accept `none\|low\|medium\|high\|xhigh`; o-series accept `low\|medium\|high`. For voice latency the validated value is `none` (real reasoning adds 4–5s to first token). The script also selects the prompt variant from this. |
 | `AI_SEARCH_TOP_K` | `8` | Chunks pulled from the meeting-minutes index per turn. |
 | `BING_COUNT` | `8` | Snippets returned from the Bing Custom Search allow-list per turn. |
 | `AGENT_ID` | — | Optional explicit agent id; when empty the agent is resolved by `AGENT_NAME`. |
+
+> **The curated site allow-list is not an environment variable.** It is the
+> `bingAllowedDomains` parameter in [`infra/main.bicep`](../infra/main.bicep) — a list of
+> `{ domain, includeSubPages, boostLevel }` entries, where `boostLevel` is `SuperBoost` or
+> `Boosted`. It lives in bicep because it is a security boundary: Bing enforces it as a
+> hard allow-list, so nothing outside it is reachable, which is what makes an open-web tool
+> safe to hand an executive assistant. Edit it there before deploying so it points at your
+> own sources — the checked-in list is a sample.
 
 ---
 

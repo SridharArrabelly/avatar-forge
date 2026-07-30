@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.43.8.12551",
-      "templateHash": "11841489409163476650"
+      "templateHash": "4824588165757019530"
     }
   },
   "parameters": {
@@ -112,6 +112,67 @@
       "defaultValue": "",
       "metadata": {
         "description": "Bing Custom Search configuration (instance) name — the curated domain allow-list. Surfaces as BING_CUSTOM_CONFIG_NAME in the container."
+      }
+    },
+    "deployBingGrounding": {
+      "type": "string",
+      "defaultValue": "false",
+      "metadata": {
+        "description": "Deploy Grounding with Bing Custom Search: the Bing account, the curated site allow-list, and the Foundry connection. Opt-in and additive — when false nothing Bing-related is created and the agent runs on AI Search alone."
+      }
+    },
+    "bingSkuName": {
+      "type": "string",
+      "defaultValue": "G2",
+      "allowedValues": [
+        "G1",
+        "G2"
+      ],
+      "metadata": {
+        "description": "Bing pricing tier. G2 is the tier this project has run on; G1 is the lower tier."
+      }
+    },
+    "bingAllowedDomains": {
+      "type": "array",
+      "defaultValue": [
+        {
+          "domain": "https://www.mtn.com/investors",
+          "includeSubPages": true,
+          "boostLevel": "SuperBoost"
+        },
+        {
+          "domain": "https://sashares.co.za/mtn-shares",
+          "includeSubPages": true,
+          "boostLevel": "SuperBoost"
+        },
+        {
+          "domain": "https://www.mtn.com/newsroom",
+          "includeSubPages": true,
+          "boostLevel": "Boosted"
+        },
+        {
+          "domain": "https://www.mtn.com",
+          "includeSubPages": true,
+          "boostLevel": "Boosted"
+        },
+        {
+          "domain": "https://www.jse.co.za/jse/instruments",
+          "includeSubPages": true,
+          "boostLevel": "Boosted"
+        },
+        {
+          "domain": "https://www.itweb.co.za/categories/ojkjlyr7wo7k6amv",
+          "includeSubPages": true,
+          "boostLevel": "Boosted"
+        },
+        {
+          "domain": "https://www.telecoms.com",
+          "includeSubPages": true,
+          "boostLevel": "Boosted"
+        }
+      ],
+      "metadata": {
+        "description": "The curated allow-list the web tool is restricted to — a HARD boundary enforced by\nBing, which is what makes an open-web tool safe for an executive assistant. Replace\nthese with your own sources. boostLevel is SuperBoost or Boosted.\n"
       }
     },
     "agentModel": {
@@ -425,6 +486,15 @@
           "bingCustomConfigName": {
             "value": "[parameters('bingCustomConfigName')]"
           },
+          "deployBingGrounding": {
+            "value": "[equals(toLower(parameters('deployBingGrounding')), 'true')]"
+          },
+          "bingSkuName": {
+            "value": "[parameters('bingSkuName')]"
+          },
+          "bingAllowedDomains": {
+            "value": "[parameters('bingAllowedDomains')]"
+          },
           "modelName": {
             "value": "[parameters('modelName')]"
           },
@@ -518,7 +588,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.43.8.12551",
-              "templateHash": "6064097045383943759"
+              "templateHash": "14862708581530424009"
             }
           },
           "parameters": {
@@ -595,6 +665,28 @@
             "bingCustomConfigName": {
               "type": "string",
               "defaultValue": ""
+            },
+            "deployBingGrounding": {
+              "type": "bool",
+              "defaultValue": false,
+              "metadata": {
+                "description": "Deploy Grounding with Bing Custom Search (account + site allow-list + Foundry connection). Opt-in: when false nothing Bing-related is created and the agent uses AI Search alone."
+              }
+            },
+            "bingSkuName": {
+              "type": "string",
+              "defaultValue": "G2",
+              "allowedValues": [
+                "G1",
+                "G2"
+              ]
+            },
+            "bingAllowedDomains": {
+              "type": "array",
+              "defaultValue": [],
+              "metadata": {
+                "description": "The curated site allow-list. See modules/bingGrounding.bicep for the entry shape."
+              }
             },
             "modelName": {
               "type": "string"
@@ -740,6 +832,12 @@
               "communicationServices": "acs",
               "resourceGroup": "rg"
             },
+            "createBing": "[and(parameters('deployBingGrounding'), parameters('createFoundry'))]",
+            "bingConnectionNameEffective": "[if(empty(parameters('bingConnectionName')), 'bing-grounding-connection', parameters('bingConnectionName'))]",
+            "bingCustomConfigNameEffective": "[if(empty(parameters('bingCustomConfigName')), 'avatar-web-search', parameters('bingCustomConfigName'))]",
+            "bingEnvSegment": "[take(parameters('environmentName'), 45)]",
+            "bingEnvSegmentClean": "[if(endsWith(variables('bingEnvSegment'), '-'), take(variables('bingEnvSegment'), sub(length(variables('bingEnvSegment')), 1)), variables('bingEnvSegment'))]",
+            "bingAccountName": "[toLower(format('bing-{0}-{1}', variables('bingEnvSegmentClean'), parameters('resourceToken')))]",
             "acsEnabled": "[equals(toLower(parameters('enableAcs')), 'true')]",
             "abbrs": "[variables('$fxv#0')]",
             "caEnvBudget": "[sub(sub(32, length(format('{0}-', variables('abbrs').containerApp))), length(format('-{0}', parameters('resourceToken'))))]",
@@ -1218,7 +1316,10 @@
                   "searchServiceName": "[if(parameters('createSearch'), createObject('value', reference(resourceId('Microsoft.Resources/deployments', 'search'), '2025-04-01').outputs.name.value), createObject('value', ''))]",
                   "searchEndpoint": "[if(parameters('createSearch'), createObject('value', reference(resourceId('Microsoft.Resources/deployments', 'search'), '2025-04-01').outputs.endpoint.value), createObject('value', ''))]",
                   "searchResourceId": "[if(parameters('createSearch'), createObject('value', reference(resourceId('Microsoft.Resources/deployments', 'search'), '2025-04-01').outputs.id.value), createObject('value', ''))]",
-                  "searchConnectionName": "[if(parameters('createSearch'), createObject('value', parameters('searchConnectionName')), createObject('value', ''))]"
+                  "searchConnectionName": "[if(parameters('createSearch'), createObject('value', parameters('searchConnectionName')), createObject('value', ''))]",
+                  "bingAccountId": "[if(variables('createBing'), createObject('value', reference(resourceId('Microsoft.Resources/deployments', 'bing-grounding'), '2025-04-01').outputs.accountId.value), createObject('value', ''))]",
+                  "bingAccountName": "[if(variables('createBing'), createObject('value', reference(resourceId('Microsoft.Resources/deployments', 'bing-grounding'), '2025-04-01').outputs.accountName.value), createObject('value', ''))]",
+                  "bingConnectionName": "[if(variables('createBing'), createObject('value', variables('bingConnectionNameEffective')), createObject('value', ''))]"
                 },
                 "template": {
                   "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
@@ -1227,7 +1328,7 @@
                     "_generator": {
                       "name": "bicep",
                       "version": "0.43.8.12551",
-                      "templateHash": "16621973958102041530"
+                      "templateHash": "10393316235670516067"
                     }
                   },
                   "parameters": {
@@ -1327,6 +1428,27 @@
                       "defaultValue": "",
                       "metadata": {
                         "description": "Name of the project connection created for the search service."
+                      }
+                    },
+                    "bingAccountId": {
+                      "type": "string",
+                      "defaultValue": "",
+                      "metadata": {
+                        "description": "Resource ID of a Grounding-with-Bing-Custom-Search account to link as a project connection (optional). Leave empty to skip."
+                      }
+                    },
+                    "bingAccountName": {
+                      "type": "string",
+                      "defaultValue": "",
+                      "metadata": {
+                        "description": "Name of the Bing account — shown as the connection display name. Required when bingAccountId is set."
+                      }
+                    },
+                    "bingConnectionName": {
+                      "type": "string",
+                      "defaultValue": "",
+                      "metadata": {
+                        "description": "Name of the project connection created for the Bing account."
                       }
                     }
                   },
@@ -1477,6 +1599,30 @@
                       "dependsOn": [
                         "[resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('accountName'), parameters('projectName'))]"
                       ]
+                    },
+                    {
+                      "condition": "[and(and(not(empty(parameters('bingAccountId'))), not(empty(parameters('bingAccountName')))), not(empty(parameters('bingConnectionName'))))]",
+                      "type": "Microsoft.CognitiveServices/accounts/projects/connections",
+                      "apiVersion": "2025-04-01-preview",
+                      "name": "[format('{0}/{1}/{2}', parameters('accountName'), parameters('projectName'), parameters('bingConnectionName'))]",
+                      "properties": {
+                        "category": "GroundingWithCustomSearch",
+                        "target": "https://api.bing.microsoft.com/",
+                        "authType": "ApiKey",
+                        "isSharedToAll": true,
+                        "credentials": {
+                          "key": "[listKeys(parameters('bingAccountId'), '2025-05-01-preview').key1]"
+                        },
+                        "metadata": {
+                          "ApiType": "Azure",
+                          "ResourceId": "[parameters('bingAccountId')]",
+                          "displayName": "[parameters('bingAccountName')]",
+                          "type": "bing_custom_search_preview"
+                        }
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('accountName'), parameters('projectName'))]"
+                      ]
                     }
                   ],
                   "outputs": {
@@ -1516,6 +1662,7 @@
                 }
               },
               "dependsOn": [
+                "[resourceId('Microsoft.Resources/deployments', 'bing-grounding')]",
                 "[resourceId('Microsoft.Resources/deployments', 'search')]",
                 "[resourceId('Microsoft.Resources/deployments', 'uami')]"
               ]
@@ -1691,6 +1838,149 @@
               "dependsOn": [
                 "[resourceId('Microsoft.Resources/deployments', 'uami')]"
               ]
+            },
+            {
+              "condition": "[variables('createBing')]",
+              "type": "Microsoft.Resources/deployments",
+              "apiVersion": "2025-04-01",
+              "name": "bing-grounding",
+              "properties": {
+                "expressionEvaluationOptions": {
+                  "scope": "inner"
+                },
+                "mode": "Incremental",
+                "parameters": {
+                  "name": {
+                    "value": "[variables('bingAccountName')]"
+                  },
+                  "tags": {
+                    "value": "[parameters('tags')]"
+                  },
+                  "skuName": {
+                    "value": "[parameters('bingSkuName')]"
+                  },
+                  "configName": {
+                    "value": "[variables('bingCustomConfigNameEffective')]"
+                  },
+                  "allowedDomains": {
+                    "value": "[parameters('bingAllowedDomains')]"
+                  }
+                },
+                "template": {
+                  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+                  "contentVersion": "1.0.0.0",
+                  "metadata": {
+                    "_generator": {
+                      "name": "bicep",
+                      "version": "0.43.8.12551",
+                      "templateHash": "14393057975884543587"
+                    }
+                  },
+                  "parameters": {
+                    "name": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "Name of the Grounding-with-Bing-Custom-Search account."
+                      }
+                    },
+                    "location": {
+                      "type": "string",
+                      "defaultValue": "global",
+                      "metadata": {
+                        "description": "Bing accounts are a global resource — this is always \"global\" and is not the deployment region."
+                      }
+                    },
+                    "skuName": {
+                      "type": "string",
+                      "defaultValue": "G2",
+                      "allowedValues": [
+                        "G1",
+                        "G2"
+                      ],
+                      "metadata": {
+                        "description": "Pricing tier. G2 is the tier this project has run on; G1 is the lower tier."
+                      }
+                    },
+                    "tags": {
+                      "type": "object",
+                      "defaultValue": {}
+                    },
+                    "configName": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "Name of the custom search configuration (the curated site allow-list). This is what BING_CUSTOM_CONFIG_NAME points at."
+                      }
+                    },
+                    "allowedDomains": {
+                      "type": "array",
+                      "metadata": {
+                        "description": "The curated allow-list the web tool is restricted to. Each entry:\n  domain          — full URL, e.g. https://www.example.com/newsroom\n  includeSubPages — whether pages below that path are searchable\n  boostLevel      — SuperBoost | Boosted (rank weighting within the allow-list)\n\nThis is a HARD allow-list enforced by Bing: nothing outside it is reachable, which\nis the property that makes an open-web tool safe to give an executive assistant.\n"
+                      }
+                    },
+                    "blockedDomains": {
+                      "type": "array",
+                      "defaultValue": [],
+                      "metadata": {
+                        "description": "Domains to exclude even if they sit under an allowed path."
+                      }
+                    },
+                    "pinnedDomains": {
+                      "type": "array",
+                      "defaultValue": [],
+                      "metadata": {
+                        "description": "Domains always returned for a matching query."
+                      }
+                    }
+                  },
+                  "resources": [
+                    {
+                      "type": "Microsoft.Bing/accounts",
+                      "apiVersion": "2025-05-01-preview",
+                      "name": "[parameters('name')]",
+                      "location": "[parameters('location')]",
+                      "tags": "[parameters('tags')]",
+                      "kind": "Bing.GroundingCustomSearch",
+                      "sku": {
+                        "name": "[parameters('skuName')]"
+                      }
+                    },
+                    {
+                      "type": "Microsoft.Bing/accounts/customSearchConfigurations",
+                      "apiVersion": "2025-05-01-preview",
+                      "name": "[format('{0}/{1}', parameters('name'), parameters('configName'))]",
+                      "properties": {
+                        "allowedDomains": "[parameters('allowedDomains')]",
+                        "blockedDomains": "[parameters('blockedDomains')]",
+                        "pinnedDomains": "[parameters('pinnedDomains')]"
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.Bing/accounts', parameters('name'))]"
+                      ]
+                    }
+                  ],
+                  "outputs": {
+                    "accountId": {
+                      "type": "string",
+                      "value": "[resourceId('Microsoft.Bing/accounts', parameters('name'))]"
+                    },
+                    "accountName": {
+                      "type": "string",
+                      "value": "[parameters('name')]"
+                    },
+                    "configName": {
+                      "type": "string",
+                      "value": "[parameters('configName')]"
+                    },
+                    "endpoint": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "Always https://api.bing.microsoft.com/ — the target the Foundry connection points at."
+                      },
+                      "value": "https://api.bing.microsoft.com/"
+                    }
+                  }
+                }
+              }
             },
             {
               "condition": "[and(parameters('createSearch'), parameters('createFoundry'))]",
@@ -2027,12 +2317,8 @@
                   "voiceLiveVoice": {
                     "value": "[parameters('voiceLiveVoice')]"
                   },
-                  "bingConnectionName": {
-                    "value": "[parameters('bingConnectionName')]"
-                  },
-                  "bingCustomConfigName": {
-                    "value": "[parameters('bingCustomConfigName')]"
-                  },
+                  "bingConnectionName": "[if(variables('createBing'), createObject('value', variables('bingConnectionNameEffective')), createObject('value', parameters('bingConnectionName')))]",
+                  "bingCustomConfigName": "[if(variables('createBing'), createObject('value', variables('bingCustomConfigNameEffective')), createObject('value', parameters('bingCustomConfigName')))]",
                   "appInsightsConnectionString": "[if(empty(parameters('existingAppInsightsName')), createObject('value', reference(resourceId('Microsoft.Resources/deployments', 'appi'), '2025-04-01').outputs.connectionString.value), createObject('value', reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, if(empty(parameters('existingAppInsightsResourceGroup')), resourceGroup().name, parameters('existingAppInsightsResourceGroup'))), 'Microsoft.Insights/components', parameters('existingAppInsightsName')), '2020-02-02').ConnectionString))]",
                   "agentModel": {
                     "value": "[parameters('agentModel')]"
@@ -2614,6 +2900,14 @@
             "acsEndpoint": {
               "type": "string",
               "value": "[if(variables('acsEnabled'), reference(resourceId('Microsoft.Resources/deployments', 'acs'), '2025-04-01').outputs.endpoint.value, '')]"
+            },
+            "bingConnectionName": {
+              "type": "string",
+              "value": "[if(variables('createBing'), variables('bingConnectionNameEffective'), parameters('bingConnectionName'))]"
+            },
+            "bingCustomConfigName": {
+              "type": "string",
+              "value": "[if(variables('createBing'), variables('bingCustomConfigNameEffective'), parameters('bingCustomConfigName'))]"
             }
           }
         }
@@ -3070,11 +3364,11 @@
     },
     "BING_CONNECTION_NAME": {
       "type": "string",
-      "value": "[parameters('bingConnectionName')]"
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('resourceGroupName')), 'Microsoft.Resources/deployments', 'resources'), '2025-04-01').outputs.bingConnectionName.value]"
     },
     "BING_CUSTOM_CONFIG_NAME": {
       "type": "string",
-      "value": "[parameters('bingCustomConfigName')]"
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('resourceGroupName')), 'Microsoft.Resources/deployments', 'resources'), '2025-04-01').outputs.bingCustomConfigName.value]"
     },
     "APPLICATIONINSIGHTS_CONNECTION_STRING": {
       "type": "string",

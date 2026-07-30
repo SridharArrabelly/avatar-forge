@@ -118,6 +118,17 @@ def _core_steps() -> list[Step]:
             "uv run python scripts/preflight.py",
         ),
         Step(
+            "Decide on the web/news tool",
+            YOU,
+            BEFORE,
+            "Optional. Without it the avatar answers from your indexed documents alone — a "
+            "supported end state, not a broken one. To include it, edit the curated site "
+            "allow-list (bingAllowedDomains in infra/main.bicep) to your own sources, then "
+            "set the flag below; azd creates the Bing account, the allow-list and the "
+            "Foundry connection, and fills in the two BING_* names for you.",
+            "azd env set DEPLOY_BING_GROUNDING true",
+        ),
+        Step(
             "Provision + deploy Azure resources",
             AZD,
             DURING,

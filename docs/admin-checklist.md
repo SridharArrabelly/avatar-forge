@@ -25,7 +25,8 @@ Those are deliberate security boundaries, not gaps in our automation.
 | Managed identity + RBAC role assignments | **Teams app access policy** (Teams admin only) |
 | Azure Bot resource + Teams channel | Teams app package **upload / approval** |
 | ACS resource (when `ENABLE_ACS=true`) | TLS certificate for the media endpoint |
-| Windows VM, NIC, NSG, public IP, DNS label | Bing Custom Search configuration content |
+| Windows VM, NIC, NSG, public IP, DNS label | *(choosing which sites go in the Bing allow-list — a decision, not a portal step)* |
+| Bing account + site allow-list + Foundry connection (when `DEPLOY_BING_GROUNDING=true`) | |
 
 ---
 

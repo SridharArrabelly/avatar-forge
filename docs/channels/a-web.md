@@ -59,6 +59,10 @@ The default `azd up`, with **no flags set**:
 Nothing Teams-related is provisioned. `botService.bicep` and
 `communicationServices.bicep` are both skipped.
 
+The web/news tool is also off by default. Setting `DEPLOY_BING_GROUNDING=true` adds
+`bingGrounding.bicep` (Bing account + curated site allow-list) and a Foundry connection
+to it — see section 4.
+
 ```powershell
 azd up
 ```
@@ -73,7 +77,12 @@ Deployment mechanics: [`../deployment.md`](../deployment.md).
 | Azure subscription + Contributor on the resource group | You |
 | Model quota in the target region | You / subscription owner |
 | Populate the AI Search index with minutes | You |
-| Create the Bing Custom Search configuration | You |
+| Edit the Bing site allow-list to your own sources — `bingAllowedDomains` in [`../../infra/main.bicep`](../../infra/main.bicep) | You, *if* you set `DEPLOY_BING_GROUNDING=true` |
+
+The web/news tool is **optional and off by default**; without it the avatar answers from
+your indexed documents alone. To switch it on, `azd env set DEPLOY_BING_GROUNDING true`
+and `azd up` deploys the Bing account, the allow-list and the Foundry connection — there
+is no portal step and no `.env` edit.
 
 **No Entra admin. No Teams admin.** See
 [`../admin-checklist.md`](../admin-checklist.md).

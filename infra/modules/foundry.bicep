@@ -29,6 +29,13 @@ param searchResourceId string = ''
 @description('Name of the project connection created for the search service.')
 param searchConnectionName string = ''
 
+@description('Resource ID of a Grounding-with-Bing-Custom-Search account to link as a project connection (optional). Leave empty to skip.')
+param bingAccountId string = ''
+@description('Name of the Bing account — shown as the connection display name. Required when bingAccountId is set.')
+param bingAccountName string = ''
+@description('Name of the project connection created for the Bing account.')
+param bingConnectionName string = ''
+
 resource account 'Microsoft.CognitiveServices/accounts@2025-04-01-preview' = {
   name: accountName
   location: location
@@ -156,6 +163,30 @@ resource searchConnection 'Microsoft.CognitiveServices/accounts/projects/connect
       ApiType: 'Azure'
       ResourceId: searchResourceId
       Location: location
+    }
+  }
+}
+
+// The same wiring for Grounding with Bing Custom Search, so the web tool is
+// deployed rather than click-configured. Unlike AI Search this one cannot use
+// AAD — the Bing data plane is key-based only — so the account key is read at
+// deploy time with listKeys. It is never emitted as an output or written to a file.
+resource bingConnection 'Microsoft.CognitiveServices/accounts/projects/connections@2025-04-01-preview' = if (!empty(bingAccountId) && !empty(bingAccountName) && !empty(bingConnectionName)) {
+  parent: project
+  name: bingConnectionName
+  properties: {
+    category: 'GroundingWithCustomSearch'
+    target: 'https://api.bing.microsoft.com/'
+    authType: 'ApiKey'
+    isSharedToAll: true
+    credentials: {
+      key: listKeys(bingAccountId, '2025-05-01-preview').key1
+    }
+    metadata: {
+      ApiType: 'Azure'
+      ResourceId: bingAccountId
+      displayName: bingAccountName
+      type: 'bing_custom_search_preview'
     }
   }
 }

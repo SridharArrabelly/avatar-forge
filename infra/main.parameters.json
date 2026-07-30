@@ -25,6 +25,8 @@
     "voiceLiveVoice":      { "value": "${VOICELIVE_VOICE=en-US-AvaMultilingualNeural}" },
     "bingConnectionName":  { "value": "${BING_CONNECTION_NAME=}" },
     "bingCustomConfigName":{ "value": "${BING_CUSTOM_CONFIG_NAME=}" },
+    "deployBingGrounding": { "value": "${DEPLOY_BING_GROUNDING=false}" },
+    "bingSkuName":         { "value": "${BING_SKU_NAME=G2}" },
 
     "agentModel":             { "value": "${AGENT_MODEL=gpt-5.4}" },
     "embeddingDeployment":    { "value": "${EMBEDDING_DEPLOYMENT=text-embedding-3-small}" },

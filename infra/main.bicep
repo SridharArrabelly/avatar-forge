@@ -50,6 +50,28 @@ param bingConnectionName string = ''
 @description('Bing Custom Search configuration (instance) name — the curated domain allow-list. Surfaces as BING_CUSTOM_CONFIG_NAME in the container.')
 param bingCustomConfigName string = ''
 
+@description('Deploy Grounding with Bing Custom Search: the Bing account, the curated site allow-list, and the Foundry connection. Opt-in and additive — when false nothing Bing-related is created and the agent runs on AI Search alone.')
+param deployBingGrounding string = 'false'
+
+@description('Bing pricing tier. G2 is the tier this project has run on; G1 is the lower tier.')
+@allowed([ 'G1', 'G2' ])
+param bingSkuName string = 'G2'
+
+@description('''
+The curated allow-list the web tool is restricted to — a HARD boundary enforced by
+Bing, which is what makes an open-web tool safe for an executive assistant. Replace
+these with your own sources. boostLevel is SuperBoost or Boosted.
+''')
+param bingAllowedDomains array = [
+  { domain: 'https://www.mtn.com/investors', includeSubPages: true, boostLevel: 'SuperBoost' }
+  { domain: 'https://sashares.co.za/mtn-shares', includeSubPages: true, boostLevel: 'SuperBoost' }
+  { domain: 'https://www.mtn.com/newsroom', includeSubPages: true, boostLevel: 'Boosted' }
+  { domain: 'https://www.mtn.com', includeSubPages: true, boostLevel: 'Boosted' }
+  { domain: 'https://www.jse.co.za/jse/instruments', includeSubPages: true, boostLevel: 'Boosted' }
+  { domain: 'https://www.itweb.co.za/categories/ojkjlyr7wo7k6amv', includeSubPages: true, boostLevel: 'Boosted' }
+  { domain: 'https://www.telecoms.com', includeSubPages: true, boostLevel: 'Boosted' }
+]
+
 // App runtime extras
 param agentModel string = 'gpt-5.4'
 param embeddingDeployment string = 'text-embedding-3-small'
@@ -178,6 +200,9 @@ module resources 'resources.bicep' = {
     voiceLiveVoice: voiceLiveVoice
     bingConnectionName: bingConnectionName
     bingCustomConfigName: bingCustomConfigName
+    deployBingGrounding: toLower(deployBingGrounding) == 'true'
+    bingSkuName: bingSkuName
+    bingAllowedDomains: bingAllowedDomains
     modelName: modelName
     modelVersion: modelVersion
     modelDeploymentName: modelDeploymentName
@@ -249,8 +274,8 @@ output AGENT_NAME string = agentName
 output AGENT_PROJECT_NAME string = resources.outputs.effectiveAgentProjectName
 output SEARCH_CONNECTION_NAME string = searchConnectionName
 output SEARCH_INDEX_NAME string = searchIndexName
-output BING_CONNECTION_NAME string = bingConnectionName
-output BING_CUSTOM_CONFIG_NAME string = bingCustomConfigName
+output BING_CONNECTION_NAME string = resources.outputs.bingConnectionName
+output BING_CUSTOM_CONFIG_NAME string = resources.outputs.bingCustomConfigName
 output APPLICATIONINSIGHTS_CONNECTION_STRING string = resources.outputs.appInsightsConnectionString
 
 // Teams bot (issue #53). Echoed so the operator can configure the manifest and

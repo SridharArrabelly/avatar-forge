@@ -162,12 +162,17 @@ azd env set APPINSIGHTS_RESOURCE_GROUP rg-shared-observability
 azd env set AGENT_NAME              MtnAvatarAgent
 azd env set SEARCH_CONNECTION_NAME  aisearch-connection
 
-# (optional) Enable the web/news tool — ONLY if you have already created a
-# Grounding-with-Bing-Custom-Search connection in your Foundry project.
-# Leave both unset for a working search-only agent; add them later and re-run
-# `uv run python scripts/setup_foundry_agent.py` to switch the tool on.
-azd env set BING_CONNECTION_NAME    <your-bing-grounding-connection>
-azd env set BING_CUSTOM_CONFIG_NAME <your-bing-custom-config>
+# (optional) Enable the web/news tool. Recommended: let azd deploy the whole thing —
+# the Bing account, the curated site allow-list and the Foundry connection — and feed
+# the two names back automatically. Edit the allow-list in infra/main.bicep first
+# (bingAllowedDomains) so it points at YOUR sources rather than the sample ones.
+azd env set DEPLOY_BING_GROUNDING true
+
+# ...or, if you already have a Grounding-with-Bing-Custom-Search connection, name it
+# instead of deploying one. Leave all three unset for a working search-only agent;
+# add them later and re-run `azd hooks run postprovision` to switch the tool on.
+# azd env set BING_CONNECTION_NAME    <your-bing-grounding-connection>
+# azd env set BING_CUSTOM_CONFIG_NAME <your-bing-custom-config>
 
 # 6. Provision + deploy
 azd up
@@ -298,9 +303,16 @@ If the agent could not be created at all, the hook **exits non-zero** so a broke
 can never look successful. Your Azure resources are still fine — only the data-plane
 step needs re-running; nothing needs re-provisioning.
 
-To add the web tool later: create a Grounding-with-Bing-Custom-Search connection in the
-Foundry project, `azd env set BING_CONNECTION_NAME` + `BING_CUSTOM_CONFIG_NAME`, then
-re-run the agent script below.
+To add the web tool later, pick whichever fits:
+
+- **Let azd deploy it** — `azd env set DEPLOY_BING_GROUNDING true` then `azd up`. This
+  creates the Bing account, the curated allow-list and the Foundry connection, and sets
+  `BING_CONNECTION_NAME` / `BING_CUSTOM_CONFIG_NAME` for you.
+- **Point at one you already have** — `azd env set BING_CONNECTION_NAME` +
+  `BING_CUSTOM_CONFIG_NAME`, then re-run the agent script below.
+
+Either way the "add it later" path runs the *same* code as a first deploy, so there is no
+separate catch-up procedure to get wrong.
 
 For **brownfield** (BYO) the hook skips both — your existing agent and index are reused.
 Make sure your `AGENT_NAME` / `AGENT_PROJECT_NAME` / `SEARCH_CONNECTION_NAME` /

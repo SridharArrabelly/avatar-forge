@@ -30,6 +30,27 @@ param voiceLiveVoice string
 param bingConnectionName string = ''
 param bingCustomConfigName string = ''
 
+@description('Deploy Grounding with Bing Custom Search (account + site allow-list + Foundry connection). Opt-in: when false nothing Bing-related is created and the agent uses AI Search alone.')
+param deployBingGrounding bool = false
+@allowed([ 'G1', 'G2' ])
+param bingSkuName string = 'G2'
+@description('The curated site allow-list. See modules/bingGrounding.bicep for the entry shape.')
+param bingAllowedDomains array = []
+
+// Bing is only created when it is asked for AND there is a Foundry project to
+// attach the connection to. Without the project the account would be an orphan
+// the agent could never use.
+var createBing = deployBingGrounding && createFoundry
+// Deployed names are generated when not pinned, so a first-time deploy needs no
+// prior knowledge of them — they come back as outputs and land in the azd env.
+var bingConnectionNameEffective = empty(bingConnectionName) ? 'bing-grounding-connection' : bingConnectionName
+var bingCustomConfigNameEffective = empty(bingCustomConfigName) ? 'avatar-web-search' : bingCustomConfigName
+// 'bing-' + '-' + a 13-char resourceToken = 19, leaving 45 of the 64-char account
+// name limit for the env segment.
+var bingEnvSegment = take(environmentName, 45)
+var bingEnvSegmentClean = endsWith(bingEnvSegment, '-') ? take(bingEnvSegment, length(bingEnvSegment) - 1) : bingEnvSegment
+var bingAccountName = toLower('bing-${bingEnvSegmentClean}-${resourceToken}')
+
 param modelName string
 param modelVersion string
 param modelDeploymentName string
@@ -159,6 +180,9 @@ module foundry 'modules/foundry.bicep' = if (createFoundry) {
     searchEndpoint: createSearch ? search!.outputs.endpoint : ''
     searchResourceId: createSearch ? search!.outputs.id : ''
     searchConnectionName: createSearch ? searchConnectionName : ''
+    bingAccountId: createBing ? bingGrounding!.outputs.accountId : ''
+    bingAccountName: createBing ? bingGrounding!.outputs.accountName : ''
+    bingConnectionName: createBing ? bingConnectionNameEffective : ''
   }
 }
 
@@ -179,6 +203,26 @@ module search 'modules/aiSearch.bicep' = if (createSearch) {
 }
 
 // BYO Search: role assignment handled by scripts/grant_byo_rbac.py (see note above).
+
+// ───────── Grounding with Bing Custom Search (conditional) ─────────
+// Opt-in and additive: without deployBingGrounding nothing here is created and the
+// agent is built with the AI Search tool alone, exactly as before. When enabled,
+// all three layers are deployed — the account, the curated site allow-list, and
+// the Foundry connection — so no portal step or manual .env edit is required.
+module bingGrounding 'modules/bingGrounding.bicep' = if (createBing) {
+  name: 'bing-grounding'
+  params: {
+    // Truncated the same way the container app name is: a long azd env name would
+    // otherwise overrun the account-name limit and fail at deploy, which is exactly
+    // how the container app broke in a fresh tenant. The resourceToken is kept whole
+    // so uniqueness survives the truncation.
+    name: bingAccountName
+    tags: tags
+    skuName: bingSkuName
+    configName: bingCustomConfigNameEffective
+    allowedDomains: bingAllowedDomains
+  }
+}
 
 // Grant Foundry project SMI Search RBAC for the agents azure_ai_search tool (greenfield search only).
 module searchRoleForProject 'modules/searchRoleForProject.bicep' = if (createSearch && createFoundry) {
@@ -255,8 +299,8 @@ module app 'modules/containerApp.bicep' = {
     searchIndexName: searchIndexName
     searchEndpoint: searchEndpointEffective
     voiceLiveVoice: voiceLiveVoice
-    bingConnectionName: bingConnectionName
-    bingCustomConfigName: bingCustomConfigName
+    bingConnectionName: createBing ? bingConnectionNameEffective : bingConnectionName
+    bingCustomConfigName: createBing ? bingCustomConfigNameEffective : bingCustomConfigName
     appInsightsConnectionString: appInsightsConnectionStringEffective
     agentModel: agentModel
     embeddingDeployment: embeddingDeployment
@@ -312,4 +356,11 @@ output appInsightsConnectionString string = appInsightsConnectionStringEffective
 output effectiveAgentProjectName string = createFoundry ? 'proj-${environmentName}' : agentProjectName
 output botMessagingEndpoint string = !empty(botAppId) ? '${app.outputs.uri}/api/messages' : ''
 output acsEndpoint string = acsEnabled ? acs!.outputs.endpoint : ''
+
+// The two values the agent setup script needs to wire the web tool. When Bing is
+// deployed these are the names that were actually created, so they flow into the
+// azd env and no one has to copy them out of the portal by hand. When it is not,
+// they pass through whatever was supplied (possibly empty = web tool disabled).
+output bingConnectionName string = createBing ? bingConnectionNameEffective : bingConnectionName
+output bingCustomConfigName string = createBing ? bingCustomConfigNameEffective : bingCustomConfigName
 
