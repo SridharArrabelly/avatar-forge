@@ -1,5 +1,12 @@
 # Avatar Forge — Microsoft Teams app (tab + conversational bot)
 
+> **This folder is the packaging for two channels.** For *what to deploy and why*,
+> start at the channel hub — this file covers the mechanics of building the package.
+>
+> - **Channel B — Teams personal tab** → [`docs/channels/b-teams-tab.md`](../docs/channels/b-teams-tab.md)
+> - **Channel C — Teams conversational bot** → [`docs/channels/c-teams-chat-bot.md`](../docs/channels/c-teams-chat-bot.md)
+> - Manual/admin steps for both → [`docs/admin-checklist.md`](../docs/admin-checklist.md)
+
 This folder packages the Avatar Forge web app as a **Microsoft Teams app** with two
 surfaces in **one package**: a personal **tab** that embeds the web UI (Phase 1,
 scope 1A) and an installable, @mentionable **conversational bot** (Phase 2a, issue

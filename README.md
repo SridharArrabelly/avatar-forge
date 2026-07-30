@@ -28,12 +28,28 @@ detail in **[docs/architecture.md](docs/architecture.md)**.
 
 ## Channel support
 
-| Channel | Status | Notes |
-|---|---|---|
-| **Web** (standalone) | ✅ Shipped | Voice-first avatar with an optional text composer. The core app. |
-| **Microsoft Teams — personal tab** | ✅ Shipped | Embeds the same web UI (mic + WebRTC avatar). Phase 1. → [`teams/README.md`](teams/README.md) |
-| **Microsoft Teams — conversational bot** | ✅ Shipped | Installable, @mentionable bot answering via the same Foundry agent; deep-links to the tab. Phase 2a (#53). → [`teams/README.md`](teams/README.md#phase-2a--conversational-bot-issue-53) |
-| **Microsoft Teams — in-call media** | 🔜 Planned | Live avatar audio/video in a meeting. Phase 2b (#27). |
+The avatar is **one brain with several front doors** — all channels share the same
+backend, Voice Live session, Foundry agent and grounding. What differs is only how
+audio and video get in and out, which drives cost and, more importantly, **how much
+administrator access you need**.
+
+| | Channel | Status | Extra Azure infra | Admin burden | Doc |
+|---|---|---|---|---|---|
+| **A** | **Web** (standalone) | ✅ Shipped | — *(the core)* | **None** | [a-web.md](docs/channels/a-web.md) |
+| **B** | **Teams — personal tab** | ✅ Shipped | **None** | Upload a Teams app package | [b-teams-tab.md](docs/channels/b-teams-tab.md) |
+| **C** | **Teams — conversational bot** | ✅ Shipped *(optional)* | Azure Bot + Teams channel | Entra app + **admin consent** | [c-teams-chat-bot.md](docs/channels/c-teams-chat-bot.md) |
+| **D** | **Teams — in-call avatar** (Graph media bot) | ✅ Working | Azure Bot + **Windows VM** + DNS + TLS | **Highest** — incl. **Teams app access policy** | [d-in-call-media-bot.md](docs/channels/d-in-call-media-bot.md) |
+| **E** | **Teams — in-call avatar** (headless browser) | 🔜 Placeholder | Container/job | TBD | [e-in-call-headless.md](docs/channels/e-in-call-headless.md) |
+
+**A → B → C is a ladder, not a menu** — each step is additive on the one before, and
+**B adds a Teams surface for zero extra Azure resources**. **D and E are rivals**: two
+implementations of the *same* capability (live in-call presence), to be compared and
+narrowed to one.
+
+👉 **Start here: [docs/channels/README.md](docs/channels/README.md)** for the decision
+guide, and **[docs/admin-checklist.md](docs/admin-checklist.md)** for every manual step
+and who must perform it. If you have no Teams administrator, read that first — it will
+tell you in one page which channels are available to you.
 
 All Teams surfaces are **additive** — the standalone web app is unaffected, and the
 Teams JS SDK is never loaded outside Teams.
@@ -64,16 +80,18 @@ Full walkthrough — building the search index, smoke tests, developer mode — 
 
 | Doc | What's in it |
 |---|---|
+| **[docs/channels/README.md](docs/channels/README.md)** | **Start here.** The channel ladder, comparison, and decision guide — which front door to deploy and why. |
+| **[docs/admin-checklist.md](docs/admin-checklist.md)** | **Every manual step automation cannot do**, per channel, with who must perform it and what to do when you're blocked. |
 | **[docs/development.md](docs/development.md)** | Run locally, build the AI Search index, smoke-test the index and agent, dev-only knobs. |
 | **[docs/configuration.md](docs/configuration.md)** | **Every** environment variable, grouped by concern — the single source of truth. |
 | **[docs/architecture.md](docs/architecture.md)** | System design, tool-calling accuracy, meeting-catalogue injection, frontend UX, project structure. |
 | **[docs/deployment.md](docs/deployment.md)** | Deploy to Azure with `azd`: topology, region preflight, BYO Foundry/Search, cross-RG RBAC, post-deploy. |
 | **[docs/auth.md](docs/auth.md)** | `DefaultAzureCredential`, required roles, startup pre-warm, IMDS skip, token caching. |
-| **[teams/README.md](teams/README.md)** | Microsoft Teams tab + conversational bot: build the package, sideload (no admin), Azure Bot setup, validation. |
-| **[docs/teams-meeting-bot.md](docs/teams-meeting-bot.md)** | Phase 2b in-call media: decisions, **why Python + a thin .NET/Windows media bot**, the final architecture, audio bridge, and the two-step delivery plan. |
-| **[docs/teams-avatar-video.md](docs/teams-avatar-video.md)** | Phase 2b Slice 2A: the avatar's **synced video face** as a meeting camera tile — data flow, why audio+video share one synthesis, the `VideoSocket` + `VideoData` design, and the phased increments. |
-| **[docs/testing-meetings.md](docs/testing-meetings.md)** | **How to test the two in-meeting paths** — browser joiner vs. media bot: what each one can and cannot hear, step-by-step runbooks, what a healthy log looks like, and rollback. |
-| **[meeting-bot/README.md](meeting-bot/README.md)** | The .NET/Windows media bot itself (Phase 2b Slice 1): project layout, configuration, the operator runbook, and what's verified vs. pending. |
+| **[teams/README.md](teams/README.md)** | Building and sideloading the Teams app package (serves channels B and C). |
+| **[docs/channels/d-design-media-bot.md](docs/channels/d-design-media-bot.md)** | **Design record** — the three in-call options evaluated, why Python + a thin .NET/Windows media bot, and the final architecture. |
+| **[docs/channels/d-design-avatar-video.md](docs/channels/d-design-avatar-video.md)** | **Design record** — the avatar's synced video face as a meeting camera tile, and why audio + video share one synthesis. |
+| **[docs/testing-meetings.md](docs/testing-meetings.md)** | **How to test the two in-meeting paths** — browser joiner vs. media bot: what each can and cannot hear, runbooks, healthy logs, rollback. |
+| **[meeting-bot/README.md](meeting-bot/README.md)** | The .NET/Windows media bot itself: project layout, configuration, operator runbook, and the traps that cost real debugging time. |
 | **[prompts/README.md](prompts/README.md)** | Agent prompt content, the reasoning/non-reasoning variants, and the edit workflow. |
 
 ## References & Acknowledgements

@@ -7,7 +7,7 @@
 > misleading. This doc is the canonical design for that synced face.
 
 This document covers **only the face**. The audio leg (the avatar hears the room and
-answers aloud) is Slice 1 and is described in [`teams-meeting-bot.md`](./teams-meeting-bot.md).
+answers aloud) is Slice 1 and is described in [`d-design-media-bot.md`](./d-design-media-bot.md).
 Slice 2A rides the **same** .NET meeting-bot host and the **same** Python brain; it adds
 a second, additive media leg and nothing else changes.
 
@@ -187,7 +187,7 @@ audio-only Slice 1 session). Verified to compile against the real SDK on Windows
   video queue alongside the audio.
 - **`Bridge/VoiceLiveBridgeClient.cs`** — protocol extended with an inbound
   `VideoData{Data,Width,Height}` frame and a `VideoReceived` event carrying a transport
-  `VideoFrame(byte[] Nv12,int Width,int Height)` record. No media-SDK dependency, so the
+  `VideoFrame(byte`] Nv12,int Width,int Height)` record. No media-SDK dependency, so the
   contract stays unit-testable on any OS.
 
 > The placeholder lets us **prove the camera-tile path end-to-end on a live call before

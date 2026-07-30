@@ -297,7 +297,7 @@ re‑confirmed before any production use.
 > barge-in). What remains is operator-only and Windows-only (steps 4–6 runtime): a
 > Windows host with a trusted cert, restoring the Graph media packages and building
 > there, the Teams manifest `supportsCalling`, and the live meeting test. The full
-> runbook is in [`meeting-bot/README.md`](../meeting-bot/README.md). The Python side
+> runbook is in [`meeting-bot/README.md`](../../meeting-bot/README.md). The Python side
 > needs two flags — `MEETING_BOT_ENABLED=true` (serves `/ws/acs/audio` without an ACS
 > resource) and `ACS_AUDIO_SAMPLE_RATE=16000` — both already live on the deployed app
 > and wired through bicep.
@@ -327,7 +327,7 @@ Same bot foundation; a second slice. The route is **decided**:
 
 **The full Route A design — architecture, data flow, why audio and video must share one
 synthesis, component changes, the aiortc↔Voice Live feasibility risk, and the phased
-increments — is in [`docs/teams-avatar-video.md`](./teams-avatar-video.md).**
+increments — is in [`d-design-avatar-video.md`](./d-design-avatar-video.md).**
 
 **Build order:** Slice 1 (audio, DONE) → Slice 2A scaffold (flag-gated `VideoSocket` +
 placeholder NV12 tile, compiles) → the hard increment (server-side avatar WebRTC capture
@@ -342,7 +342,7 @@ placeholder NV12 tile, compiles) → the hard increment (server-side avatar WebR
 > exists. The bridge contract (`VoiceLiveBridgeClient`) carries a new `VideoData` inbound
 > frame + `VideoReceived` event. What remains is the Python video source (enable the
 > avatar on the bridge session, capture its WebRTC video, forward NV12) — see
-> `docs/teams-avatar-video.md`.
+> `docs/channels/d-design-avatar-video.md`.
 
 ---
 
@@ -381,5 +381,5 @@ placeholder NV12 tile, compiles) → the hard increment (server-side avatar WebR
 
 ---
 
-*See also: [`architecture.md`](architecture.md) for the overall system, and
-[`../teams/README.md`](../teams/README.md) for the operator steps and admin requests.*
+*See also: [`architecture.md`](../architecture.md) for the overall system, and
+[`../teams/README.md`](../../teams/README.md) for the operator steps and admin requests.*
