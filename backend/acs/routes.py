@@ -26,6 +26,8 @@ from ..config import (
     ACS_ENDPOINT,
     AVATAR_DISPLAY_NAME,
     DEFAULT_ENDPOINT,
+    MEETING_BOT_VIDEO_ENABLED,
+    get_ui_defaults,
 )
 from ..voice import VoiceSessionHandler
 from ..voice.auth import create_credential
@@ -52,6 +54,36 @@ _IN_CALL_CONFIG = {
     "useEC": True,
     "useNS": True,
 }
+
+
+def _in_call_config(avatar_video: bool) -> dict:
+    """Voice Live session config for one in-call media session.
+
+    With ``avatar_video`` the session switches to avatar/``websocket`` output, so
+    Voice Live streams a fragmented MP4 carrying BOTH the rendered face and the
+    answer audio (it stops sending ``response.audio.delta`` in this mode). The
+    bridge decodes that stream back into NV12 + PCM16. The avatar identity is read
+    from the app's own UI defaults so the meeting face is the same avatar the web
+    app shows — one source of truth, no separate knob to drift.
+    """
+    config = dict(_IN_CALL_CONFIG)
+    if not avatar_video:
+        return config
+
+    defaults = get_ui_defaults()
+    config.update(
+        {
+            "avatarEnabled": True,
+            "avatarOutputMode": "websocket",
+            "isPhotoAvatar": defaults.get("isPhotoAvatar", False),
+            "isCustomAvatar": defaults.get("isCustomAvatar", False),
+            "avatarName": defaults.get("avatarName", "Lisa-casual-sitting"),
+            "customAvatarName": defaults.get("customAvatarName", ""),
+            "photoAvatarName": defaults.get("photoAvatarName", "Anika"),
+            "avatarBackgroundImageUrl": defaults.get("avatarBackgroundImageUrl", ""),
+        }
+    )
+    return config
 
 
 def _strip_realtime_suffix(endpoint: str) -> str:
@@ -167,7 +199,9 @@ def build_acs_router() -> APIRouter:
         client_id = f"acs-{id(websocket)}"
         logger.info(f"[ACS {client_id}] media socket connected")
 
-        bridge = AcsVoiceBridge(websocket, client_id)
+        bridge = AcsVoiceBridge(
+            websocket, client_id, avatar_video=MEETING_BOT_VIDEO_ENABLED
+        )
         endpoint = _strip_realtime_suffix(DEFAULT_ENDPOINT)
         if not endpoint:
             logger.error("AZURE_VOICELIVE_ENDPOINT not set; closing ACS media socket")
@@ -180,7 +214,7 @@ def build_acs_router() -> APIRouter:
             credential=create_credential(""),
             send_message=bridge.send_message,
             send_binary=bridge.send_binary,
-            config=dict(_IN_CALL_CONFIG),
+            config=_in_call_config(MEETING_BOT_VIDEO_ENABLED),
         )
         bridge.handler = handler
         _ACTIVE_CALLS.add(client_id)

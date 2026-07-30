@@ -41,7 +41,11 @@ from ..config import (
     ACS_IDLE_TIMEOUT_S,
     ACS_REQUIRE_WAKE_PHRASE,
     ACS_WAKE_PHRASES,
+    MEETING_BOT_VIDEO_FPS,
+    MEETING_BOT_VIDEO_HEIGHT,
+    MEETING_BOT_VIDEO_WIDTH,
 )
+from .avatar_stream import AvatarStreamDecoder
 
 logger = logging.getLogger(__name__)
 
@@ -102,7 +106,7 @@ class AcsVoiceBridge:
     pumps ACS inbound frames into ``handler.send_audio_bytes``.
     """
 
-    def __init__(self, acs_ws, client_id: str):
+    def __init__(self, acs_ws, client_id: str, avatar_video: bool = False):
         self._ws = acs_ws
         self.client_id = client_id
         self.handler = None  # set by routes after construction
@@ -133,6 +137,32 @@ class AcsVoiceBridge:
         self._silent_in = 0
         self._closed = False
 
+        # ── Avatar face (Slice 2A) ──
+        # In avatar/websocket mode Voice Live emits ONE fragmented-MP4 stream
+        # carrying both the H.264 face and the AAC answer audio; the decoder
+        # splits it back into the NV12 frames the bot's VideoSocket wants and the
+        # PCM16 the outbound audio path already handles. Created lazily on the
+        # first delta so an audio-only session never touches PyAV.
+        self._avatar_video = avatar_video
+        self._decoder: Optional[AvatarStreamDecoder] = None
+        self._video_out = 0
+
+    def _ensure_decoder(self) -> AvatarStreamDecoder:
+        if self._decoder is None:
+            self._decoder = AvatarStreamDecoder(
+                width=MEETING_BOT_VIDEO_WIDTH,
+                height=MEETING_BOT_VIDEO_HEIGHT,
+                fps=MEETING_BOT_VIDEO_FPS,
+                audio_rate=self._target_sample_rate,
+                on_video=self.send_video_frame,
+                # Route recovered audio through the normal outbound path so the
+                # anti-alias low-pass, resampling and suppression gate all still
+                # apply exactly as they do in audio-only mode.
+                on_audio=self.send_binary,
+                loop=asyncio.get_running_loop(),
+            )
+        return self._decoder
+
     # ───────── Voice Live -> ACS (outbound) ─────────
 
     async def send_binary(self, pcm_bytes: bytes) -> None:
@@ -158,6 +188,34 @@ class AcsVoiceBridge:
         except Exception as e:  # noqa: BLE001 — one bad frame must not kill the call
             logger.debug(f"[ACS {self.client_id}] outbound audio send failed: {e}")
 
+    async def send_video_frame(self, nv12: bytes, width: int, height: int) -> None:
+        """Decoded avatar NV12 frame -> bridge ``VideoData`` frame.
+
+        Suppressed alongside audio so a response the room is not meant to hear
+        doesn't animate the tile either; the bot then falls back to its
+        placeholder, which is the intended idle appearance.
+        """
+        if self._closed or self._suppress_current_response:
+            return
+        try:
+            frame = {
+                "Kind": "VideoData",
+                "VideoData": {
+                    "Data": base64.b64encode(nv12).decode("ascii"),
+                    "Width": width,
+                    "Height": height,
+                },
+            }
+            await self._ws.send_text(json.dumps(frame))
+            self._video_out += 1
+            if self._video_out == 1 or self._video_out % 150 == 0:
+                logger.info(
+                    f"[ACS {self.client_id}] outbound avatar VideoData "
+                    f"frames={self._video_out} {width}x{height}"
+                )
+        except Exception as e:  # noqa: BLE001 — one bad frame must not kill the call
+            logger.debug(f"[ACS {self.client_id}] outbound video send failed: {e}")
+
     async def send_message(self, msg: dict) -> None:
         """Handle Voice Live control events relayed by the session handler.
 
@@ -165,6 +223,14 @@ class AcsVoiceBridge:
         turn-taking and to stop ACS playback on interrupt.
         """
         mtype = msg.get("type")
+
+        if mtype == "video_data":
+            # Avatar stream (fMP4 with both the face and the answer audio).
+            if self._avatar_video and not self._closed:
+                delta = msg.get("delta") or ""
+                if delta:
+                    self._ensure_decoder().feed(base64.b64decode(delta))
+            return
 
         if mtype == "transcript_done" and msg.get("role") == "user":
             self._on_user_utterance((msg.get("transcript") or "").strip())
@@ -213,6 +279,8 @@ class AcsVoiceBridge:
             logger.info(f"[ACS {self.client_id}] media socket closed: {e}")
         finally:
             self._closed = True
+            if self._decoder is not None:
+                self._decoder.close()
             if idle_task is not None:
                 idle_task.cancel()
 

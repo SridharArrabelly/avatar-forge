@@ -151,6 +151,26 @@ ACS_AVATAR_VIDEO_ENABLED = os.getenv(
 MEETING_BOT_ENABLED = os.getenv(
     "MEETING_BOT_ENABLED", "false"
 ).strip().lower() in ("1", "true", "yes", "on")
+# Phase 2b Slice 2A (the avatar's FACE in the meeting): when true, the meeting
+# bot's Voice Live session runs the avatar in ``websocket`` output mode and the
+# bridge decodes the resulting stream into raw NV12 frames for the .NET bot's
+# VideoSocket, so the avatar appears as a real lip-synced camera tile.
+#
+# This changes the audio path too, which is why it is a single flag rather than a
+# cosmetic toggle: in avatar/websocket mode Voice Live stops emitting
+# ``response.audio.delta`` and muxes the answer audio (AAC) into the same
+# fragmented-MP4 stream (measured against the live service). The bridge therefore
+# recovers the audio from that stream instead. Default OFF, so an audio-only
+# deployment keeps the simpler, already-proven PCM path untouched.
+MEETING_BOT_VIDEO_ENABLED = os.getenv(
+    "MEETING_BOT_VIDEO_ENABLED", "false"
+).strip().lower() in ("1", "true", "yes", "on")
+# Target NV12 size/rate for the avatar camera tile. These MUST match the format
+# the .NET bot negotiates (Bot__VideoWidth/Height/Fps -> VideoFormatFor), because
+# the bot drops frames whose dimensions differ and shows its placeholder instead.
+MEETING_BOT_VIDEO_WIDTH = int(os.getenv("MEETING_BOT_VIDEO_WIDTH", "640"))
+MEETING_BOT_VIDEO_HEIGHT = int(os.getenv("MEETING_BOT_VIDEO_HEIGHT", "360"))
+MEETING_BOT_VIDEO_FPS = int(os.getenv("MEETING_BOT_VIDEO_FPS", "15"))
 # True when Phase 2b in-call media is configured: either an ACS resource is set,
 # or the Graph media bot bridge is explicitly enabled.
 ACS_ENABLED = bool(ACS_ENDPOINT or ACS_CONNECTION_STRING or MEETING_BOT_ENABLED)
