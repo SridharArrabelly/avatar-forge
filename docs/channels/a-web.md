@@ -115,5 +115,14 @@ The container app scales to a low floor but the Foundry and Search resources bil
 continuously. To stop paying entirely:
 
 ```powershell
-azd down
+azd down --purge
 ```
+
+> [!IMPORTANT]
+> Use `--purge`, not a bare `azd down`. The Foundry (Cognitive Services) account is
+> **soft-deleted** for 48 hours and its name stays reserved, so a later `azd up` reusing
+> that environment name fails or silently restores the old account.
+>
+> Teardown also empties the azd environment's stored values, so re-set whatever you had
+> configured (`DEPLOY_PROFILE`, any `BOT_*`, `DEPLOY_BING_GROUNDING`, ...) before the
+> next `azd up` — `uv run python scripts/preflight.py` lists what is missing.
