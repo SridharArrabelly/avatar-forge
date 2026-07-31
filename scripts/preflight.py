@@ -328,6 +328,44 @@ def check_vm_password(cfg: dict[str, str]) -> CheckResult | None:
     )
 
 
+def _prompt_for_location() -> str:
+    """Ask for a region when the environment has none, and persist the answer.
+
+    A freshly created azd environment holds only AZURE_ENV_NAME: azd does not
+    collect a location until `azd up`. Preflight deliberately runs BEFORE that,
+    so on a new environment it needed a value nothing had supplied yet and simply
+    failed -- for anyone following the printed step plan in order.
+
+    Only offered interactively. As the preprovision hook there is no TTY, and by
+    then azd has already recorded a location, so this never runs there.
+    """
+    if not sys.stdin.isatty():
+        return ""
+    supported = sorted(VOICELIVE_REGIONS & AVATAR_REGIONS)
+    default = "swedencentral" if "swedencentral" in supported else supported[0]
+    print(f"{BOLD}No region set for this environment yet.{RESET}")
+    print(f"{DIM}  azd asks for one during `azd up`, but preflight runs first.{RESET}")
+    print(f"{DIM}  Supports both Voice Live and the avatar: {', '.join(supported)}{RESET}")
+    try:
+        answer = input(f"Region [{default}]: ").strip() or default
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return ""
+    exe = shutil.which("azd") or shutil.which("azd.exe")
+    if exe:
+        res = subprocess.run(
+            [exe, "env", "set", "AZURE_LOCATION", answer],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if res.returncode == 0:
+            print(f"{GREEN}  Saved: azd env set AZURE_LOCATION {answer}{RESET}\n")
+        else:
+            print(f"{YELLOW}  Could not save it; using it for this run only.{RESET}\n")
+    return answer
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--location", default=None, help="Main azd location. Defaults to AZURE_LOCATION.")
@@ -373,6 +411,8 @@ def main() -> int:
         return 2
 
     location = (args.location or cfg.get("AZURE_LOCATION") or "").strip()
+    if not location:
+        location = _prompt_for_location()
     if not location:
         print(f"{RED}FAIL{RESET}  No location. Pass --location or run `azd env set AZURE_LOCATION <region>`.")
         return 2
