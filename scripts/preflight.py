@@ -91,6 +91,33 @@ def _run(args: list[str]) -> tuple[int, str, str]:
     return res.returncode, res.stdout, res.stderr
 
 
+def _print_target(cfg: dict[str, str]) -> None:
+    """Announce WHICH environment/subscription is about to be deployed into.
+
+    ``azd`` only prompts for an environment name when none exists; after that it
+    silently reuses the default recorded in ``.azure/config.json``. On a machine
+    with several environments or subscriptions that makes it easy to provision --
+    or tear down -- the wrong one without ever being asked. Printing the target
+    before any resource is touched turns a silent default into a visible one.
+
+    Deliberately not a prompt: hooks also run under ``azd up --no-prompt`` and in
+    CI, where blocking on stdin would hang the deploy.
+    """
+    env_name = cfg.get("AZURE_ENV_NAME", "") or "(unset)"
+    sub_id = cfg.get("AZURE_SUBSCRIPTION_ID", "") or "(unset)"
+    rg = cfg.get("AZURE_RESOURCE_GROUP") or cfg.get("AZURE_RESOURCE_GROUP_NAME") or f"rg-{env_name}"
+    sub_label = sub_id
+    if sub_id and sub_id != "(unset)":
+        code, out, _ = _run(["account", "show", "--subscription", sub_id, "--query", "name", "-o", "tsv"])
+        if code == 0 and out.strip():
+            sub_label = f"{out.strip()} ({sub_id})"
+    print(f"{BOLD}Deploying into{RESET}")
+    print(f"  environment  : {BOLD}{env_name}{RESET}")
+    print(f"  subscription : {sub_label}")
+    print(f"  resource grp : {rg}")
+    print(f"{DIM}  Not what you expected? azd env select <name>, or azd env new <name>{RESET}\n")
+
+
 def _azd_env_values() -> dict[str, str]:
     exe = shutil.which("azd") or shutil.which("azd.exe")
     if not exe:
@@ -324,6 +351,8 @@ def main() -> int:
 
     print(f"{BOLD}Preflight — profile '{profile.key}' (channels {profile.channels}){RESET}")
     print(f"{DIM}  location={location}  foundry/voice-live={voicelive_loc}{RESET}\n")
+
+    _print_target(cfg)
 
     # When reusing an existing Foundry account (BYO), the region checks below do
     # not apply — the account already exists and its region is not ours to pick.

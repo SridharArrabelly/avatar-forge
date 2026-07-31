@@ -110,6 +110,14 @@ Steps 3 and 4 are not optional extras — they are what makes the rest predictab
 Preflight also re-runs automatically as the `preprovision` hook, so skipping step 4
 only means you find out at `azd up` instead of before it.
 
+> [!IMPORTANT]
+> `azd` only asks for an environment name when none exists yet. After that it
+> silently reuses the default recorded in `.azure/config.json`, so a later `azd up`
+> — or `azd down` — targets whatever you used last **without asking**. Preflight
+> prints the environment, subscription and resource group it is about to deploy
+> into; read that banner before confirming. To switch: `azd env select <name>`.
+> To start a clean one: `azd env new <name>`.
+
 After `azd up` the URL of the running container app is printed (and stored as
 `SERVICE_APP_URI` in the azd env).
 
