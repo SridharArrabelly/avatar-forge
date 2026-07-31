@@ -57,6 +57,12 @@ const THINKING_SLOW_MS = 3500;
 const THINKING_MAX_MS = 25000;
 let peerConnection = null;
 let avatarVideoElement = null;
+let avatarAudioElement = null;
+// Handler installed when a browser autoplay policy refuses play(). The next user
+// gesture retries, so a blocked first visit recovers without a page reload. Held
+// as a reference (not a flag) so teardown can detach it.
+let avatarGestureRetry = null;
+const AVATAR_GESTURE_EVENTS = ['pointerdown', 'keydown', 'touchstart'];
 let isSpeaking = false;
 let avatarOutputMode = 'webrtc';
 let cachedIceServers = null;
@@ -1094,22 +1100,40 @@ function setAvatarNameLabelFromConfig() {
     labelEl.textContent = rawName ? rawName.split('-')[0] : '';
 }
 
-// Teams-only safety net (see `avatarRevealWatchdog`). Armed when the avatar
-// starts connecting inside the Teams webview; if the video has not revealed
-// after a generous timeout, surface a visible, tappable restart state instead
-// of leaving the user on a silent dark stage. No-op (never armed) standalone.
+// Safety net for an avatar that never appears. The reveal is driven solely by the
+// video element's 'playing' event, so anything that stops playback — a refused
+// autoplay, a stalled track, a failed ICE negotiation — used to leave the stage
+// on "Connecting…" indefinitely with no way out but a manual page reload.
+//
+// This was previously armed only inside the Teams webview, so the standalone
+// browser had no recovery path at all.
+//
+// It self-heals first: re-issuing play() costs nothing and silently fixes the
+// autoplay case. Only if the video is still not running does it surface a
+// visible, tappable restart state.
 function armAvatarRevealWatchdog() {
     clearAvatarRevealWatchdog();
-    if (!isEmbeddedInTeams() || isDeveloperMode) return;
+    if (isDeveloperMode) return;
+    // Teams webviews fail faster and more often, so give them a shorter leash.
+    // Standalone gets a generous budget: a cold Voice Live handshake plus ICE can
+    // legitimately take well over ten seconds on a slow link, and a false positive
+    // here would replace a working avatar with an error.
+    const timeoutMs = isEmbeddedInTeams() ? 15000 : 25000;
     avatarRevealWatchdog = setTimeout(() => {
         avatarRevealWatchdog = null;
         // Only fire if the avatar genuinely never came up.
         if (!avatarConnecting) return;
-        console.warn('[Avatar] reveal watchdog fired — video never started in Teams webview');
-        clearAvatarLoading();
-        avatarConnecting = false;
-        setConnectionState('error');
-    }, 15000);
+        retryPausedAvatarMedia('reveal watchdog');
+        // Give the retry a moment to take effect before declaring failure.
+        avatarRevealWatchdog = setTimeout(() => {
+            avatarRevealWatchdog = null;
+            if (!avatarConnecting) return;
+            console.warn('[Avatar] reveal watchdog fired — video never started');
+            clearAvatarLoading();
+            avatarConnecting = false;
+            setConnectionState('error');
+        }, 3000);
+    }, timeoutMs);
 }
 
 function clearAvatarRevealWatchdog() {
@@ -2051,9 +2075,14 @@ function setupWebSocketVideoPlayback(isPhotoAvatar) {
     videoElement.style.display = 'block';
 
     videoElement.addEventListener('canplay', () => {
-        videoElement.play().catch(e => console.error('Play error:', e));
+        // Same autoplay exposure as the WebRTC path, except this element genuinely
+        // needs its audio (fMP4 carries H.264 + AAC), so it cannot be muted.
+        // A refusal therefore arms the gesture retry rather than only logging.
+        playAvatarMedia(videoElement, 'video');
     });
     videoElement.addEventListener('playing', () => revealAvatarVideo(videoElement));
+    // Tracked so the reveal watchdog and the gesture retry can reach this element.
+    avatarVideoElement = videoElement;
 
     // fMP4 codec: H.264 video + AAC audio
     const FMP4_MIME_CODEC = 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"';
@@ -2137,9 +2166,113 @@ function cleanupWebSocketVideo() {
     sourceBuffer = null;
     mediaSource = null;
     pendingWsVideoElement = null;
+    // Assigned in setupWebSocketVideoPlayback so the watchdog/gesture retry can
+    // reach it; drop it here or they would poke a torn-down element.
+    if (avatarVideoElement) {
+        avatarVideoElement = null;
+    }
+    disarmAvatarGestureRetry();
 }
 
 // ===== WebRTC for Avatar =====
+
+// Attach one inbound track to its own media element.
+//
+// Both peer-connection paths (prewarmed and from-scratch) funnel through here so
+// they cannot drift apart.
+//
+// Each element gets a MediaStream containing ONLY its own track. Previously both
+// elements were handed `event.streams[0]`, which carries audio *and* video — so
+// the <video> element counted as "autoplay with sound", which browsers refuse
+// until the user has interacted with the origin. That is a first-visit-only
+// failure by construction: play() is rejected, 'playing' never fires,
+// revealAvatarVideo() is never called, and the stage sits on "Connecting…"
+// forever. Reloading "fixed" it only because by then the origin had been
+// interacted with.
+//
+// A video-only, muted element satisfies every browser's autoplay policy
+// unconditionally, so the face always appears. The voice rides the separate
+// <audio> element, which is retried on the next user gesture if it is refused.
+function attachAvatarTrack(event) {
+    const container = document.getElementById('avatarVideo');
+    const isVideo = event.track.kind === 'video';
+    const mediaPlayer = document.createElement(event.track.kind);
+    mediaPlayer.id = event.track.kind;
+    mediaPlayer.srcObject = new MediaStream([event.track]);
+    // autoplay=true starts the stream as soon as the first frame decodes (no
+    // loadeddata round-trip). playsInline keeps it inline on iOS Safari instead
+    // of forcing fullscreen.
+    mediaPlayer.autoplay = true;
+    mediaPlayer.playsInline = true;
+    // The video element carries no audio track, but say so explicitly: it is the
+    // documented condition for unconditional autoplay, and it keeps the avatar
+    // from ever being double-audible if a future change adds audio to it.
+    if (isVideo) mediaPlayer.muted = true;
+    if (container) container.appendChild(mediaPlayer);
+
+    if (isVideo) {
+        avatarVideoElement = mediaPlayer;
+        mediaPlayer.onplaying = () => revealAvatarVideo(mediaPlayer);
+    } else {
+        avatarAudioElement = mediaPlayer;
+        // The analyser drives the "speaking" glow and needs the audio track.
+        attachAvatarAudioAnalyser(mediaPlayer.srcObject);
+    }
+    playAvatarMedia(mediaPlayer, event.track.kind);
+}
+
+// Start playback and, if the autoplay policy refuses, arm a one-shot retry on the
+// next user gesture instead of failing silently. `autoplay` alone gives us no
+// error to react to, which is why the original stall was invisible.
+function playAvatarMedia(el, kind) {
+    const p = el.play();
+    if (!p || typeof p.catch !== 'function') return;
+    p.catch((err) => {
+        console.warn(`[Avatar] ${kind} playback refused (${err && err.name}); retrying on next user gesture`);
+        armAvatarGestureRetry();
+    });
+}
+
+// One-shot: the first real user interaction satisfies the autoplay policy, so
+// replay whatever is still paused. Listeners are capture-phase and passive so
+// they never interfere with the click that triggered them.
+function armAvatarGestureRetry() {
+    if (avatarGestureRetry) return;
+    const retry = () => {
+        disarmAvatarGestureRetry();
+        retryPausedAvatarMedia('user gesture');
+    };
+    avatarGestureRetry = retry;
+    for (const evt of AVATAR_GESTURE_EVENTS) {
+        document.addEventListener(evt, retry, { capture: true, passive: true });
+    }
+}
+
+// Detach the listeners, whether they fired or the session was torn down first.
+// Keeping the handler reference (rather than a boolean) is what makes this
+// possible — otherwise a teardown mid-arm would leave them attached forever and
+// each new session would stack another set.
+function disarmAvatarGestureRetry() {
+    if (!avatarGestureRetry) return;
+    for (const evt of AVATAR_GESTURE_EVENTS) {
+        document.removeEventListener(evt, avatarGestureRetry, true);
+    }
+    avatarGestureRetry = null;
+}
+
+// Re-issue play() on any avatar element that is still paused. Safe to call at any
+// time — play() on an already-playing element resolves immediately.
+function retryPausedAvatarMedia(reason) {
+    for (const [el, kind] of [[avatarVideoElement, 'video'], [avatarAudioElement, 'audio']]) {
+        if (el && el.paused) {
+            console.log(`[Avatar] retrying ${kind} playback (${reason})`);
+            const p = el.play();
+            if (p && typeof p.catch === 'function') {
+                p.catch((err) => console.warn(`[Avatar] ${kind} retry failed: ${err && err.name}`));
+            }
+        }
+    }
+}
 
 // Prepare a peer connection ahead of time so ICE candidates are pre-gathered.
 // This avoids the ICE gathering delay when the user starts a new session.
@@ -2158,24 +2291,7 @@ function preparePeerConnection(iceServers) {
     let iceGatheringDone = false;
 
     // Handle incoming tracks (video and audio)
-    pc.ontrack = (event) => {
-        const container = document.getElementById('avatarVideo');
-        const mediaPlayer = document.createElement(event.track.kind);
-        mediaPlayer.id = event.track.kind;
-        mediaPlayer.srcObject = event.streams[0];
-        // autoplay=true starts the stream as soon as the first frame decodes (no
-        // loadeddata round-trip). playsInline keeps it inline on iOS Safari instead
-        // of forcing fullscreen.
-        mediaPlayer.autoplay = true;
-        mediaPlayer.playsInline = true;
-        if (container) container.appendChild(mediaPlayer);
-        if (event.track.kind === 'video') {
-            avatarVideoElement = mediaPlayer;
-            mediaPlayer.onplaying = () => revealAvatarVideo(mediaPlayer);
-        } else if (event.track.kind === 'audio') {
-            attachAvatarAudioAnalyser(event.streams[0]);
-        }
-    };
+    pc.ontrack = (event) => attachAvatarTrack(event);
 
     pc.onicegatheringstatechange = () => {
         if (pc.iceGatheringState === 'complete') {
@@ -2274,23 +2390,7 @@ function setupWebRTC(iceServers) {
     attachAvatarConnectionMonitor(peerConnection);
 
     // Handle incoming tracks (video and audio)
-    peerConnection.ontrack = (event) => {
-        const mediaPlayer = document.createElement(event.track.kind);
-        mediaPlayer.id = event.track.kind;
-        mediaPlayer.srcObject = event.streams[0];
-        // autoplay=true starts the stream as soon as the first frame decodes (no
-        // loadeddata round-trip). playsInline keeps it inline on iOS Safari instead
-        // of forcing fullscreen.
-        mediaPlayer.autoplay = true;
-        mediaPlayer.playsInline = true;
-        if (container) container.appendChild(mediaPlayer);
-        if (event.track.kind === 'video') {
-            avatarVideoElement = mediaPlayer;
-            mediaPlayer.onplaying = () => revealAvatarVideo(mediaPlayer);
-        } else if (event.track.kind === 'audio') {
-            attachAvatarAudioAnalyser(event.streams[0]);
-        }
-    };
+    peerConnection.ontrack = (event) => attachAvatarTrack(event);
 
     peerConnection.onicegatheringstatechange = () => {
         if (peerConnection.iceGatheringState === 'complete') {
@@ -2405,6 +2505,11 @@ function cleanupWebRTC() {
         avatarVideoElement.srcObject = null;
         avatarVideoElement = null;
     }
+    if (avatarAudioElement) {
+        avatarAudioElement.srcObject = null;
+        avatarAudioElement = null;
+    }
+    disarmAvatarGestureRetry();
     const container = document.getElementById('avatarVideo');
     if (container) container.innerHTML = '';
 }
