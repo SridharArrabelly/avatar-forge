@@ -118,12 +118,22 @@ def _print_target(cfg: dict[str, str]) -> None:
     print(f"{DIM}  Not what you expected? azd env select <name>, or azd env new <name>{RESET}\n")
 
 
+_AZD_ENV_ERROR = ""
+
+
 def _azd_env_values() -> dict[str, str]:
+    global _AZD_ENV_ERROR
     exe = shutil.which("azd") or shutil.which("azd.exe")
     if not exe:
         return {}
     res = subprocess.run([exe, "env", "get-values"], capture_output=True, text=True, check=False)
     if res.returncode != 0:
+        # Record WHY. Returning {} silently makes every downstream check report a
+        # missing value, so a broken or deleted environment surfaces as something
+        # unrelated ("No location") whose suggested fix cannot work either.
+        _AZD_ENV_ERROR = (res.stderr or res.stdout or "").strip() or (
+            f"`azd env get-values` exited {res.returncode}"
+        )
         return {}
     values: dict[str, str] = {}
     for line in res.stdout.splitlines():
@@ -345,6 +355,21 @@ def main() -> int:
     if args.steps_only:
         print(render_steps(profile))
         return 0
+
+    if _AZD_ENV_ERROR:
+        print(f"{RED}FAIL{RESET}  Could not read the azd environment, so none of its values are visible.")
+        for line in _AZD_ENV_ERROR.splitlines():
+            if line.strip():
+                print(f"{DIM}        azd: {line.strip()}{RESET}")
+        print()
+        print("        Every value you set with `azd env set` lives in that environment.")
+        print("        `azd down` can remove it while .azure/config.json still names it,")
+        print("        which is why this can appear straight after a teardown.")
+        print()
+        print(f"        {BOLD}azd env list{RESET}              # what still exists")
+        print(f"        {BOLD}azd env new <name>{RESET}        # start a fresh one, then re-set your values")
+        print(f"        {BOLD}azd env select <name>{RESET}     # point at an existing one")
+        return 2
 
     location = (args.location or cfg.get("AZURE_LOCATION") or "").strip()
     if not location:

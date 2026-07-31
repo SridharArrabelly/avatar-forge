@@ -217,7 +217,9 @@ PROFILES: dict[str, Profile] = {
             ),
             RequiredInput(
                 "BOT_APP_PASSWORD",
-                "A client secret on that app registration.",
+                "A client secret on that same app registration: Entra > App registrations > "
+                "your app > Certificates & secrets > New client secret. Copy the VALUE "
+                "(not the Secret ID) — it is shown only once.",
                 secret=True,
             ),
             RequiredInput(

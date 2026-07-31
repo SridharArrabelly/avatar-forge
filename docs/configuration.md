@@ -18,6 +18,15 @@ Conventions:
 - Vars marked *(provisioning only)* are read by `scripts/*.py` or `azd`, **not**
   by the running server — a brownfield (BYO) deploy can leave them unset.
 
+> [!IMPORTANT]
+> **Two different places, and they are not interchangeable.** `.env` configures a
+> server you run **locally**. Anything that must reach a **deployed** app or shape
+> the infrastructure goes in the azd environment via `azd env set NAME value` —
+> `azd` never reads `.env`, so a value put only there is invisible to `azd up`.
+> Infra writes its own outputs back into the azd environment, and the container
+> app receives them as real environment variables. When preflight reports a
+> missing value it always prints the exact `azd env set` command to run.
+
 ---
 
 ## Deployment profile *(provisioning only)*
