@@ -25,6 +25,8 @@
     "voiceLiveVoice":      { "value": "${VOICELIVE_VOICE=en-US-AvaMultilingualNeural}" },
     "bingConnectionName":  { "value": "${BING_CONNECTION_NAME=}" },
     "bingCustomConfigName":{ "value": "${BING_CUSTOM_CONFIG_NAME=}" },
+    "deployBingGrounding": { "value": "${DEPLOY_BING_GROUNDING=true}" },
+    "bingSkuName":         { "value": "${BING_SKU_NAME=G2}" },
 
     "agentModel":             { "value": "${AGENT_MODEL=gpt-5.4}" },
     "embeddingDeployment":    { "value": "${EMBEDDING_DEPLOYMENT=text-embedding-3-small}" },
@@ -50,6 +52,22 @@
     "botAppPassword":  { "value": "${BOT_APP_PASSWORD=}" },
     "botDisplayName":  { "value": "${BOT_DISPLAY_NAME=Avatar Forge}" },
     "teamsAppId":      { "value": "${TEAMS_APP_ID=}" },
-    "agentId":         { "value": "${AGENT_ID=}" }
+    "agentId":         { "value": "${AGENT_ID=}" },
+
+    "enableAcs":       { "value": "${ENABLE_ACS=false}" },
+    "acsDataLocation": { "value": "${ACS_DATA_LOCATION=United States}" },
+    "meetingBotEnabled":   { "value": "${MEETING_BOT_ENABLED=false}" },
+    "acsAudioSampleRate":  { "value": "${ACS_AUDIO_SAMPLE_RATE=}" },
+    "acsRequireWakePhrase":{ "value": "${ACS_REQUIRE_WAKE_PHRASE=}" },
+    "acsAvatarVideoEnabled":{ "value": "${ACS_AVATAR_VIDEO_ENABLED=}" },
+
+    "deployProfile":            { "value": "${DEPLOY_PROFILE=}" },
+    "deployMeetingBotHost":     { "value": "${DEPLOY_MEETING_BOT_HOST=false}" },
+    "meetingBotAppId":          { "value": "${MEETING_BOT_APP_ID=}" },
+    "meetingBotAppTenantId":    { "value": "${MEETING_BOT_APP_TENANT_ID=}" },
+    "meetingBotDnsLabel":       { "value": "${MEETING_BOT_DNS_LABEL=}" },
+    "meetingBotAdminPassword":  { "value": "${MEETING_BOT_ADMIN_PASSWORD=}" },
+    "meetingBotVmSize":         { "value": "${MEETING_BOT_VM_SIZE=Standard_D2s_v5}" },
+    "meetingBotIconUrl":        { "value": "${MEETING_BOT_ICON_URL=}" }
   }
 }

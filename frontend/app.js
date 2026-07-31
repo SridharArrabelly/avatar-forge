@@ -25,6 +25,12 @@ let avatarConnecting = false;
 let pendingAvatarEnabled = false;
 let avatarLoadingHideTimer = null;
 let micRevealTimer = null;
+// Teams-only safety net: when embedded in the Teams webview the app auto-connects
+// in kiosk mode, and if the avatar video never reveals (e.g. WebRTC/media blocked
+// by the host) the user is left staring at a silent dark stage with no feedback.
+// This watchdog converts that into a visible, tappable "tap to restart" state.
+// It is armed ONLY inside Teams, so the standalone web experience is unchanged.
+let avatarRevealWatchdog = null;
 // Avatar "thinking" indicator: shown while the agent works (response_created ->
 // first token) so the user isn't staring at a silent face during the 2-3s
 // grounding gap. Purely visual — never touches the audio/avatar pipeline.
@@ -51,6 +57,12 @@ const THINKING_SLOW_MS = 3500;
 const THINKING_MAX_MS = 25000;
 let peerConnection = null;
 let avatarVideoElement = null;
+let avatarAudioElement = null;
+// Handler installed when a browser autoplay policy refuses play(). The next user
+// gesture retries, so a blocked first visit recovers without a page reload. Held
+// as a reference (not a flag) so teardown can detach it.
+let avatarGestureRetry = null;
+const AVATAR_GESTURE_EVENTS = ['pointerdown', 'keydown', 'touchstart'];
 let isSpeaking = false;
 let avatarOutputMode = 'webrtc';
 let cachedIceServers = null;
@@ -82,6 +94,11 @@ let intentionalDisconnect = false;
 let onboardingHintText = 'Tap the mic to ask me anything';
 let avatarTaglineText = '';
 let avatarDisplayNameText = '';
+// Server-resolved persona name (/api/config -> assistantName): AVATAR_DISPLAY_NAME
+// if set, else the active avatar model's friendly name. Never empty. Used as the
+// stage-label fallback so the label can never come out blank, and so it agrees
+// with what the agent calls itself. See backend/avatar_identity.py.
+let assistantNameText = 'Avatar';
 let suggestedPrompts = [];
 // Onboarding lifecycle: dismissed permanently after the first real user action;
 // hidden temporarily while the avatar speaks (e.g. the proactive greeting).
@@ -143,7 +160,6 @@ document.addEventListener('DOMContentLoaded', () => {
     updateConditionalFields();
     updateControlStates();
     fetchServerConfig();
-    warmWebRTCEngine();
 });
 
 // ===== Theme =====
@@ -176,7 +192,27 @@ function initTheme() {
 // public STUN as a stand-in proved unreliable — see the note above
 // preparePeerConnection). The only thing this saves is the first-time
 // engine-warm cost, which is small but free.
+// Construct (and immediately close) a throwaway RTCPeerConnection so the browser
+// loads/initializes its WebRTC native code, codec backends, and JS-to-native
+// bridges before we build the real peer connection. Real ICE candidates are NOT
+// pre-gathered here (we don't have the Azure ICE servers yet, and using public
+// STUN as a stand-in proved unreliable — see the note above preparePeerConnection).
+//
+// This is expensive and SYNCHRONOUS: measured at ~1.2s of main-thread block on a
+// cold browser profile, after which the real peer connections construct in ~1ms.
+// So it is a fixed one-time cost that has to be paid somewhere, and the only
+// thing that matters is WHERE. It used to run at DOMContentLoaded, where it
+// delayed the /api/config response callback and therefore everything downstream.
+// Deferring it to requestIdleCallback did NOT help — the thread is idle exactly
+// while the config request is in flight, so it ran at the same moment.
+//
+// It is now called once the voice WebSocket is connecting, so it overlaps a wait
+// that is purely network-bound (~0.6-3s) and costs nothing on the main thread.
+let webrtcEngineWarmed = false;
+
 function warmWebRTCEngine() {
+    if (webrtcEngineWarmed) return;
+    webrtcEngineWarmed = true;
     if (typeof RTCPeerConnection === 'undefined') return;
     try {
         const warm = new RTCPeerConnection({});
@@ -249,6 +285,7 @@ async function fetchServerConfig() {
             : 'Tap the mic to ask me anything');
         avatarTaglineText = d.avatarTagline ?? avatarTaglineText;
         avatarDisplayNameText = d.avatarDisplayName ?? avatarDisplayNameText;
+        assistantNameText = d.assistantName || assistantNameText;
         const taglineEl = document.getElementById('avatarTagline');
         if (taglineEl) taglineEl.textContent = avatarTaglineText || '';
         suggestedPrompts = Array.isArray(d.suggestedPrompts) ? d.suggestedPrompts : [];
@@ -645,6 +682,7 @@ async function connectSession() {
         if (avatarContainer) avatarContainer.classList.toggle('photo-avatar', isPhotoAvatarSession);
         showAvatarLoading('Connecting…');
         updateDeveloperModeLayout();
+        armAvatarRevealWatchdog();
     }
 
     try {
@@ -692,6 +730,13 @@ async function connectSession() {
             intentionalDisconnect = false;
         };
 
+        // Warm the WebRTC engine while the socket handshake and the Voice Live
+        // session setup are in flight. Both are network-bound, so this ~1.2s of
+        // one-time main-thread work is absorbed by a wait we were spending anyway
+        // — and by the time ice_servers arrives the real peer connection builds
+        // in ~1ms. See warmWebRTCEngine() for why earlier placements were worse.
+        warmWebRTCEngine();
+
     } catch (err) {
         console.error('Connection error', err);
         notifySystem('Failed to connect: ' + err.message, 'error');
@@ -718,6 +763,7 @@ function handleDisconnect() {
     avatarConnecting = false;
     pendingAvatarEnabled = false;
     clearAvatarLoading();
+    clearAvatarRevealWatchdog();
 
     stopAudioCapture();
     stopAudioPlayback();
@@ -1077,13 +1123,57 @@ function setAvatarNameLabelFromConfig() {
     }
     const isCustomA = document.getElementById('isCustomAvatar')?.checked;
     const isPhotoA = document.getElementById('isPhotoAvatar')?.checked;
-    const rawName = isCustomA
+    const rawName = (isCustomA
         ? (document.getElementById('customAvatarName')?.value || '')
         : isPhotoA
             ? (document.getElementById('photoAvatarName')?.value || '')
-            : (document.getElementById('avatarName')?.value || '');
+            : (document.getElementById('avatarName')?.value || '')).trim();
     // Strip suffixes like '-business', '-casual-sitting' for a friendlier label.
-    labelEl.textContent = rawName ? rawName.split('-')[0] : '';
+    // Deriving from the live inputs (rather than the server-resolved
+    // assistantName) is what lets the label follow the dropdown in DEVELOPER_MODE;
+    // assistantName is the fallback so a blank/misconfigured model never leaves
+    // the stage nameless.
+    labelEl.textContent = rawName ? rawName.split('-')[0] : assistantNameText;
+}
+
+// Safety net for an avatar that never appears. The reveal is driven solely by the
+// video element's 'playing' event, so anything that stops playback — a refused
+// autoplay, a stalled track, a failed ICE negotiation — used to leave the stage
+// on "Connecting…" indefinitely with no way out but a manual page reload.
+//
+// This was previously armed only inside the Teams webview, so the standalone
+// browser had no recovery path at all.
+//
+// It self-heals first: re-issuing play() costs nothing and silently fixes the
+// autoplay case. Only if the video is still not running does it surface a
+// visible, tappable restart state.
+function armAvatarRevealWatchdog() {
+    clearAvatarRevealWatchdog();
+    if (isDeveloperMode) return;
+    // Teams webviews fail faster and more often, so give them a shorter leash.
+    // Standalone gets a generous budget: a cold Voice Live handshake plus ICE can
+    // legitimately take well over ten seconds on a slow link, and a false positive
+    // here would replace a working avatar with an error.
+    const timeoutMs = isEmbeddedInTeams() ? 15000 : 25000;
+    avatarRevealWatchdog = setTimeout(() => {
+        avatarRevealWatchdog = null;
+        // Only fire if the avatar genuinely never came up.
+        if (!avatarConnecting) return;
+        retryPausedAvatarMedia('reveal watchdog');
+        // Give the retry a moment to take effect before declaring failure.
+        avatarRevealWatchdog = setTimeout(() => {
+            avatarRevealWatchdog = null;
+            if (!avatarConnecting) return;
+            console.warn('[Avatar] reveal watchdog fired — video never started');
+            clearAvatarLoading();
+            avatarConnecting = false;
+            setConnectionState('error');
+        }, 3000);
+    }, timeoutMs);
+}
+
+function clearAvatarRevealWatchdog() {
+    if (avatarRevealWatchdog) { clearTimeout(avatarRevealWatchdog); avatarRevealWatchdog = null; }
 }
 
 function showAvatarLoading(text) {
@@ -1122,6 +1212,7 @@ function clearAvatarLoading() {
 function revealAvatarVideo(mediaPlayer) {
     if (mediaPlayer) mediaPlayer.classList.add('avatar-video-ready');
     avatarConnecting = false;
+    clearAvatarRevealWatchdog();
     setAvatarNameLabelFromConfig();
     hideAvatarLoading();
     showMicControls();
@@ -2020,9 +2111,14 @@ function setupWebSocketVideoPlayback(isPhotoAvatar) {
     videoElement.style.display = 'block';
 
     videoElement.addEventListener('canplay', () => {
-        videoElement.play().catch(e => console.error('Play error:', e));
+        // Same autoplay exposure as the WebRTC path, except this element genuinely
+        // needs its audio (fMP4 carries H.264 + AAC), so it cannot be muted.
+        // A refusal therefore arms the gesture retry rather than only logging.
+        playAvatarMedia(videoElement, 'video');
     });
     videoElement.addEventListener('playing', () => revealAvatarVideo(videoElement));
+    // Tracked so the reveal watchdog and the gesture retry can reach this element.
+    avatarVideoElement = videoElement;
 
     // fMP4 codec: H.264 video + AAC audio
     const FMP4_MIME_CODEC = 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"';
@@ -2106,9 +2202,156 @@ function cleanupWebSocketVideo() {
     sourceBuffer = null;
     mediaSource = null;
     pendingWsVideoElement = null;
+    // Assigned in setupWebSocketVideoPlayback so the watchdog/gesture retry can
+    // reach it; drop it here or they would poke a torn-down element.
+    if (avatarVideoElement) {
+        avatarVideoElement = null;
+    }
+    disarmAvatarGestureRetry();
 }
 
 // ===== WebRTC for Avatar =====
+
+// Attach one inbound track to its own media element.
+//
+// Both peer-connection paths (prewarmed and from-scratch) funnel through here so
+// they cannot drift apart.
+//
+// Each element gets a MediaStream containing ONLY its own track. Previously both
+// elements were handed `event.streams[0]`, which carries audio *and* video — so
+// the <video> element counted as "autoplay with sound", which browsers refuse
+// until the user has interacted with the origin. That is a first-visit-only
+// failure by construction: play() is rejected, 'playing' never fires,
+// revealAvatarVideo() is never called, and the stage sits on "Connecting…"
+// forever. Reloading "fixed" it only because by then the origin had been
+// interacted with.
+//
+// A video-only, muted element satisfies every browser's autoplay policy
+// unconditionally, so the face always appears. The voice rides the separate
+// <audio> element, which is retried on the next user gesture if it is refused.
+function attachAvatarTrack(event) {
+    const container = document.getElementById('avatarVideo');
+    const isVideo = event.track.kind === 'video';
+    const mediaPlayer = document.createElement(event.track.kind);
+    mediaPlayer.id = event.track.kind;
+    mediaPlayer.srcObject = new MediaStream([event.track]);
+    // autoplay=true starts the stream as soon as the first frame decodes (no
+    // loadeddata round-trip). playsInline keeps it inline on iOS Safari instead
+    // of forcing fullscreen.
+    mediaPlayer.autoplay = true;
+    mediaPlayer.playsInline = true;
+    // The video element carries no audio track, but say so explicitly: it is the
+    // documented condition for unconditional autoplay, and it keeps the avatar
+    // from ever being double-audible if a future change adds audio to it.
+    if (isVideo) mediaPlayer.muted = true;
+    if (container) container.appendChild(mediaPlayer);
+
+    if (isVideo) {
+        avatarVideoElement = mediaPlayer;
+        mediaPlayer.onplaying = () => revealAvatarVideo(mediaPlayer);
+    } else {
+        avatarAudioElement = mediaPlayer;
+        // The analyser drives the "speaking" glow and needs the audio track.
+        attachAvatarAudioAnalyser(mediaPlayer.srcObject);
+    }
+    playAvatarMedia(mediaPlayer, event.track.kind);
+}
+
+// Start playback and, if the autoplay policy refuses, arm a one-shot retry on the
+// next user gesture instead of failing silently. `autoplay` alone gives us no
+// error to react to, which is why the original stall was invisible.
+function playAvatarMedia(el, kind) {
+    const p = el.play();
+    if (!p || typeof p.catch !== 'function') return;
+    p.catch((err) => {
+        console.warn(`[Avatar] ${kind} playback refused (${err && err.name}); retrying on next user gesture`);
+        armAvatarGestureRetry();
+    });
+}
+
+// One-shot: the first real user interaction satisfies the autoplay policy, so
+// replay whatever is still paused. Listeners are capture-phase and passive so
+// they never interfere with the click that triggered them.
+function armAvatarGestureRetry() {
+    if (avatarGestureRetry) return;
+    const retry = () => {
+        disarmAvatarGestureRetry();
+        retryPausedAvatarMedia('user gesture');
+    };
+    avatarGestureRetry = retry;
+    for (const evt of AVATAR_GESTURE_EVENTS) {
+        document.addEventListener(evt, retry, { capture: true, passive: true });
+    }
+}
+
+// Detach the listeners, whether they fired or the session was torn down first.
+// Keeping the handler reference (rather than a boolean) is what makes this
+// possible — otherwise a teardown mid-arm would leave them attached forever and
+// each new session would stack another set.
+function disarmAvatarGestureRetry() {
+    if (!avatarGestureRetry) return;
+    for (const evt of AVATAR_GESTURE_EVENTS) {
+        document.removeEventListener(evt, avatarGestureRetry, true);
+    }
+    avatarGestureRetry = null;
+}
+
+// Re-issue play() on any avatar element that is still paused. Safe to call at any
+// time — play() on an already-playing element resolves immediately.
+function retryPausedAvatarMedia(reason) {
+    for (const [el, kind] of [[avatarVideoElement, 'video'], [avatarAudioElement, 'audio']]) {
+        if (el && el.paused) {
+            console.log(`[Avatar] retrying ${kind} playback (${reason})`);
+            const p = el.play();
+            if (p && typeof p.catch === 'function') {
+                p.catch((err) => console.warn(`[Avatar] ${kind} retry failed: ${err && err.name}`));
+            }
+        }
+    }
+}
+
+// Read an ICE candidate's type ("host" / "srflx" / "relay"). Chromium exposes
+// `.type` directly; parse the SDP candidate line as a fallback so this works on
+// any browser. The line is:
+//   candidate:<foundation> <component> <transport> <priority> <ip> <port> typ <type> ...
+function iceCandidateType(candidate) {
+    if (!candidate) return null;
+    if (candidate.type) return candidate.type;
+    const parts = String(candidate.candidate || '').split(' ');
+    const i = parts.indexOf('typ');
+    return i >= 0 ? (parts[i + 1] || null) : null;
+}
+
+// A "host" candidate is a private LAN address (192.168.x.x); it can never reach
+// the Azure avatar service. Only srflx (NAT-reflexive) or relay (TURN) candidates
+// can. Measured live on a loaded machine: an offer sent carrying only a host
+// candidate failed exactly like an empty one — iceConnectionState=disconnected ->
+// connectionState=failed, avatar never appeared. So "do we have a candidate?" is
+// the wrong question; "do we have one that can reach the server?" is the right one.
+function isConnectableCandidate(candidate) {
+    const t = iceCandidateType(candidate);
+    return t === 'srflx' || t === 'relay';
+}
+
+// How long to keep gathering after the first TURN relay candidate arrives, so
+// sibling candidates (the other media section, additional TURN transports) make
+// it into the offer too. A relay candidate alone is enough to CONNECT; the extra
+// ones only improve path selection, so this is a short settle rather than a wait.
+const ICE_RELAY_SETTLE_MS = 250;
+// Backstop for networks where TURN is unreachable and no relay candidate ever
+// arrives. Sending whatever we have is better than stalling — if 1.5s wasn't
+// enough to reach a TURN server, longer usually isn't either.
+const ICE_GATHER_TIMEOUT_MS = 1500;
+// Hard ceiling for the case where the backstop fires before any *connectable*
+// candidate has been gathered. This app does not trickle ICE — `onicecandidate`
+// only ever triggers sending the whole localDescription, individual candidates
+// are never sent — so the offer must carry every candidate it will ever have.
+// Shipping one with nothing reachable in it produces a session that can never
+// connect, so when we have nothing usable, waiting is strictly better than
+// sending. This ceiling stops that wait from being unbounded: at this point we
+// send whatever exists and let the reveal watchdog surface the failure, which is
+// better than hanging on the spinner forever.
+const ICE_GATHER_MAX_WAIT_MS = 8000;
 
 // Prepare a peer connection ahead of time so ICE candidates are pre-gathered.
 // This avoids the ICE gathering delay when the user starts a new session.
@@ -2125,26 +2368,28 @@ function preparePeerConnection(iceServers) {
     const pc = new RTCPeerConnection({ iceServers: iceConfig, iceCandidatePoolSize: 4 });
     attachAvatarConnectionMonitor(pc);
     let iceGatheringDone = false;
+    let relaySettleTimer = null;
+    let connectableCount = 0;
+    let awaitingUsableCandidate = false;
 
-    // Handle incoming tracks (video and audio)
-    pc.ontrack = (event) => {
-        const container = document.getElementById('avatarVideo');
-        const mediaPlayer = document.createElement(event.track.kind);
-        mediaPlayer.id = event.track.kind;
-        mediaPlayer.srcObject = event.streams[0];
-        // autoplay=true starts the stream as soon as the first frame decodes (no
-        // loadeddata round-trip). playsInline keeps it inline on iOS Safari instead
-        // of forcing fullscreen.
-        mediaPlayer.autoplay = true;
-        mediaPlayer.playsInline = true;
-        if (container) container.appendChild(mediaPlayer);
-        if (event.track.kind === 'video') {
-            avatarVideoElement = mediaPlayer;
-            mediaPlayer.onplaying = () => revealAvatarVideo(mediaPlayer);
-        } else if (event.track.kind === 'audio') {
-            attachAvatarAudioAnalyser(event.streams[0]);
+    // Queue the connection once it can actually connect, instead of waiting for
+    // gathering to fully complete (which routinely takes longer than the backstop
+    // and so effectively never won the race).
+    const markPrepared = (reason) => {
+        if (iceGatheringDone) return;
+        iceGatheringDone = true;
+        clearTimeout(relaySettleTimer);
+        peerConnectionQueue.push(pc);
+        console.log('[' + new Date().toISOString() + '] Peer connection prepared (' + reason + ').');
+        // Keep only the latest prepared connection
+        if (peerConnectionQueue.length > 1) {
+            const old = peerConnectionQueue.shift();
+            try { old.close(); } catch (e) {}
         }
     };
+
+    // Handle incoming tracks (video and audio)
+    pc.ontrack = (event) => attachAvatarTrack(event);
 
     pc.onicegatheringstatechange = () => {
         if (pc.iceGatheringState === 'complete') {
@@ -2153,15 +2398,21 @@ function preparePeerConnection(iceServers) {
     };
 
     pc.onicecandidate = (event) => {
-        if (!event.candidate && !iceGatheringDone) {
-            iceGatheringDone = true;
-            peerConnectionQueue.push(pc);
-            console.log('[' + new Date().toISOString() + '] ICE gathering done, new peer connection prepared.');
-            // Keep only the latest prepared connection
-            if (peerConnectionQueue.length > 1) {
-                const old = peerConnectionQueue.shift();
-                try { old.close(); } catch (e) {}
+        if (!event.candidate) {
+            markPrepared('gathering complete');
+            return;
+        }
+        if (isConnectableCandidate(event.candidate)) connectableCount++;
+        if (awaitingUsableCandidate) {
+            if (connectableCount > 0 && !relaySettleTimer) {
+                relaySettleTimer = setTimeout(
+                    () => markPrepared('usable candidate after timeout'), ICE_RELAY_SETTLE_MS);
             }
+            return;
+        }
+        if (iceCandidateType(event.candidate) === 'relay' && !relaySettleTimer) {
+            relaySettleTimer = setTimeout(
+                () => markPrepared('relay candidate ready'), ICE_RELAY_SETTLE_MS);
         }
     };
 
@@ -2185,20 +2436,21 @@ function preparePeerConnection(iceServers) {
     pc.createOffer().then(offer => {
         return pc.setLocalDescription(offer);
     }).then(() => {
-        // Timeout fallback: if ICE gathering hasn't completed after 1.5 seconds,
-        // push anyway. This is the disconnect-time prewarm; same logic as the
-        // first-connect path — see setupWebRTC() for rationale.
+        // Backstop: queue the connection anyway if no relay candidate ever shows
+        // up. This is the disconnect-time prewarm; same logic as the first-connect
+        // path — see setupWebRTC() for rationale.
         setTimeout(() => {
-            if (!iceGatheringDone) {
-                iceGatheringDone = true;
-                peerConnectionQueue.push(pc);
-                console.log('[' + new Date().toISOString() + '] ICE gathering timed out, peer connection prepared with available candidates.');
-                if (peerConnectionQueue.length > 1) {
-                    const old = peerConnectionQueue.shift();
-                    try { old.close(); } catch (e) {}
-                }
+            if (iceGatheringDone) return;
+            if (connectableCount > 0) {
+                markPrepared('gathering timed out');
+                return;
             }
-        }, 1500);
+            // Queuing a connection with nothing reachable just moves the failure
+            // to whoever reuses it. Wait for a usable candidate, up to the ceiling.
+            awaitingUsableCandidate = true;
+            setTimeout(() => markPrepared('no usable candidates'),
+                ICE_GATHER_MAX_WAIT_MS - ICE_GATHER_TIMEOUT_MS);
+        }, ICE_GATHER_TIMEOUT_MS);
     }).catch(err => {
         console.error('preparePeerConnection offer error', err);
     });
@@ -2243,23 +2495,7 @@ function setupWebRTC(iceServers) {
     attachAvatarConnectionMonitor(peerConnection);
 
     // Handle incoming tracks (video and audio)
-    peerConnection.ontrack = (event) => {
-        const mediaPlayer = document.createElement(event.track.kind);
-        mediaPlayer.id = event.track.kind;
-        mediaPlayer.srcObject = event.streams[0];
-        // autoplay=true starts the stream as soon as the first frame decodes (no
-        // loadeddata round-trip). playsInline keeps it inline on iOS Safari instead
-        // of forcing fullscreen.
-        mediaPlayer.autoplay = true;
-        mediaPlayer.playsInline = true;
-        if (container) container.appendChild(mediaPlayer);
-        if (event.track.kind === 'video') {
-            avatarVideoElement = mediaPlayer;
-            mediaPlayer.onplaying = () => revealAvatarVideo(mediaPlayer);
-        } else if (event.track.kind === 'audio') {
-            attachAvatarAudioAnalyser(event.streams[0]);
-        }
-    };
+    peerConnection.ontrack = (event) => attachAvatarTrack(event);
 
     peerConnection.onicegatheringstatechange = () => {
         if (peerConnection.iceGatheringState === 'complete') {
@@ -2268,15 +2504,47 @@ function setupWebRTC(iceServers) {
     };
 
     let iceGatheringDone = false;
+    let relaySettleTimer = null;
+    let connectableCount = 0;
+    let awaitingUsableCandidate = false;
+
+    // Send the offer as soon as we hold a candidate that can actually traverse
+    // NAT, rather than after a flat wait. Measured on the live app: the first TURN
+    // relay candidate arrives ~300ms after gathering starts, while gathering only
+    // reports "complete" at ~2.1s — so the old backstop timer fired on EVERY
+    // session and cost ~1.2s of visible startup for nothing. The timer is kept as
+    // a backstop for networks where TURN is unreachable, which makes this strictly
+    // no worse than the previous behaviour.
+    const sendOfferOnce = (reason) => {
+        if (iceGatheringDone) return;
+        iceGatheringDone = true;
+        clearTimeout(relaySettleTimer);
+        const sdpJson = JSON.stringify(peerConnection.localDescription);
+        const sdpBase64 = btoa(sdpJson);
+        ws.send(JSON.stringify({ type: 'avatar_sdp_offer', clientSdp: sdpBase64 }));
+        console.log('[WebRTC] SDP offer sent (' + reason + ')');
+    };
+
     peerConnection.onicecandidate = (event) => {
-        if (!event.candidate && !iceGatheringDone) {
-            iceGatheringDone = true;
-            // ICE gathering complete, send SDP offer now
-            const sdpJson = JSON.stringify(peerConnection.localDescription);
-            const sdpBase64 = btoa(sdpJson);
-            console.log('[SDP] Sending base64 SDP, starts with:', sdpBase64.substring(0, 40));
-            ws.send(JSON.stringify({ type: 'avatar_sdp_offer', clientSdp: sdpBase64 }));
-            console.log('[WebRTC] SDP offer sent (base64)');
+        if (!event.candidate) {
+            sendOfferOnce('gathering complete');
+            return;
+        }
+        if (isConnectableCandidate(event.candidate)) connectableCount++;
+        // Degraded path: the backstop already passed with nothing reachable, so
+        // take the first connectable candidate of either kind rather than holding
+        // out for a relay. Still settle briefly so a relay arriving just behind an
+        // srflx makes it into the same offer.
+        if (awaitingUsableCandidate) {
+            if (connectableCount > 0 && !relaySettleTimer) {
+                relaySettleTimer = setTimeout(
+                    () => sendOfferOnce('usable candidate after timeout'), ICE_RELAY_SETTLE_MS);
+            }
+            return;
+        }
+        if (iceCandidateType(event.candidate) === 'relay' && !relaySettleTimer) {
+            relaySettleTimer = setTimeout(
+                () => sendOfferOnce('relay candidate ready'), ICE_RELAY_SETTLE_MS);
         }
     };
 
@@ -2300,20 +2568,21 @@ function setupWebRTC(iceServers) {
     peerConnection.createOffer().then(offer => {
         return peerConnection.setLocalDescription(offer);
     }).then(() => {
-        // Timeout fallback: send SDP after 1.5s if ICE gathering hasn't completed.
-        // We send whatever candidates we have rather than waiting longer — if 1.5s
-        // wasn't enough to reach any TURN server, 2.5s usually isn't either and we
-        // were just adding visible Connect latency.
+        // Backstop only — see sendOfferOnce() above for why this should no longer
+        // be the path that normally fires.
         setTimeout(() => {
-            if (!iceGatheringDone) {
-                iceGatheringDone = true;
-                const sdpJson = JSON.stringify(peerConnection.localDescription);
-                const sdpBase64 = btoa(sdpJson);
-                console.log('[SDP] Sending base64 SDP (timeout), starts with:', sdpBase64.substring(0, 40));
-                ws.send(JSON.stringify({ type: 'avatar_sdp_offer', clientSdp: sdpBase64 }));
-                console.log('[WebRTC] SDP offer sent after timeout (base64)');
+            if (iceGatheringDone) return;
+            if (connectableCount > 0) {
+                sendOfferOnce('gathering timed out');
+                return;
             }
-        }, 1500);
+            // Nothing reachable gathered yet. An offer now could never connect
+            // (no trickle — see ICE_GATHER_MAX_WAIT_MS), so wait for a usable
+            // candidate instead of shipping a guaranteed-dead session.
+            awaitingUsableCandidate = true;
+            setTimeout(() => sendOfferOnce('no usable candidates'),
+                ICE_GATHER_MAX_WAIT_MS - ICE_GATHER_TIMEOUT_MS);
+        }, ICE_GATHER_TIMEOUT_MS);
     }).catch(err => {
         console.error('WebRTC offer error', err);
         addMessage('system', 'WebRTC setup failed');
@@ -2374,6 +2643,11 @@ function cleanupWebRTC() {
         avatarVideoElement.srcObject = null;
         avatarVideoElement = null;
     }
+    if (avatarAudioElement) {
+        avatarAudioElement.srcObject = null;
+        avatarAudioElement = null;
+    }
+    disarmAvatarGestureRetry();
     const container = document.getElementById('avatarVideo');
     if (container) container.innerHTML = '';
 }

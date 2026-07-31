@@ -1,7 +1,7 @@
 """Adaptive cards + Teams deep link for the bot (issues #53 / #28).
 
 Keeps presentation (answer rendering, citation list, the "open the live avatar"
-deep link into the Phase 1 personal tab) separate from turn handling.
+deep link into the channel B personal tab) separate from turn handling.
 """
 
 from __future__ import annotations

@@ -33,6 +33,20 @@
       ]
     }
   ],
+  "configurableTabs": [
+    {
+      "configurationUrl": "https://{{HOSTNAME}}/companion-config.html?inTeams=1",
+      "canUpdateConfiguration": false,
+      "scopes": [
+        "groupChat"
+      ],
+      "context": [
+        "meetingSidePanel",
+        "meetingStage",
+        "meetingChatTab"
+      ]
+    }
+  ],
   "bots": [
     {
       "botId": "{{BOT_ID}}",

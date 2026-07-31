@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Add {{AVATAR_NAME}} to this meeting</title>
+    <link rel="icon" type="image/svg+xml" href="/brand/favicon.svg" />
+    <style>
+        :root { color-scheme: light dark; }
+        body {
+            font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+            max-width: 520px; margin: 0 auto; padding: 1.5rem 1rem; line-height: 1.5;
+        }
+        h1 { font-size: 1.15rem; }
+        .notice { font-size: .9rem; opacity: .85; }
+    </style>
+</head>
+<body>
+    <h1>🎙️ {{AVATAR_NAME}} meeting control panel</h1>
+    <p class="notice">
+        Adds a side-panel control to bring {{AVATAR_NAME}} (an AI audio assistant) into this
+        meeting and ask her questions aloud. Click <strong>Save</strong> to add it.
+    </p>
+    <p class="notice">
+        {{AVATAR_NAME}} listens live to answer when addressed and does not record or
+        transcribe the meeting.
+    </p>
+    <script src="/brand.js"></script>
+    <script type="module" src="/companion-config.js"></script>
+</body>
+</html>

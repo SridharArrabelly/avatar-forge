@@ -8,5 +8,6 @@
   "cognitiveServices": "cog",
   "searchService": "srch",
   "botService": "bot",
+  "communicationServices": "acs",
   "resourceGroup": "rg"
 }

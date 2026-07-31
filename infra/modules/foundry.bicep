@@ -5,7 +5,7 @@ param projectName string
 param location string
 param tags object
 param uamiPrincipalId string
-@description('Object ID of the deployer (optional). Granted Azure AI Developer for setup scripts.')
+@description('Object ID of the deployer (optional). Granted Foundry User on the account so the postprovision setup scripts can call the data plane.')
 param deployerPrincipalId string = ''
 param modelName string
 param modelVersion string
@@ -28,6 +28,13 @@ param searchEndpoint string = ''
 param searchResourceId string = ''
 @description('Name of the project connection created for the search service.')
 param searchConnectionName string = ''
+
+@description('Resource ID of a Grounding-with-Bing-Custom-Search account to link as a project connection (optional). Leave empty to skip.')
+param bingAccountId string = ''
+@description('Name of the Bing account — shown as the connection display name. Required when bingAccountId is set.')
+param bingAccountName string = ''
+@description('Name of the project connection created for the Bing account.')
+param bingConnectionName string = ''
 
 resource account 'Microsoft.CognitiveServices/accounts@2025-04-01-preview' = {
   name: accountName
@@ -98,10 +105,21 @@ resource embeddingDeployment 'Microsoft.CognitiveServices/accounts/deployments@2
 }
 
 // Role IDs
+// NOTE: deliberately NOT 'Azure AI Developer' (64702f94-…). That role predates the
+// account/project Foundry model — every action it carries is
+// Microsoft.MachineLearningServices/* and it has NO dataActions at all, so on a
+// Microsoft.CognitiveServices Foundry account it grants literally nothing. It was
+// assigned here for a year and silently did nothing; the greenfield postprovision
+// hook 401'd on both `OpenAI/deployments/embeddings/action` and
+// `AIServices/connections/read` as a result.
 var cogServicesUserRoleId = 'a97b65f3-24c7-4388-baec-2e87135dc908' // Cognitive Services User
-var aiDeveloperRoleId = '64702f94-c441-49e6-a78b-ef80e0188fee'    // Azure AI Developer
+var foundryUserRoleId = '53ca6127-db72-4b80-b1b0-d745d6d5456d'    // Foundry User
 
 // UAMI → Cognitive Services User (Voice Live, OpenAI data-plane)
+// Its dataAction is the wildcard `Microsoft.CognitiveServices/*`, and an
+// account-scoped assignment is inherited by the child project — so this single
+// grant also covers the Agents/Threads data plane the app uses at runtime. No
+// separate project-scoped assignment is required.
 resource uamiCogUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(account.id, uamiPrincipalId, cogServicesUserRoleId)
   scope: account
@@ -112,25 +130,21 @@ resource uamiCogUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   }
 }
 
-// UAMI → Azure AI Developer on the project (Agents/Threads)
-resource uamiAiDevProject 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(project.id, uamiPrincipalId, aiDeveloperRoleId)
-  scope: project
-  properties: {
-    principalId: uamiPrincipalId
-    principalType: 'ServicePrincipal'
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', aiDeveloperRoleId)
-  }
-}
-
-// Deployer (optional) → Azure AI Developer on the project, for setup_foundry_agent.py
-resource deployerAiDev 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(deployerPrincipalId)) {
-  name: guid(project.id, deployerPrincipalId, aiDeveloperRoleId)
-  scope: project
+// Deployer (optional) → Foundry User on the ACCOUNT.
+// The postprovision scripts run as the human doing the deploy, and subscription
+// Owner/Contributor are control-plane roles that grant no CognitiveServices
+// dataActions. Both scripts therefore need this to reach the data plane:
+//   setup_aisearch_index.py  → OpenAI/deployments/embeddings/action  (probe embed dim)
+//   setup_foundry_agent.py   → AIServices/connections/read           (read connections)
+// Foundry User carries dataAction `Microsoft.CognitiveServices/*`, which covers
+// both; it must be scoped to the account, not the project, to reach OpenAI.
+resource deployerFoundryUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(deployerPrincipalId)) {
+  name: guid(account.id, deployerPrincipalId, foundryUserRoleId)
+  scope: account
   properties: {
     principalId: deployerPrincipalId
     principalType: 'User'
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', aiDeveloperRoleId)
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', foundryUserRoleId)
   }
 }
 
@@ -156,6 +170,30 @@ resource searchConnection 'Microsoft.CognitiveServices/accounts/projects/connect
       ApiType: 'Azure'
       ResourceId: searchResourceId
       Location: location
+    }
+  }
+}
+
+// The same wiring for Grounding with Bing Custom Search, so the web tool is
+// deployed rather than click-configured. Unlike AI Search this one cannot use
+// AAD — the Bing data plane is key-based only — so the account key is read at
+// deploy time with listKeys. It is never emitted as an output or written to a file.
+resource bingConnection 'Microsoft.CognitiveServices/accounts/projects/connections@2025-04-01-preview' = if (!empty(bingAccountId) && !empty(bingAccountName) && !empty(bingConnectionName)) {
+  parent: project
+  name: bingConnectionName
+  properties: {
+    category: 'GroundingWithCustomSearch'
+    target: 'https://api.bing.microsoft.com/'
+    authType: 'ApiKey'
+    isSharedToAll: true
+    credentials: {
+      key: listKeys(bingAccountId, '2025-05-01-preview').key1
+    }
+    metadata: {
+      ApiType: 'Azure'
+      ResourceId: bingAccountId
+      displayName: bingAccountName
+      type: 'bing_custom_search_preview'
     }
   }
 }

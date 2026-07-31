@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a sideloadable Microsoft Teams app package (scope 1A).
+"""Build a sideloadable Microsoft Teams app package.
 
 Substitutes the templated values in ``manifest.template.json`` and zips the
 resulting ``manifest.json`` together with the two icons **at the zip root**
@@ -9,8 +9,9 @@ Stdlib only — this is a pure-Python repo (uv) with no Node toolchain.
 
 Usage:
     uv run python teams/build_package.py --hostname my-app.azurecontainerapps.io
-    # or via env:
-    TEAMS_HOSTNAME=my-app.azurecontainerapps.io uv run python teams/build_package.py
+    # or via env (PowerShell):
+    $env:TEAMS_HOSTNAME = "my-app.azurecontainerapps.io"
+    uv run python teams/build_package.py
 
 Inputs (CLI flag overrides env var):
     --hostname / TEAMS_HOSTNAME      Required. Bare ACA hostname, no scheme/path/port.
@@ -18,13 +19,17 @@ Inputs (CLI flag overrides env var):
     --app-id   / TEAMS_APP_ID        Optional. Stable GUID. Defaults to a deterministic
                                      uuid5 derived from the hostname so rebuilds match.
     --bot-id   / TEAMS_BOT_ID        Optional. Azure Bot / Entra app GUID. When omitted the
-                                     build is tab-only (Phase 1) — the additive `bots` entry
+                                     build is tab-only (channel B) — the additive `bots` entry
                                      is dropped so the Tab package always builds.
-    --name     / TEAMS_APP_NAME      Optional. Assistant persona / display name shown in Teams
-                                     (default "Avatar"; pass e.g. "Nuru" for a branded build).
-                                     The full name + description are derived from it. This is
-                                     the brand name, decoupled from the avatar model binding
-                                     (CUSTOM_AVATAR_NAME).
+    --name     / TEAMS_APP_NAME      Optional. Assistant persona / display name shown in Teams.
+                                     Falls back to the app's resolved persona name — the
+                                     AVATAR_DISPLAY_NAME knob, or, when that is unset, the
+                                     friendly name of the active avatar model (a "Simone"
+                                     avatar gives a "Simone" package). Last resort "Avatar".
+                                     So a package built from a deployed environment is named
+                                     to match what the avatar calls itself, without setting a
+                                     second variable. The full name + description are derived
+                                     from it. See backend/avatar_identity.py for the rule.
 
 Output:
     teams/build/avatar-forge-teams.zip
@@ -41,7 +46,16 @@ import zipfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE = os.path.join(HERE, "manifest.template.json")
-ICONS_DIR = os.path.join(HERE, "icons")
+
+# Repo root on sys.path so the package name comes from the SAME persona rule the
+# running app uses (backend/avatar_identity.py) rather than a second copy of it.
+sys.path.insert(0, os.path.dirname(HERE))
+
+from backend.avatar_identity import resolve_avatar_display_name  # noqa: E402
+
+# Brand assets live in the repo-root canonical folder (assets/brand) so the web
+# app, Teams package, and meeting bot all derive from a single source of truth.
+ICONS_DIR = os.path.join(os.path.dirname(HERE), "assets", "brand")
 BUILD_DIR = os.path.join(HERE, "build")
 OUTPUT_ZIP = os.path.join(BUILD_DIR, "avatar-forge-teams.zip")
 
@@ -80,7 +94,7 @@ def _resolve_bot_id(raw: str | None) -> str:
     """Validate the bot id (the Azure Bot / Entra app GUID) used in the manifest.
 
     Optional: when omitted, the build produces a **tab-only** package (the
-    Phase 1 behaviour) by dropping the ``bots`` entry — the bot is purely
+    channel B behaviour) by dropping the ``bots`` entry — the bot is purely
     additive and must never gate the always-working Tab. When supplied it must
     be the Microsoft App ID (GUID) of the Azure Bot registration (issue #53).
     """
@@ -96,6 +110,11 @@ def _resolve_bot_id(raw: str | None) -> str:
 def _json_inner(s: str) -> str:
     """JSON-escape a string for safe substitution inside a JSON string literal."""
     return json.dumps(s)[1:-1]
+
+
+def _env_flag(name: str) -> bool:
+    """Truthy-ish parse of an env var ("1"/"true"/"yes"/"on")."""
+    return (os.getenv(name) or "").strip().lower() in ("1", "true", "yes", "on")
 
 
 def _resolve_names(raw_name: str | None, raw_full: str | None) -> dict[str, str]:
@@ -131,13 +150,29 @@ def _resolve_names(raw_name: str | None, raw_full: str | None) -> dict[str, str]
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Build the Teams app package (scope 1A).")
+    parser = argparse.ArgumentParser(description="Build the Teams app package.")
     parser.add_argument("--hostname", default=os.getenv("TEAMS_HOSTNAME"))
     parser.add_argument("--version", default=os.getenv("TEAMS_APP_VERSION", "1.0.0"))
     parser.add_argument("--app-id", default=os.getenv("TEAMS_APP_ID"))
     parser.add_argument("--bot-id", default=os.getenv("TEAMS_BOT_ID"))
-    parser.add_argument("--name", default=os.getenv("TEAMS_APP_NAME"))
+    parser.add_argument("--name", default=os.getenv("TEAMS_APP_NAME") or resolve_avatar_display_name())
     parser.add_argument("--full-name", default=os.getenv("TEAMS_APP_FULL_NAME"))
+    parser.add_argument(
+        "--enable-companion",
+        action="store_true",
+        default=_env_flag("TEAMS_ENABLE_COMPANION"),
+        help="Include the optional channel D meeting control panel (configurableTabs). "
+        "Off by default — the package is then identical to the tab-only/chat-only build.",
+    )
+    parser.add_argument(
+        "--enable-calling",
+        action="store_true",
+        default=_env_flag("TEAMS_ENABLE_CALLING"),
+        help="Mark the bot as a Teams calling bot (supportsCalling=true) for the "
+        "channel D (#27) in-call media bot. Off by default — the package is then "
+        "identical to the channel C chat-only build. Requires a --bot-id and a "
+        "tenant policy that allows calling bots in meetings.",
+    )
     args = parser.parse_args(argv)
 
     hostname = _normalize_hostname(args.hostname)
@@ -172,10 +207,22 @@ def main(argv: list[str] | None = None) -> int:
     except json.JSONDecodeError as e:
         sys.exit(f"error: rendered manifest is not valid JSON: {e}")
 
-    # Tab-only build: drop the additive bot so the package matches Phase 1 and
+    # Tab-only build: drop the additive bot so the package matches channel B and
     # never gates the always-working Tab. The bot is opt-in via --bot-id.
     if not bot_id:
         manifest.pop("bots", None)
+
+    # Channel D (#27): mark the bot as a calling bot so it can join meeting media.
+    # Opt-in — default leaves supportsCalling=false (the channel C chat-only shape).
+    if bot_id and args.enable_calling:
+        for bot in manifest.get("bots", []):
+            bot["supportsCalling"] = True
+
+    # The channel D meeting control panel (configurableTabs) is opt-in. When not
+    # enabled the entry is dropped so the package is byte-for-byte the tab-only/chat-only
+    # shape — the optional Companion never gates the always-working Tab/bot.
+    if not args.enable_companion:
+        manifest.pop("configurableTabs", None)
 
     # Defensive: validDomains entries must stay scheme/path free.
     for d in manifest.get("validDomains", []):
@@ -201,6 +248,8 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  version:  {version}")
     print(f"  app id:   {app_id}")
     print(f"  bot id:   {bot_id or '(none — tab-only package)'}")
+    print(f"  companion: {'included (meeting control panel)' if args.enable_companion else '(not included)'}")
+    print(f"  calling:   {'enabled (supportsCalling=true)' if (bot_id and args.enable_calling) else '(chat-only)'}")
     print("Sideload it in Teams via: Apps -> Manage your apps -> Upload an app -> Upload a custom app")
     return 0
 

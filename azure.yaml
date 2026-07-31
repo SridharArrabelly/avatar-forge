@@ -20,10 +20,46 @@ services:
       remoteBuild: true
 
 hooks:
-  # Runs after every successful `azd provision` / `azd up`. Three jobs:
+  # The first checkpoint. Blocks `azd up` when the environment cannot possibly
+  # produce a working deployment — wrong region for Voice Live, unregistered
+  # providers, or inputs the selected channel needs and does not have.
+  #
+  # Failing here costs seconds. The same problems found after provisioning cost
+  # twenty minutes and a partially-created resource group.
+  #
+  # Escape hatch: `azd env set PREFLIGHT_SKIP true`. Nobody should ever be stuck
+  # behind their own tooling.
+  preprovision:
+    windows:
+      shell: pwsh
+      run: |
+        if ($env:PREFLIGHT_SKIP -eq 'true') {
+          Write-Host "PREFLIGHT_SKIP=true - skipping preflight checks." -ForegroundColor Yellow
+        } else {
+          uv run python scripts/preflight.py
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "Preflight failed. Fix the items above, or set PREFLIGHT_SKIP=true to bypass."
+            exit 1
+          }
+        }
+    posix:
+      shell: sh
+      run: |
+        if [ "$PREFLIGHT_SKIP" = "true" ]; then
+          echo "PREFLIGHT_SKIP=true - skipping preflight checks."
+        else
+          uv run python scripts/preflight.py || {
+            echo "Preflight failed. Fix the items above, or set PREFLIGHT_SKIP=true to bypass." >&2
+            exit 1
+          }
+        fi
+
+  # Runs after every successful `azd provision` / `azd up`. Four jobs:
   #   1. Grant BYO RBAC idempotently (handles RoleAssignmentExists gracefully).
   #   2. Build the AI Search index from data/*.docx (greenfield search only).
   #   3. Create/update the Foundry agent (greenfield foundry only).
+  #   4. Print the steps that remain for the selected channel — the manual and
+  #      administrator ones Bicep cannot perform.
   postprovision:
     windows:
       shell: pwsh
@@ -36,6 +72,8 @@ hooks:
 
         $greenfieldFoundry = [string]::IsNullOrWhiteSpace($env:FOUNDRY_ACCOUNT_NAME)
         $greenfieldSearch  = [string]::IsNullOrWhiteSpace($env:SEARCH_SERVICE_NAME)
+        $indexState = 'reused'
+        $agentState = 'reused'
 
         if (-not ($greenfieldFoundry -and $greenfieldSearch)) {
           Write-Host "Granting BYO runtime RBAC (idempotent) ..." -ForegroundColor Cyan
@@ -48,9 +86,15 @@ hooks:
           $docs = @(Get-ChildItem -Path data -Filter *.docx -ErrorAction SilentlyContinue)
           if ($docs.Count -eq 0) {
             Write-Warning "data/ has no .docx files - skipping index build. Drop your documents into data/ and run: uv run python scripts/setup_aisearch_index.py"
+            $indexState = 'empty'
           } else {
             uv run python scripts/setup_aisearch_index.py
-            if ($LASTEXITCODE -ne 0) { Write-Warning "AI Search index build failed (exit $LASTEXITCODE). Run it manually after fixing the issue." }
+            if ($LASTEXITCODE -ne 0) {
+              Write-Warning "AI Search index build failed (exit $LASTEXITCODE). Run it manually after fixing the issue."
+              $indexState = 'failed'
+            } else {
+              $indexState = 'ok'
+            }
           }
         } else {
           Write-Host "[brownfield] Skipping AI Search index build - using existing index '$env:SEARCH_INDEX_NAME'." -ForegroundColor Yellow
@@ -59,13 +103,62 @@ hooks:
         if ($greenfieldFoundry) {
           Write-Host "[greenfield] Creating Foundry agent '$env:AGENT_NAME' ..." -ForegroundColor Cyan
           uv run python scripts/setup_foundry_agent.py
-          if ($LASTEXITCODE -ne 0) { Write-Warning "Foundry agent setup failed (exit $LASTEXITCODE). Run it manually after fixing the issue." }
+          # Exit 3 is deliberate: the agent exists and answers, but an OPTIONAL
+          # tool (web/news grounding) was left out. That is a degraded success,
+          # not a failure, and must not be reported as one.
+          switch ($LASTEXITCODE) {
+            0       { $agentState = 'ok' }
+            3       { $agentState = 'degraded' }
+            default { $agentState = 'failed' }
+          }
         } else {
           Write-Host "[brownfield] Skipping Foundry agent creation - using existing agent '$env:AGENT_NAME'." -ForegroundColor Yellow
         }
 
         Write-Host ""
         Write-Host "App ready: $env:SERVICE_APP_URI" -ForegroundColor Green
+
+        if ($env:MEETING_BOT_HOST_DEPLOYED -eq 'true') {
+          Write-Host "Media host: $env:MEETING_BOT_FQDN" -ForegroundColor Green
+          Write-Host "Operator API: $env:MEETING_BOT_OPERATOR_API" -ForegroundColor Green
+        } elseif ($env:DEPLOY_PROFILE -eq 'in-call') {
+          Write-Host "WARNING: profile is 'in-call' but the Windows media host was NOT deployed." -ForegroundColor Yellow
+          Write-Host "         MEETING_BOT_APP_ID, MEETING_BOT_DNS_LABEL and MEETING_BOT_ADMIN_PASSWORD must all be set." -ForegroundColor Yellow
+        }
+
+        uv run python scripts/preflight.py --remaining
+
+        # Infrastructure succeeding while the data plane quietly failed is the
+        # worst outcome: a deployed app that cannot answer, reported as success.
+        # Say plainly what exists before azd prints its own green banner.
+        Write-Host ""
+        Write-Host "--- Data plane ---" -ForegroundColor Cyan
+        switch ($indexState) {
+          'ok'     { Write-Host "  Search index : built" -ForegroundColor Green }
+          'empty'  { Write-Host "  Search index : EMPTY - add .docx files to data/ and run: uv run python scripts/setup_aisearch_index.py" -ForegroundColor Yellow }
+          'failed' { Write-Host "  Search index : FAILED - re-run: uv run python scripts/setup_aisearch_index.py" -ForegroundColor Red }
+          default  { Write-Host "  Search index : reusing existing '$env:SEARCH_INDEX_NAME'" -ForegroundColor Yellow }
+        }
+        switch ($agentState) {
+          'ok'       { Write-Host "  Agent        : ready (search + web tools)" -ForegroundColor Green }
+          'degraded' { Write-Host "  Agent        : ready, WEB TOOL OFF - answers from indexed documents only." -ForegroundColor Yellow
+                       Write-Host "                 To enable: add a Grounding-with-Bing-Custom-Search connection," -ForegroundColor Yellow
+                       Write-Host "                 set BING_CONNECTION_NAME + BING_CUSTOM_CONFIG_NAME, then re-run:" -ForegroundColor Yellow
+                       Write-Host "                 uv run python scripts/setup_foundry_agent.py" -ForegroundColor Yellow }
+          'failed'   { Write-Host "  Agent        : NOT CREATED" -ForegroundColor Red }
+          default    { Write-Host "  Agent        : reusing existing '$env:AGENT_NAME'" -ForegroundColor Yellow }
+        }
+        Write-Host ""
+        Write-Host "Re-run these data-plane steps any time (both are idempotent):" -ForegroundColor Cyan
+        Write-Host "  azd hooks run postprovision      # everything below, in order"
+        Write-Host "  uv run python scripts/setup_aisearch_index.py"
+        Write-Host "  uv run python scripts/setup_foundry_agent.py"
+
+        if ($agentState -eq 'failed') {
+          Write-Host ""
+          Write-Error "Infrastructure deployed, but the Foundry agent was NOT created - the app cannot answer. Fix the error above, then run: uv run python scripts/setup_foundry_agent.py (or: azd hooks run postprovision). Your Azure resources are fine; nothing needs re-provisioning."
+          exit 1
+        }
     posix:
       shell: sh
       run: |
@@ -75,6 +168,9 @@ hooks:
         echo "Search endpoint:   $AZURE_SEARCH_ENDPOINT"
         echo ""
 
+        index_state=reused
+        agent_state=reused
+
         if [ -n "$FOUNDRY_ACCOUNT_NAME" ] || [ -n "$SEARCH_SERVICE_NAME" ]; then
           echo "Granting BYO runtime RBAC (idempotent) ..."
           uv run python scripts/grant_byo_rbac.py || echo "WARN: BYO RBAC grant failed."
@@ -83,9 +179,15 @@ hooks:
         if [ -z "$SEARCH_SERVICE_NAME" ]; then
           echo "[greenfield] Building AI Search index from data/*.docx ..."
           if ls data/*.docx >/dev/null 2>&1; then
-            uv run python scripts/setup_aisearch_index.py || echo "WARN: AI Search index build failed. Re-run manually."
+            if uv run python scripts/setup_aisearch_index.py; then
+              index_state=ok
+            else
+              echo "WARN: AI Search index build failed. Re-run manually."
+              index_state=failed
+            fi
           else
             echo "WARN: data/ has no .docx files - skipping index build. Drop your documents into data/ and run: uv run python scripts/setup_aisearch_index.py"
+            index_state=empty
           fi
         else
           echo "[brownfield] Skipping AI Search index build - using existing index '$SEARCH_INDEX_NAME'."
@@ -93,13 +195,63 @@ hooks:
 
         if [ -z "$FOUNDRY_ACCOUNT_NAME" ]; then
           echo "[greenfield] Creating Foundry agent '$AGENT_NAME' ..."
-          uv run python scripts/setup_foundry_agent.py || echo "WARN: Foundry agent setup failed. Re-run manually."
+          # Exit 3 is deliberate: the agent exists and answers, but an OPTIONAL
+          # tool (web/news grounding) was left out. Degraded success, not failure.
+          uv run python scripts/setup_foundry_agent.py
+          case $? in
+            0) agent_state=ok ;;
+            3) agent_state=degraded ;;
+            *) agent_state=failed ;;
+          esac
         else
           echo "[brownfield] Skipping Foundry agent creation - using existing agent '$AGENT_NAME'."
         fi
 
         echo ""
         echo "App ready: $SERVICE_APP_URI"
+
+        if [ "$MEETING_BOT_HOST_DEPLOYED" = "true" ]; then
+          echo "Media host: $MEETING_BOT_FQDN"
+          echo "Operator API: $MEETING_BOT_OPERATOR_API"
+        elif [ "$DEPLOY_PROFILE" = "in-call" ]; then
+          echo "WARNING: profile is 'in-call' but the Windows media host was NOT deployed."
+          echo "         MEETING_BOT_APP_ID, MEETING_BOT_DNS_LABEL and MEETING_BOT_ADMIN_PASSWORD must all be set."
+        fi
+
+        uv run python scripts/preflight.py --remaining
+
+        # Infrastructure succeeding while the data plane quietly failed is the
+        # worst outcome: a deployed app that cannot answer, reported as success.
+        echo ""
+        echo "--- Data plane ---"
+        case "$index_state" in
+          ok)     echo "  Search index : built" ;;
+          empty)  echo "  Search index : EMPTY - add .docx files to data/ and run: uv run python scripts/setup_aisearch_index.py" ;;
+          failed) echo "  Search index : FAILED - re-run: uv run python scripts/setup_aisearch_index.py" ;;
+          *)      echo "  Search index : reusing existing '$SEARCH_INDEX_NAME'" ;;
+        esac
+        case "$agent_state" in
+          ok)       echo "  Agent        : ready (search + web tools)" ;;
+          degraded) echo "  Agent        : ready, WEB TOOL OFF - answers from indexed documents only."
+                    echo "                 To enable: add a Grounding-with-Bing-Custom-Search connection,"
+                    echo "                 set BING_CONNECTION_NAME + BING_CUSTOM_CONFIG_NAME, then re-run:"
+                    echo "                 uv run python scripts/setup_foundry_agent.py" ;;
+          failed)   echo "  Agent        : NOT CREATED" ;;
+          *)        echo "  Agent        : reusing existing '$AGENT_NAME'" ;;
+        esac
+        echo ""
+        echo "Re-run these data-plane steps any time (both are idempotent):"
+        echo "  azd hooks run postprovision      # everything below, in order"
+        echo "  uv run python scripts/setup_aisearch_index.py"
+        echo "  uv run python scripts/setup_foundry_agent.py"
+
+        if [ "$agent_state" = "failed" ]; then
+          echo ""
+          echo "ERROR: Infrastructure deployed, but the Foundry agent was NOT created - the app cannot answer." >&2
+          echo "       Fix the error above, then run: uv run python scripts/setup_foundry_agent.py" >&2
+          echo "       (or: azd hooks run postprovision). Your Azure resources are fine." >&2
+          exit 1
+        fi
 
   # Defense-in-depth: ensure vars the `azure.ai.agents` azd extension expects are set
   # in the azd env BEFORE `azd deploy` invokes its postdeploy hook. The extension

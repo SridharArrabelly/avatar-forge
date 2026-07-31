@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{{AVATAR_NAME}} — Join a Teams meeting</title>
+    <link rel="icon" type="image/svg+xml" href="/brand/favicon.svg" />
+    <style>
+        :root { color-scheme: light dark; }
+        body {
+            font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+            max-width: 640px; margin: 0 auto; padding: 2rem 1.25rem; line-height: 1.5;
+        }
+        h1 { font-size: 1.4rem; }
+        .row { display: flex; gap: .5rem; margin: 1rem 0; }
+        input[type=text] { flex: 1; padding: .6rem .7rem; font-size: 1rem; }
+        button {
+            padding: .6rem 1.1rem; font-size: 1rem; cursor: pointer; border-radius: 6px;
+            border: 1px solid #888; background: #2563eb; color: #fff;
+        }
+        button:disabled { opacity: .5; cursor: default; }
+        button.secondary { background: transparent; color: inherit; }
+        #status { white-space: pre-wrap; font-size: .9rem; padding: .75rem;
+            border-radius: 6px; background: rgba(127,127,127,.12); min-height: 2.5rem; }
+        .notice { font-size: .85rem; opacity: .8; }
+        .consent { border-left: 3px solid #f59e0b; padding-left: .75rem; }
+    </style>
+</head>
+<body>
+    <h1>🎙️ Bring {{AVATAR_NAME}} into a Teams meeting</h1>
+    <p class="notice">
+        This page joins a Microsoft Teams meeting as an audio assistant using
+        Azure Communication Services. Once joined, anyone in the call can say a
+        wake phrase (e.g. <strong>"Hey {{AVATAR_NAME}}"</strong>) and ask a question aloud;
+        {{AVATAR_NAME}} answers by voice, grounded in the knowledge base.
+    </p>
+    <p class="notice consent">
+        <strong>Please notify participants:</strong> an AI assistant is present
+        and listening in the meeting. {{AVATAR_NAME}} does <strong>not</strong> record or
+        transcribe the meeting — she only listens live to answer when addressed.
+    </p>
+
+    <div class="row">
+        <input id="meetingLink" type="text" autocomplete="off"
+               placeholder="Paste the Teams meeting join link…" />
+    </div>
+    <div class="row">
+        <button id="joinBtn">Join meeting</button>
+        <button id="leaveBtn" class="secondary" disabled>Leave</button>
+    </div>
+    <div class="row">
+        <button id="muteNuruBtn" class="secondary" disabled>🔇 Mute {{AVATAR_NAME}}</button>
+        <button id="unmuteNuruBtn" class="secondary" disabled>🔊 Unmute {{AVATAR_NAME}}</button>
+        <button id="farSideBtn" class="secondary" disabled
+                title="Share the Teams window/tab WITH audio so {{AVATAR_NAME}} can hear remote participants">
+            👥 Capture far-side audio
+        </button>
+    </div>
+    <p class="notice">
+        <strong>Hear remote participants:</strong> by default {{AVATAR_NAME}} hears only this
+        device's microphone (Teams isolates per-client audio). To let her hear the
+        far side, click <em>Capture far-side audio</em> and share the Teams
+        window/tab <strong>with “Share audio” ticked</strong>.
+    </p>
+    <div id="status">Idle.</div>
+
+    <script src="/brand.js"></script>
+    <script type="module" src="/acs-join.js"></script>
+</body>
+</html>

@@ -8,9 +8,11 @@ from contextlib import asynccontextmanager
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from .api import routes, websocket as ws
+from .acs import build_acs_router
 from .bot.app import build_bot_router, shutdown_bot
 from .config import DEVELOPER_MODE, HOST, PORT, configure_logging
 from .voice.auth import close_credential, create_credential
@@ -150,11 +152,64 @@ async def cache_static(request, call_next):
     return response
 
 
+# Compress text responses. Registered LAST so it is the outermost HTTP middleware
+# and therefore compresses the final body after the header middlewares above have
+# run. The frontend ships ~200KB of uncompressed text per cold load (app.js 116KB,
+# style.css 40KB, index.html 44KB) and nothing was compressing it, so every first
+# visit paid full size on the critical path. WebSocket traffic is untouched —
+# GZipMiddleware only handles scope type "http", so the voice/avatar sockets and
+# the raw PCM frames on them are unaffected. minimum_size skips bodies too small
+# for compression to pay for itself.
+#
+# Formats that are already compressed are skipped by extension: re-compressing
+# them burns CPU and makes them marginally LARGER (measured: /brand/color.png went
+# 44,895 -> 44,928 bytes). Starlette's GZipMiddleware has no content-type filter,
+# and the content type isn't known until the response starts, so the path is the
+# practical place to decide. API routes have no extension and stay compressed.
+_INCOMPRESSIBLE_SUFFIXES = (
+    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".ico",
+    ".woff", ".woff2", ".zip", ".gz", ".mp4", ".webm", ".mp3", ".ogg",
+)
+
+
+class SelectiveGZipMiddleware(GZipMiddleware):
+    """GZipMiddleware that leaves already-compressed media alone."""
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http" and scope.get("path", "").lower().endswith(
+            _INCOMPRESSIBLE_SUFFIXES
+        ):
+            await self.app(scope, receive, send)
+            return
+        await super().__call__(scope, receive, send)
+
+
+# compresslevel 6, not Starlette's default of 9. Measured over this frontend's
+# own assets, level 9 costs 2.5x the CPU of level 6 to save 241 bytes (0.1%) —
+# a bad trade on a 1-vCPU container, and worse than it looks because compression
+# runs on the same event loop that has to accept the voice WebSocket while the
+# page is still loading.
+app.add_middleware(SelectiveGZipMiddleware, minimum_size=1024, compresslevel=6)
+
+
 app.include_router(routes.router)
 app.include_router(ws.router)
 # Teams bot messaging endpoint (issue #53). Mounted before the static SPA so
 # POST /api/messages is handled by the bot, not the catch-all frontend mount.
 app.include_router(build_bot_router())
+# Teams in-call media participant (channel D, issue #27). Additive + opt-in: every
+# ACS endpoint returns 503 when ACS is not configured, so this never changes a
+# non-ACS deploy. Mounted before the static SPA so /api/acs/* + /ws/acs/* resolve.
+app.include_router(build_acs_router())
+
+# Canonical brand assets (logo/icons) live in assets/brand and are the single
+# source of truth shared by the web app, the Teams package, and the meeting bot.
+# Serve them at /brand/* so the web favicon and the Azure Bot iconUrl can both
+# reference one URL (e.g. /brand/color.png) without copying the file around.
+# Mounted before the catch-all SPA so /brand/* resolves here.
+_brand = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets", "brand")
+if os.path.isdir(_brand):
+    app.mount("/brand", StaticFiles(directory=_brand), name="brand")
 
 # Mount frontend
 _frontend = os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend")

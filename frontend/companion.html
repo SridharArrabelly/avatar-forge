@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{{AVATAR_NAME}} — Meeting control panel</title>
+    <link rel="icon" type="image/svg+xml" href="/brand/favicon.svg" />
+    <style>
+        :root { color-scheme: light dark; }
+        body {
+            font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+            max-width: 560px; margin: 0 auto; padding: 1.25rem 1rem; line-height: 1.5;
+        }
+        h1 { font-size: 1.25rem; margin: .25rem 0 1rem; }
+        h2 { font-size: 1rem; margin: 1.25rem 0 .4rem; }
+        .row { display: flex; gap: .5rem; margin: .75rem 0; }
+        input[type=text] { flex: 1; padding: .55rem .65rem; font-size: .95rem; }
+        button {
+            padding: .55rem 1rem; font-size: .95rem; cursor: pointer; border-radius: 6px;
+            border: 1px solid #888; background: #2563eb; color: #fff;
+        }
+        button:disabled { opacity: .5; cursor: default; }
+        button.secondary { background: transparent; color: inherit; }
+        .pill {
+            display: inline-flex; align-items: center; gap: .4rem; font-size: .85rem;
+            padding: .25rem .7rem; border-radius: 999px; background: rgba(127,127,127,.15);
+        }
+        .dot { width: .6rem; height: .6rem; border-radius: 50%; background: #9ca3af; }
+        .dot.live { background: #16a34a; }
+        .dot.off { background: #dc2626; }
+        #status { white-space: pre-wrap; font-size: .9rem; padding: .65rem;
+            border-radius: 6px; background: rgba(127,127,127,.12); min-height: 2.2rem; }
+        .notice { font-size: .85rem; opacity: .85; }
+        .consent { border-left: 3px solid #f59e0b; padding-left: .75rem; }
+        details { font-size: .85rem; margin-top: 1rem; }
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+    <h1>🎙️ {{AVATAR_NAME}} — meeting control panel</h1>
+
+    <div class="row" style="justify-content: space-between; align-items: center;">
+        <span class="pill"><span id="liveDot" class="dot"></span><span id="liveText">Checking…</span></span>
+    </div>
+
+    <p class="notice consent">
+        <strong>Please tell participants:</strong> when {{AVATAR_NAME}} joins she is an AI
+        assistant that <strong>listens live</strong> to answer when addressed. She
+        does <strong>not</strong> record or transcribe the meeting.
+    </p>
+
+    <h2>Bring {{AVATAR_NAME}} into this call</h2>
+    <p class="notice">
+        Paste the meeting join link, then open the joiner. It opens in a
+        <strong>separate window</strong> (kept outside the Teams meeting window on
+        purpose, to avoid audio feedback). Keep that window open for the duration
+        of the call.
+    </p>
+    <div class="row">
+        <input id="meetingLink" type="text"
+               placeholder="Paste the Teams meeting join link…" />
+    </div>
+    <div class="row">
+        <button id="bringBtn">Bring {{AVATAR_NAME}} into this call</button>
+        <button id="refreshBtn" class="secondary">Refresh status</button>
+    </div>
+    <div id="status">Idle.</div>
+
+    <h2>How to ask her things</h2>
+    <p class="notice">
+        Once {{AVATAR_NAME}} shows as <strong>in the call</strong>, anyone can unmute and say
+        the wake phrase (e.g. <strong>"Hey {{AVATAR_NAME}}"</strong>) followed by a question.
+        She answers aloud, grounded in the knowledge base, and stays quiet
+        otherwise so she never talks over people.
+    </p>
+
+    <details>
+        <summary>If she doesn't join, or drops out</summary>
+        <ul class="notice">
+            <li>Confirm the joiner window is still open and shows
+                "{{AVATAR_NAME}} is in the call".</li>
+            <li>If she's stuck in the lobby, admit her from the meeting roster.</li>
+            <li>Re-open the joiner with the button above to rejoin.</li>
+            <li>If the panel says in-call media isn't enabled, the deployment needs
+                ACS configured (see the team's deployment notes).</li>
+        </ul>
+    </details>
+
+    <details>
+        <summary>Private avatar preview (optional)</summary>
+        <p class="notice">
+            Want to see {{AVATAR_NAME}}'s animated face? Open the
+            <a id="previewLink" href="/?inTeams=1" target="_blank" rel="noopener">personal avatar tab</a>.
+            That preview is a <strong>private</strong> conversation with {{AVATAR_NAME}} — it
+            is separate from the in-call audio participant and is not shown to the
+            meeting.
+        </p>
+    </details>
+
+    <script src="/brand.js"></script>
+    <script type="module" src="/companion.js"></script>
+</body>
+</html>

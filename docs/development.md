@@ -20,10 +20,7 @@ or `azd` for local development — just `uv` and `az login`. For env vars see
 
 ## 1. Install uv (one-time)
 
-```bash
-# macOS/Linux
-curl -LsSf https://astral.sh/uv/install.sh | sh
-# Windows (PowerShell)
+```powershell
 powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
@@ -32,7 +29,7 @@ the app.
 
 ## 2. Configure your environment
 
-```bash
+```powershell
 cp .env.example .env
 ```
 
@@ -43,19 +40,19 @@ Fill in at least the required runtime vars (`AZURE_VOICELIVE_ENDPOINT`, `AGENT_N
 
 Authenticate (the Voice Live agent path requires Entra ID — no API key):
 
-```bash
+```powershell
 az login
 ```
 
 ## 3. Run the server
 
-```bash
+```powershell
 uv run avatar-forge
 ```
 
 Or with uvicorn directly (auto-reload):
 
-```bash
+```powershell
 uv run uvicorn backend.main:app --host 0.0.0.0 --port 3000 --reload
 ```
 
@@ -86,18 +83,27 @@ What the script does each run:
 This is a one-off bootstrap — the running app never re-ingests, it only queries.
 
 Required roles for the signed-in user: **Search Index Data Contributor** + **Search
-Service Contributor** on AI Search, and **Azure AI User** (or equivalent) on the
-Foundry project with access to the embedding deployment.
+Service Contributor** on AI Search, and **Foundry User** on the Foundry **account**
+(not the project — the embedding call is an account-level data action).
 
-```bash
+`azd up` assigns all three automatically when `AZURE_PRINCIPAL_ID` is set, which `azd`
+does for you. You only need to grant them by hand when running this script against a
+Foundry account you did not deploy. Note that **Azure AI Developer** is *not* a
+substitute: it carries no `Microsoft.CognitiveServices` data actions, so the embedding
+call returns `401 PermissionDenied` even though the role name suggests otherwise.
+
+```powershell
 uv run python scripts/setup_aisearch_index.py
+
 # wipe + rebuild from scratch:
-RECREATE_INDEX=true uv run python scripts/setup_aisearch_index.py
+$env:RECREATE_INDEX = "true"
+uv run python scripts/setup_aisearch_index.py
+Remove-Item Env:\RECREATE_INDEX
 ```
 
 ## Smoke-test the index
 
-```bash
+```powershell
 uv run python scripts/test_aisearch_query.py "what was discussed about dividends"
 uv run python scripts/test_aisearch_query.py -k 3 "board chair election"
 ```
@@ -107,7 +113,7 @@ reranker scores.
 
 ## Smoke-test the live agent
 
-```bash
+```powershell
 uv run python scripts/test_foundry_agent.py
 ```
 
@@ -116,12 +122,37 @@ to confirm tool routing after editing prompts or switching `AGENT_MODEL`. The ro
 test checklist + model-shootout results live in
 [`prompts/agent/routing-test-questions.md`](../prompts/agent/routing-test-questions.md).
 
+## Automated tests
+
+Everything above is a *smoke test* — it needs live Azure resources. Two checks run
+fully offline:
+
+```powershell
+uv run python scripts/test_agent_tool_wiring.py
+```
+
+Proves the agent's **required vs optional** tools degrade correctly: a missing AI Search
+connection is fatal (it is the corpus), while a missing — or wrongly named — Bing
+connection only disables the web tool. Needs no Azure and no credentials. Run it after
+touching `setup_foundry_agent.py`.
+
+```powershell
+cd meeting-bot\tests\BridgeContract.Tests
+dotnet test
+```
+
+Eight tests lock the contract between the .NET media bot and
+[`backend/acs/bridge.py`](../backend/acs/bridge.py). They need the .NET SDK but **not**
+Windows and **not** the media SDK — the suite link-compiles the one client class rather
+than referencing the bot project. Run them after touching either side of that protocol;
+a mismatch there is silent in production, so nothing else will catch it.
+
 ## (Re)register the Foundry agent
 
 After editing the prompts in [`prompts/agent/`](../prompts/agent/) or changing
 `AGENT_MODEL` / tool wiring, re-register the agent:
 
-```bash
+```powershell
 uv run python scripts/setup_foundry_agent.py
 ```
 
@@ -129,6 +160,22 @@ The script selects the prompt variant (reasoning vs non-reasoning) from `AGENT_M
 and wires the AI Search + Grounding-with-Bing-Custom-Search tools. See
 [`prompts/README.md`](../prompts/README.md) and
 [architecture.md](architecture.md#tool-calling-accuracy).
+
+## Regenerate the brand icons
+
+[`assets/brand/`](../assets/brand/) is the single source for the app mark, shared by the
+web app, the Teams package and the meeting bot. `color.png` (192×192) and `outline.png`
+(32×32) are **drawn procedurally** by `generate_icons.py` — there is no source image, so
+changing the mark means editing the drawing code in that script, then:
+
+```powershell
+uv run --with pillow python assets/brand/generate_icons.py
+```
+
+Pillow is deliberately not a project dependency (the repo is stdlib-only), hence
+`--with`. Both PNGs are committed: re-run, then commit the result. The web app and bot
+serve them from `/brand/*` immediately; the Teams package picks them up on its next
+`build_package.py` run.
 
 ## Docker (local) — not recommended
 
@@ -140,7 +187,7 @@ tenant allows service-principal secrets (`AZURE_TENANT_ID` / `AZURE_CLIENT_ID` /
 
 ## Run inside Microsoft Teams
 
-To run the same UI as a Teams personal tab (and the Phase 2a conversational bot),
+To run the same UI as a Teams personal tab (and the channel C conversational bot),
 follow [`teams/README.md`](../teams/README.md) — it covers building the package against
 your deployed hostname, the admin-free sideload routes, the bot's Azure Bot / Entra
 setup, and the validation checklist. The Teams integration is fully additive: the

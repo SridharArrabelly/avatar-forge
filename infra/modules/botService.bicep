@@ -1,4 +1,4 @@
-// Azure Bot (Bot Service) registration + Teams channel for the Phase 2a bot (#53).
+// Azure Bot (Bot Service) registration + Teams channel for the channel C bot (#53).
 // Conditional: only deployed when a bot app id is supplied, so existing
 // (bot-less) deployments are unaffected.
 //

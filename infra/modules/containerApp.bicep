@@ -49,8 +49,45 @@ param teamsAppId string = ''
 @description('Foundry agent id override. Empty means resolve the agent by AGENT_NAME.')
 param agentId string = ''
 
+// ───────── channel D in-call media (#27) ─────────
+@description('ACS endpoint for the Call Automation media participant. Empty disables channel D in the container.')
+param acsEndpoint string = ''
+
+@description('"true"/"false" string. When "true", the .NET Teams media bot bridge (/ws/acs/audio) is served WITHOUT an ACS resource — sets MEETING_BOT_ENABLED so ACS_ENABLED is true on the Voice Live path alone.')
+param meetingBotEnabled string = 'false'
+
+@description('PCM sample rate (Hz) the media bot streams. Teams media bot uses 16000; ACS browser bridge uses 24000.')
+param acsAudioSampleRate string = ''
+
+@description('"true"/"false" string. When "true", the in-call avatar only answers after a wake phrase so she never talks over humans.')
+param acsRequireWakePhrase string = ''
+
+@description('"true"/"false" string. When "true", the in-call avatar sends an outgoing video tile so it is a visible participant instead of a faceless audio leg.')
+param acsAvatarVideoEnabled string = ''
+
 @description('Placeholder image used on first provision; azd replaces it during `azd deploy`.')
 param containerImage string = 'mcr.microsoft.com/k8se/quickstart:latest'
+
+// Channel D ACS env (additive). Surfaces ACS_ENDPOINT only when enabled; the app
+// reads it to construct the Call Automation client (managed identity via
+// AZURE_CLIENT_ID). Empty -> channel D stays off and the container behaves as today.
+var acsEnv = !empty(acsEndpoint) ? [
+  {
+    name: 'ACS_ENDPOINT'
+    value: acsEndpoint
+  }
+] : []
+
+// Channel D Teams media-bot env (additive). The .NET media bot connects to the
+// /ws/acs/audio bridge, which only needs Voice Live (no ACS resource). MEETING_BOT_ENABLED
+// flips ACS_ENABLED on so the bridge is served. Empty/false -> behaves as today.
+var meetingBotOn = toLower(meetingBotEnabled) == 'true'
+var meetingBotEnv = concat(
+  meetingBotOn ? [ { name: 'MEETING_BOT_ENABLED', value: 'true' } ] : [],
+  !empty(acsAudioSampleRate) ? [ { name: 'ACS_AUDIO_SAMPLE_RATE', value: acsAudioSampleRate } ] : [],
+  !empty(acsRequireWakePhrase) ? [ { name: 'ACS_REQUIRE_WAKE_PHRASE', value: acsRequireWakePhrase } ] : [],
+  !empty(acsAvatarVideoEnabled) ? [ { name: 'ACS_AVATAR_VIDEO_ENABLED', value: acsAvatarVideoEnabled } ] : []
+)
 
 var botEnabled = !empty(botAppId)
 var botSecrets = !empty(botAppPassword) ? [
@@ -156,7 +193,7 @@ resource app 'Microsoft.App/containerApps@2024-10-02-preview' = {
             { name: 'SR_MODEL', value: srModel }
             { name: 'RECOGNITION_LANGUAGE', value: recognitionLanguage }
             { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: appInsightsConnectionString }
-          ], botEnv)
+          ], concat(botEnv, acsEnv, meetingBotEnv))
           probes: [
             {
               type: 'Liveness'

@@ -1,0 +1,47 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <!--
+    Contract tests for the .NET <-> Python seam.
+
+    This is the ONLY part of the system that can be tested without live Azure
+    resources, and it is also the most fragile: the wire protocol between the
+    media bot and backend/acs/bridge.py is hand-written JSON across two
+    languages, with deliberately asymmetric casing (the bot sends camelCase,
+    Python replies in PascalCase). A regression there is silent: the bot
+    connects, the meeting looks fine, and nobody speaks.
+
+    VoiceLiveBridgeClient.cs is *link-compiled* rather than referenced through
+    MeetingBot.csproj on purpose: that project pulls in the Windows-only Graph
+    Real-Time Media stack (win-x64 native DLLs), which would make these tests
+    unrunnable anywhere but a Windows media host. The class itself has no
+    media-SDK dependency, so compiling the single file keeps the tests portable.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>AvatarForge.MeetingBot.Tests</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <!-- Deliberately NOT win-x64: no media SDK here, so this runs on any OS. -->
+    <!--
+      Targets net8.0 to match the bot, but rolls forward so the suite also runs
+      on a machine that only has a newer runtime installed. Without this a
+      contributor with .NET 9/10 and no .NET 8 runtime sees "You must install or
+      update .NET" instead of test results.
+    -->
+    <RollForward>LatestMajor</RollForward>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="..\..\Bridge\VoiceLiveBridgeClient.cs" Link="Bridge\VoiceLiveBridgeClient.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.2" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+  </ItemGroup>
+
+</Project>

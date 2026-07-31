@@ -1,0 +1,82 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <!--
+    Avatar-Forge Teams meeting media bot (channel D, issue #27 — audio leg).
+
+    This is the *thin .NET/Windows media relay* described in
+    docs/channels/d-design-media-bot.md. It is deliberately "dumb": it joins a Teams
+    meeting, grabs the MIXED participant audio via the Graph Real-Time Media
+    Platform (Microsoft.Skype.Bots.Media, Windows-only), and forwards raw PCM16
+    over a WebSocket to the *unchanged* Python backend's /ws/acs/audio endpoint
+    (backend/acs/bridge.py::AcsVoiceBridge). All answering / RAG / turn-taking
+    stays in Python.
+
+    ── PLATFORM REALITY ──────────────────────────────────────────────────────
+    The media library (Microsoft.Graph.Communications.Calls.Media) pulls in
+    Microsoft.Skype.Bots.Media, which contains a native Windows media stack and
+    therefore MUST be built and RUN on a Windows guest OS (win-x64). It cannot
+    run on Linux/macOS. You may *edit* on any OS, but build/host on Windows.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>AvatarForge.MeetingBot</RootNamespace>
+    <AssemblyName>AvatarForge.MeetingBot</AssemblyName>
+    <!-- The native media stack is win-x64 only. -->
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <Platforms>x64</Platforms>
+    <!--
+      The contract-test project lives at tests/BridgeContract.Tests, i.e. INSIDE
+      this project's own folder, so the SDK's default **/*.cs glob would sweep its
+      xunit sources (and its obj/ artefacts) into the bot's compilation. That makes
+      `dotnet publish meeting-bot\MeetingBot.csproj` — exactly what
+      scripts/setup-host.ps1 -Stage Build runs — fail on a fresh clone with
+      CS0246 (Xunit not found) and CS0579 (duplicate AssemblyInfo attributes).
+      Excluding once here covers every default item glob, not just Compile.
+    -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);tests\**</DefaultItemExcludes>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      Graph Communications Calling + Real-Time Media SDK.
+      NOTE on versions: these are the 1.2.0.x calling/media packages. Restore
+      them on a Windows machine with NuGet access. The Calls, Media, Client and
+      Common packages must stay version-aligned — bump them together.
+    -->
+    <PackageReference Include="Microsoft.Graph.Communications.Calls" Version="1.2.0.10563" />
+    <PackageReference Include="Microsoft.Graph.Communications.Calls.Media" Version="1.2.0.10563" />
+    <PackageReference Include="Microsoft.Graph.Communications.Client" Version="1.2.0.10563" />
+    <PackageReference Include="Microsoft.Graph.Communications.Common" Version="1.2.0.10563" />
+
+    <!-- Auth for acquiring the Graph app token used by the calling client. -->
+    <PackageReference Include="Microsoft.Identity.Client" Version="4.61.3" />
+
+    <!-- Lets the host run as a Windows service under the SCM (Start-Service). -->
+    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="8.0.1" />
+  </ItemGroup>
+
+  <!--
+    The Microsoft.Skype.Bots.Media package ships its native media stack
+    (NativeMedia.dll, skypert.dll, RtmPal/RtmCodecs/RtmMvrCs.dll, MediaPerf.dll,
+    Ijwhost.dll, the *NetCore audio/H264 libs) under <pkg>\src\net6.0\, and the
+    package targets do NOT copy them next to a `dotnet publish -o` output. Without
+    them MediaPlatform.Initialize throws DllNotFoundException('NativeMedia'). Copy
+    them into the build + publish output so the bot is self-contained. NOTE: the
+    host also needs the Visual C++ x64 Redistributable installed (vcruntime140 /
+    msvcp140) and at least 2 usable cores — see meeting-bot/scripts/setup-host.ps1.
+  -->
+  <Target Name="CopySkypeNativeMedia" AfterTargets="Build;Publish">
+    <PropertyGroup>
+      <_SkypeMediaPkgDir>$([System.Environment]::GetEnvironmentVariable('USERPROFILE'))\.nuget\packages\microsoft.skype.bots.media</_SkypeMediaPkgDir>
+    </PropertyGroup>
+    <ItemGroup>
+      <_SkypeNativeMedia Include="$(_SkypeMediaPkgDir)\**\src\net6.0\*.*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_SkypeNativeMedia)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" Condition="'@(_SkypeNativeMedia)' != ''" />
+    <Copy SourceFiles="@(_SkypeNativeMedia)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" Condition="'$(PublishDir)' != '' and '@(_SkypeNativeMedia)' != ''" />
+  </Target>
+
+</Project>

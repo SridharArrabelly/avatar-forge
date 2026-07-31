@@ -21,6 +21,13 @@ dependencies = [
     "python-docx>=1.2.0",
     "python-dotenv>=1.2.2",
     "uvicorn[standard]>=0.24.0",
+    "azure-communication-callautomation>=1.6.0b1",
+    "azure-communication-identity>=1.5.0",
+    # Decodes the Voice Live avatar stream (fragmented MP4: H.264 + AAC) into the
+    # NV12 frames the Teams meeting bot's VideoSocket needs and PCM16 for the
+    # outbound audio path. Ships manylinux wheels, so it runs on the Linux
+    # Container App and keeps the Windows media bot free of any decoder.
+    "av>=15.0.0",
 ]
 
 [tool.uv]
@@ -35,4 +42,4 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-packages = ["backend", "backend.api", "backend.voice", "backend.bot"]
+packages = ["backend", "backend.api", "backend.voice", "backend.bot", "backend.acs"]

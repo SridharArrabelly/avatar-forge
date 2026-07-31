@@ -11,6 +11,8 @@
 .idea
 node_modules
 assets
+!assets/brand
+!assets/brand/**
 scripts
 *.log
 .azd-*.log

@@ -9,31 +9,72 @@ browser only handles audio I/O and avatar video.
 
 ## Architecture
 
-```
-┌─────────────────────────┐         ┌─────────────────────────────┐         ┌──────────────────┐         ┌──────────────────────────────┐
-│    Browser (Frontend)   │◄──WS───►│   Python Server (FastAPI)   │◄──SDK──►│ Azure Voice Live │◄───────►│    Foundry Agent Service     │
-│                         │         │                             │         │     Service      │ agent_  │     (your Foundry agent)     │
-│  • Audio capture (mic)  │         │  • Session management       │         └──────────────────┘ config  │  • Instructions (variant)    │
-│  • Audio playback       │         │  • Voice Live SDK calls     │                                       │  • gpt-5.4 deployment        │
-│  • Avatar video         │◄─WebRTC (peer-to-peer video)──────────────────────────────┘                  │  • Azure AI Search tool      │
-│  • Settings / chat UI   │         │  • Event relay              │                                      │  • Grounding w/ Bing Custom  │
-│  • Teams tab + bot       │         │  • Meeting catalogue inject │                                      └──────────────────────────────┘
-└─────────────────────────┘         └─────────────────────────────┘
+**One brain, several front doors.** Every channel shares the same backend, Voice Live
+session, Foundry agent and grounding — only the edge differs.
+
+```mermaid
+flowchart LR
+    subgraph Doors["Front doors — how people reach the avatar"]
+        direction TB
+        A["<b>A</b> · Web browser"]
+        B["<b>B</b> · Teams personal tab"]
+        C["<b>C</b> · Teams chat bot"]
+        D["<b>D</b> · In-call media bot"]
+        E["<b>E</b> · In-call headless"]
+    end
+
+    subgraph Brain["One brain — Python / FastAPI on Azure Container Apps"]
+        direction TB
+        API["Session + media bridge"]
+        VL["Azure Voice Live<br/>speech in · speech out · avatar"]
+        AG["Foundry agent<br/>prompt · model · tool routing"]
+        API <--> VL
+        VL <--> AG
+    end
+
+    subgraph Ground["Grounding — where the answers come from"]
+        direction TB
+        S["Azure AI Search<br/>your document corpus"]
+        N["Bing Custom Search<br/>curated news domains"]
+    end
+
+    A --> API
+    B --> API
+    C --> API
+    D --> API
+    E -.-> API
+    AG --> S
+    AG --> N
 ```
 
-The Python backend bridges the browser and Azure Voice Live, binding each session to
-an existing Foundry agent via `agent_config = { agent_name, project_name }`. The agent
-owns the system prompt, model, and tools so RAG + grounding resolve server-side. Full
-detail in **[docs/architecture.md](docs/architecture.md)**.
+The Python backend bridges the edge and Azure Voice Live, binding each session to an
+existing Foundry agent via `agent_config = { agent_name, project_name }`. The agent owns
+the system prompt, model, and tools so RAG + grounding resolve server-side. Internals in
+**[docs/architecture.md](docs/architecture.md)**; each channel's own edge diagram is on
+its [channel page](docs/channels/README.md).
 
 ## Channel support
 
-| Channel | Status | Notes |
-|---|---|---|
-| **Web** (standalone) | ✅ Shipped | Voice-first avatar with an optional text composer. The core app. |
-| **Microsoft Teams — personal tab** | ✅ Shipped | Embeds the same web UI (mic + WebRTC avatar). Phase 1. → [`teams/README.md`](teams/README.md) |
-| **Microsoft Teams — conversational bot** | ✅ Shipped | Installable, @mentionable bot answering via the same Foundry agent; deep-links to the tab. Phase 2a (#53). → [`teams/README.md`](teams/README.md#phase-2a--conversational-bot-issue-53) |
-| **Microsoft Teams — in-call media** | 🔜 Planned | Live avatar audio/video in a meeting. Phase 2b (#27). |
+Five front doors onto that one brain. What differs between them is only how audio and
+video get in and out — which drives cost and, more importantly, **how much
+administrator access you need**.
+
+| | Channel | Status | Extra Azure infra | Admin burden | Doc |
+|---|---|---|---|---|---|
+| **A** | **Web** (standalone) | ✅ Shipped | — *(the core)* | **None** | [a-web.md](docs/channels/a-web.md) |
+| **B** | **Teams — personal tab** | ✅ Shipped | **None** | Upload a Teams app package | [b-teams-tab.md](docs/channels/b-teams-tab.md) |
+| **C** | **Teams — conversational bot** | ✅ Shipped *(optional)* | Azure Bot + Teams channel | Entra app + **admin consent** | [c-teams-chat-bot.md](docs/channels/c-teams-chat-bot.md) |
+| **D** | **Teams — in-call avatar** (Graph media bot) | ✅ Working | Azure Bot + **Windows VM** + DNS + TLS | **Highest** — incl. **Teams app access policy** | [d-in-call-media-bot.md](docs/channels/d-in-call-media-bot.md) |
+| **E** | **Teams — in-call avatar** (headless browser) | 🔜 Placeholder | Container/job | TBD | [e-in-call-headless.md](docs/channels/e-in-call-headless.md) |
+
+They are not five equal options: **A → B → C is a ladder** (each additive on the one
+before), while **D and E are rivals** — two implementations of the same capability.
+The [channel hub](docs/channels/README.md) explains how to choose.
+
+👉 **Start here: [docs/channels/README.md](docs/channels/README.md)** for the decision
+guide, and **[docs/admin-checklist.md](docs/admin-checklist.md)** for every manual step
+and who must perform it. If you have no Teams administrator, read that first — it will
+tell you in one page which channels are available to you.
 
 All Teams surfaces are **additive** — the standalone web app is unaffected, and the
 Teams JS SDK is never loaded outside Teams.
@@ -43,12 +84,12 @@ Teams JS SDK is never loaded outside Teams.
 You need Python 3.10+, [`uv`](https://docs.astral.sh/uv/), and a Foundry resource in a
 Voice Live region (see [docs/development.md](docs/development.md) for prerequisites).
 
-```bash
-# 1. Install uv (macOS/Linux; see docs for Windows)
-curl -LsSf https://astral.sh/uv/install.sh | sh
+```powershell
+# 1. Install uv
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 
 # 2. Configure — copy the template and fill in the required values
-cp .env.example .env        # edit AZURE_VOICELIVE_ENDPOINT, AGENT_*, PROJECT_ENDPOINT
+Copy-Item .env.example .env   # edit AZURE_VOICELIVE_ENDPOINT, AGENT_*, PROJECT_ENDPOINT
 
 # 3. Authenticate (the agent path requires Entra ID — no API key)
 az login
@@ -60,16 +101,71 @@ uv run avatar-forge         # → http://localhost:3000
 Full walkthrough — building the search index, smoke tests, developer mode — in
 **[docs/development.md](docs/development.md)**.
 
+## Deploy to Azure
+
+Deploying is a *sequence*, not one command: some steps Bicep performs, some only a
+person with the right directory role can, and they interleave. Rather than make you
+discover that halfway through, the tooling tells you the whole sequence up front.
+
+> **Platform: Windows + PowerShell.** All commands are written for PowerShell. On
+> macOS or Linux the `azd` and Python steps work unchanged — translate the shell
+> syntax yourself. Channel D requires Windows regardless (the Teams Real-Time Media
+> Platform runs on nothing else).
+
+```powershell
+azd auth login
+azd env new <environment-name>
+
+# Pick the region. Only these four support both Voice Live and the avatar:
+#   eastus2 · southeastasia · swedencentral · westus2
+azd env set AZURE_LOCATION swedencentral
+
+# 1. Choose which channel you are deploying. Sets DEPLOY_PROFILE and prints
+#    the full numbered plan, marking who performs each step.
+uv run python scripts/set_profile.py
+
+# 2. Check you can actually finish it — region support, providers, tooling and
+#    every input your channel needs. Cheap now; expensive after a 20-minute deploy.
+#    Also settles subscription, region and resource group if you have not, so
+#    step 3 does not stop halfway to ask.
+uv run python scripts/preflight.py
+
+# 3. Deploy. Preflight runs again automatically and blocks a doomed deploy.
+azd up
+```
+
+`azd up` ends by printing the steps that remain for your channel — the manual and
+administrator ones. Re-print them at any time:
+
+```powershell
+uv run python scripts/preflight.py --steps-only    # the whole plan
+uv run python scripts/preflight.py --remaining     # only what is left
+```
+
+Profiles map onto the channel ladder: `web` · `teams-tab` · `teams-chat` · `in-call`.
+The profile is stored in the azd environment rather than prompted for at deploy time,
+so `azd up` stays non-interactive and re-deploys and CI keep working.
+
+Details: **[docs/deployment.md](docs/deployment.md)** ·
+**[docs/channels/README.md](docs/channels/README.md)** ·
+**[docs/admin-checklist.md](docs/admin-checklist.md)**.
+
 ## Documentation
 
 | Doc | What's in it |
 |---|---|
+| **[docs/channels/README.md](docs/channels/README.md)** | **Start here.** The channel ladder, comparison, and decision guide — which front door to deploy and why. |
+| **[docs/admin-checklist.md](docs/admin-checklist.md)** | **Every manual step automation cannot do**, per channel, with who must perform it and what to do when you're blocked. |
 | **[docs/development.md](docs/development.md)** | Run locally, build the AI Search index, smoke-test the index and agent, dev-only knobs. |
 | **[docs/configuration.md](docs/configuration.md)** | **Every** environment variable, grouped by concern — the single source of truth. |
 | **[docs/architecture.md](docs/architecture.md)** | System design, tool-calling accuracy, meeting-catalogue injection, frontend UX, project structure. |
 | **[docs/deployment.md](docs/deployment.md)** | Deploy to Azure with `azd`: topology, region preflight, BYO Foundry/Search, cross-RG RBAC, post-deploy. |
 | **[docs/auth.md](docs/auth.md)** | `DefaultAzureCredential`, required roles, startup pre-warm, IMDS skip, token caching. |
-| **[teams/README.md](teams/README.md)** | Microsoft Teams tab + conversational bot: build the package, sideload (no admin), Azure Bot setup, validation. |
+| **[teams/README.md](teams/README.md)** | Building and sideloading the Teams app package (serves channels B and C). |
+| **[docs/channels/d-design-media-bot.md](docs/channels/d-design-media-bot.md)** | **Design record** — the three in-call options evaluated, why Python + a thin .NET/Windows media bot, and the final architecture. |
+| **[docs/channels/d-design-avatar-video.md](docs/channels/d-design-avatar-video.md)** | **Design record** — the avatar's synced video face as a meeting camera tile, and why audio + video share one synthesis. |
+| **[docs/testing-meetings.md](docs/testing-meetings.md)** | **How to test the two in-meeting paths** — browser joiner vs. media bot: what each can and cannot hear, runbooks, healthy logs, rollback. |
+| **[meeting-bot/README.md](meeting-bot/README.md)** | The .NET/Windows media bot itself: project layout, configuration, operator runbook, and the traps that cost real debugging time. |
 | **[prompts/README.md](prompts/README.md)** | Agent prompt content, the reasoning/non-reasoning variants, and the edit workflow. |
 
 ## References & Acknowledgements

@@ -13,7 +13,7 @@ Teams icon requirements (see Microsoft docs):
 
 Pillow is NOT a project dependency (this repo is stdlib-only). Run it isolated:
 
-    uv run --with pillow python teams/icons/generate_icons.py
+    uv run --with pillow python assets/brand/generate_icons.py
 
 Everything is drawn at 4x and downscaled for clean anti-aliasing.
 """

@@ -28,14 +28,24 @@ Required environment variables (see ``.env.example``):
     SEARCH_INDEX_NAME         Azure AI Search index to expose to the agent
     AGENT_NAME                Name of the Foundry agent to create / version (e.g. ``MtnAvatarAgent``)
     AGENT_MODEL               Model deployment name to bind to the agent (e.g. ``gpt-5.4``)
-    BING_CONNECTION_NAME      Name of the Grounding-with-Bing-Custom-Search connection in the project
-    BING_CUSTOM_CONFIG_NAME   Bing Custom Search configuration (instance) name — the curated
+    BING_CONNECTION_NAME      OPTIONAL. Grounding-with-Bing-Custom-Search connection in the project.
+                              Leave unset to build a search-only agent; add it later and re-run.
+    BING_CUSTOM_CONFIG_NAME   OPTIONAL. Bing Custom Search configuration (instance) name — the curated
                               allow-list of sites that the tool is restricted to.
 
-Auth: uses ``DefaultAzureCredential`` - run ``az login`` first.
+Auth: uses ``DefaultAzureCredential`` - run ``az login`` first. The signed-in
+identity needs "Foundry User" on the Foundry **account** (subscription
+Owner/Contributor grant no ``Microsoft.CognitiveServices`` data actions, so they
+are not sufficient). ``azd up`` assigns it; a new assignment can take several
+minutes to take effect, which this script waits out.
 
 Usage:
     uv run python scripts/setup_foundry_agent.py
+
+Exit codes:
+    0  agent created with every configured tool
+    3  agent created, but the OPTIONAL web/news tool was left out (degraded, not failed)
+    1  nothing usable was created — see the error text
 """
 
 from __future__ import annotations
@@ -57,8 +67,25 @@ from azure.ai.projects.models import (
     PromptAgentDefinition,
     Reasoning,
 )
+from azure.core.exceptions import ResourceNotFoundError
 from azure.identity import DefaultAzureCredential
 from dotenv import load_dotenv
+
+from rbac_propagation import wait_for_data_plane
+
+# Repo root on sys.path so this deploy-time script and the runtime backend share
+# ONE persona-name rule instead of each keeping its own copy — which is exactly
+# how the agent ended up introducing itself as "Avatar" while the stage showed
+# "Simone". Redundant under `uv run` (the project is installed editable) but makes
+# a plain `python scripts/setup_foundry_agent.py` work too.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from backend.avatar_identity import resolve_avatar_display_name  # noqa: E402
+
+# Exit code meaning "the agent exists and works, but an OPTIONAL tool was left
+# out". Distinct from 0 (fully wired) and from 1 (nothing usable was created) so
+# the azd postprovision hook can report DEGRADED without claiming failure.
+EXIT_DEGRADED = 3
 
 # Prompt content lives under <repo>/prompts/. See prompts/README.md for layout
 # and editing conventions. The design rationale comments below explain WHY the
@@ -66,13 +93,33 @@ from dotenv import load_dotenv
 # travel with the code that depends on the prompt's structure.
 _PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
 
+# The avatar's persona name. Prompt files use the {{AVATAR_NAME}} placeholder so
+# the persona is never hardcoded; it is substituted at load time from the shared
+# rule in backend/avatar_identity.py — AVATAR_DISPLAY_NAME, else the friendly name
+# of the ACTIVE avatar model (so a "Simone" avatar says "I'm Simone"), else
+# "Avatar".
+#
+# Resolved on every call rather than snapshotted at import: this module is
+# imported before load_settings() runs load_dotenv(), so an import-time constant
+# would read the process environment only and silently ignore .env — the
+# documented way to re-run this script by hand after changing the avatar.
+
+
+def _apply_brand(text: str) -> str:
+    """Substitute brand placeholders ({{AVATAR_NAME}}) in a loaded prompt."""
+    return text.replace("{{AVATAR_NAME}}", resolve_avatar_display_name())
+
 
 def _load_prompt(*relative: str) -> str:
     """Load a prompt file from prompts/ as UTF-8 plain text."""
-    return _PROMPTS_DIR.joinpath(*relative).read_text(encoding="utf-8").strip()
+    return _apply_brand(
+        _PROMPTS_DIR.joinpath(*relative).read_text(encoding="utf-8").strip()
+    )
 
 
-AGENT_DESCRIPTION = _load_prompt("agent", "description.md")
+def agent_description() -> str:
+    """Agent description, brand-substituted at call time (see _apply_brand)."""
+    return _load_prompt("agent", "description.md")
 
 # Agent instructions — voice-first, two variants tuned by model family.
 #
@@ -117,7 +164,7 @@ def _load_agent_instructions(model: str) -> str:
                 f"Loading reasoning prompt variant "
                 f"(prompts/agent/instructions-reasoning.md) for model {model!r}."
             )
-            return path.read_text(encoding="utf-8").strip()
+            return _apply_brand(path.read_text(encoding="utf-8").strip())
         print(
             f"WARNING: model {model!r} supports reasoning but "
             "prompts/agent/instructions-reasoning.md is missing — falling "
@@ -149,14 +196,21 @@ def load_settings() -> dict:
         # allow-list of sites the web tool is restricted to.
         "bing_custom_config_name": (os.getenv("BING_CUSTOM_CONFIG_NAME") or "").strip() or None,
     }
+    # Bing is OPTIONAL, in both of the ways it can be absent: the vars may be
+    # unset (a greenfield deploy that provisioned Foundry + AI Search but no
+    # Grounding-with-Bing-Custom-Search resource, which is configured out of
+    # band in the Bing Custom Search portal), OR they may name a connection that
+    # does not exist in this project — which is what happens whenever a .env is
+    # copied between environments. Either way the agent is still created with
+    # the AI Search (board/meeting minutes) tool alone, and the script exits
+    # EXIT_DEGRADED so callers can say "degraded" instead of "failed". The
+    # web/news tool is added once Bing is configured and the script is re-run.
     required = (
         "project_endpoint",
         "search_connection_name",
         "search_index_name",
         "agent_name",
         "agent_model",
-        "bing_connection_name",
-        "bing_custom_config_name",
     )
     missing = [k for k in required if not settings[k]]
     if missing:
@@ -212,10 +266,10 @@ def build_bing_tool(
 def build_tools(
     search_connection_id: str,
     search_index_name: str,
-    bing_connection_id: str,
-    bing_custom_config_name: str,
+    bing_connection_id: str | None = None,
+    bing_custom_config_name: str | None = None,
 ) -> list:
-    """Build the tool list for the agent: AI Search + Grounding-with-Bing-Custom-Search.
+    """Build the tool list for the agent: AI Search + (optional) Bing Custom Search.
 
     AI Search uses VECTOR_SIMPLE_HYBRID — vector ANN + BM25 keyword.
     The semantic re-ranker (VECTOR_SEMANTIC_HYBRID) would lift recall on
@@ -245,7 +299,10 @@ def build_tools(
             ]
         )
     )
-    return [ai_search, build_bing_tool(bing_connection_id, bing_custom_config_name)]
+    tools: list = [ai_search]
+    if bing_connection_id and bing_custom_config_name:
+        tools.append(build_bing_tool(bing_connection_id, bing_custom_config_name))
+    return tools
 
 
 def _model_supports_reasoning(model: str) -> bool:
@@ -269,8 +326,14 @@ def _model_supports_reasoning(model: str) -> bool:
     return False
 
 
-def create_agent(project: AIProjectClient, settings: dict):
+def create_agent(project: AIProjectClient, settings: dict) -> tuple[object, bool]:
     """Create a new version of the Foundry agent.
+
+    Returns ``(agent, web_tool_enabled)``. ``web_tool_enabled`` is False when the
+    optional Grounding-with-Bing-Custom-Search tool was left out — either because
+    it was not configured or because the named connection does not exist. The
+    agent is still fully usable in that case; it just answers from the indexed
+    documents alone.
 
     Reasoning effort (`AGENT_REASONING_EFFORT`) is OPTIONAL. Behavior by model:
 
@@ -300,19 +363,70 @@ def create_agent(project: AIProjectClient, settings: dict):
                                                     AGENT_REASONING_EFFORT unset
                                                     (gpt-4.x reject it).
     """
-    azs_connection = project.connections.get(settings["search_connection_name"])
+    # The AI Search connection is REQUIRED: it is the agent's corpus. An agent
+    # without it would answer from model priors alone, which is worse than not
+    # deploying at all — so this fails fast with an actionable message rather
+    # than a raw SDK traceback.
+    try:
+        # First Foundry data-plane call, so this is where a just-created role
+        # assignment surfaces as 401 while it propagates. The wait only covers
+        # 401/403 — a genuine 404 still falls through to the message below.
+        azs_connection = wait_for_data_plane(
+            lambda: project.connections.get(settings["search_connection_name"]),
+            what="reading the project's connections",
+        )
+    except ResourceNotFoundError:
+        sys.exit(
+            f"ERROR: AI Search connection {settings['search_connection_name']!r} was not found "
+            "in this Foundry project.\n"
+            "  This connection is REQUIRED — it is what the agent answers from.\n"
+            "  Fix: create it in the Foundry portal, or point SEARCH_CONNECTION_NAME at the\n"
+            "  existing connection, then re-run:\n"
+            "      uv run python scripts/setup_foundry_agent.py"
+        )
 
-    bing_connection = project.connections.get(settings["bing_connection_name"])
-    print(
-        f"Web tool: bing_custom_search (connection {settings['bing_connection_name']!r}, "
-        f"configuration {settings['bing_custom_config_name']!r})."
-    )
+    # The web tool is OPTIONAL in two distinct ways, and BOTH must degrade
+    # gracefully: the vars may be unset, *or* they may name a connection that
+    # does not exist in this project (the common case when .env is copied from
+    # another environment, or when Bing is deliberately deferred). Only the
+    # first used to be tolerated, so a stale name silently cost you the agent.
+    bing_connection_id = None
+    bing_custom_config_name = settings.get("bing_custom_config_name")
+    bing_connection_name = settings.get("bing_connection_name")
+    web_tool_enabled = False
+
+    if bing_connection_name and bing_custom_config_name:
+        try:
+            bing_connection = project.connections.get(bing_connection_name)
+        except ResourceNotFoundError:
+            print(
+                f"WARNING: Grounding-with-Bing-Custom-Search connection {bing_connection_name!r} "
+                "was not found in this project.\n"
+                "         Creating the agent WITHOUT the web/news tool — it will answer from the\n"
+                "         indexed board/meeting minutes only. This is a degraded but working agent.\n"
+                "         To enable the web tool later: add the connection in the Foundry portal,\n"
+                "         set BING_CONNECTION_NAME + BING_CUSTOM_CONFIG_NAME, and re-run this script."
+            )
+        else:
+            bing_connection_id = bing_connection.id
+            web_tool_enabled = True
+            print(
+                f"Web tool: bing_custom_search (connection {bing_connection_name!r}, "
+                f"configuration {bing_custom_config_name!r})."
+            )
+    else:
+        print(
+            "Web tool: DISABLED — BING_CONNECTION_NAME / BING_CUSTOM_CONFIG_NAME not set. "
+            "Creating the agent with the AI Search (board/meeting minutes) tool only. "
+            "Provision a Grounding-with-Bing-Custom-Search connection and re-run this "
+            "script to add the news/web tool."
+        )
 
     tools = build_tools(
         azs_connection.id,
         settings["search_index_name"],
-        bing_connection.id,
-        settings["bing_custom_config_name"],
+        bing_connection_id,
+        bing_custom_config_name,
     )
 
     definition_kwargs = {
@@ -354,10 +468,15 @@ def create_agent(project: AIProjectClient, settings: dict):
     agent = project.agents.create_version(
         agent_name=settings["agent_name"],
         definition=PromptAgentDefinition(**definition_kwargs),
-        description=AGENT_DESCRIPTION,
+        description=agent_description(),
     )
     print(f"Agent created (id: {agent.id}, name: {agent.name}, version: {agent.version})")
-    return agent
+    print(
+        f"Persona name: {resolve_avatar_display_name()!r} — from AVATAR_DISPLAY_NAME "
+        "if set, else the active avatar model. This is what the agent calls itself, "
+        "and it must match the name on the stage."
+    )
+    return agent, web_tool_enabled
 
 
 def main() -> int:
@@ -366,7 +485,15 @@ def main() -> int:
         endpoint=settings["project_endpoint"],
         credential=DefaultAzureCredential(),
     )
-    create_agent(project, settings)
+    _agent, web_tool_enabled = create_agent(project, settings)
+    if not web_tool_enabled:
+        print(
+            "\nAgent is READY but DEGRADED: no web/news tool, so it answers from the indexed\n"
+            "documents only. Add a Grounding-with-Bing-Custom-Search connection to the Foundry\n"
+            "project, set BING_CONNECTION_NAME + BING_CUSTOM_CONFIG_NAME, then re-run:\n"
+            "    uv run python scripts/setup_foundry_agent.py"
+        )
+        return EXIT_DEGRADED
     return 0
 
 

@@ -7,16 +7,37 @@ for deploying it see [deployment.md](deployment.md).
 
 ## System overview
 
-```
-┌─────────────────────────┐         ┌─────────────────────────────┐         ┌──────────────────┐         ┌──────────────────────────────┐
-│    Browser (Frontend)   │◄──WS───►│   Python Server (FastAPI)   │◄──SDK──►│ Azure Voice Live │◄───────►│    Foundry Agent Service     │
-│                         │         │                             │         │     Service      │ agent_  │     (your Foundry agent)     │
-│  • Audio capture (mic)  │         │  • Session management       │         └──────────────────┘ config  │  • Instructions (variant)    │
-│  • Audio playback       │         │  • Voice Live SDK calls     │                                       │  • gpt-5.4 deployment        │
-│  • Avatar video         │◄─WebRTC (peer-to-peer video)──────────────────────────────┘                  │  • Azure AI Search tool      │
-│  • Settings / chat UI   │         │  • Event relay              │                                      │  • Grounding w/ Bing Custom  │
-│  • Teams tab + bot       │         │  • Meeting catalogue inject │                                      └──────────────────────────────┘
-└─────────────────────────┘         └─────────────────────────────┘
+The channel-level view ("one brain, several front doors") is in the
+[root README](../README.md#architecture); each channel's own edge diagram is on its
+[channel page](channels/README.md). This page is the **inside of the brain** — the part
+every channel shares.
+
+```mermaid
+flowchart LR
+    EDGE["<b>Channel edge</b><br/>browser · Teams tab · media bot<br/><i>mic capture · audio playback · video render</i>"]
+
+    subgraph Server["Python backend — FastAPI on Azure Container Apps"]
+        direction TB
+        WS["WebSocket endpoints<br/>/ws · /ws/acs/audio · /ws/acs/browser"]
+        H["VoiceSessionHandler<br/>one Voice Live session per call"]
+        EV["Event relay<br/>+ meeting-catalogue injection"]
+        BOT["POST /api/messages<br/>Teams chat bot · text only"]
+        WS --- H
+        H --- EV
+    end
+
+    VLS["Azure Voice Live<br/>STT · TTS · avatar synthesis"]
+    AGENT["Foundry agent<br/>instructions · gpt-5.4 · tool routing"]
+    SEARCH["Azure AI Search<br/>document corpus"]
+    NEWS["Grounding with<br/>Bing Custom Search"]
+
+    EDGE <== "PCM16 over WSS<br/>question up · answer down" ==> WS
+    EDGE <-. "avatar video · WebRTC peer-to-peer<br/><b>never transits the server</b>" .-> VLS
+    H <-- "Voice Live SDK<br/><b>server-side only</b>" --> VLS
+    VLS -- "agent_config" --> AGENT
+    BOT -- "text" --> AGENT
+    AGENT --> SEARCH
+    AGENT --> NEWS
 ```
 
 **Key design.** The Python backend is a bridge between the browser and the Azure
@@ -37,9 +58,38 @@ audio forwarding, event processing). The browser only:
   and renders the avatar via a direct WebRTC peer connection to Azure;
 - (WebSocket video mode) receives fMP4 chunks for MediaSource Extensions playback.
 
-The **Teams bot** (Phase 2a) is hosted inside the same FastAPI app as a `POST
+The **Teams bot** (channel C) is hosted inside the same FastAPI app as a `POST
 /api/messages` route and reuses the same Foundry agent — see
 [`teams/README.md`](../teams/README.md).
+
+The **in-call avatar** (issue #27) reuses the same Voice Live + Foundry pipeline inside a
+*live Teams meeting*. Two transports exist, and they are not equivalent:
+
+- **Graph media bot (channel D — the shipped design).** A thin .NET service on a Windows
+  host joins the meeting through the Graph Real-Time Media Platform, which is the only
+  way to receive the **mixed audio of every participant**. It forwards raw PCM16 over a
+  WebSocket (`/ws/acs/audio`) to [`backend/acs/bridge.py`](../backend/acs/bridge.py)'s
+  `AcsVoiceBridge`, which adapts it onto the unchanged `VoiceSessionHandler`
+  (wake-phrase turn-taking, barge-in). The avatar's face is decoded from Voice Live's
+  fragmented-MP4 avatar stream to NV12 in Python and sent back as a camera tile.
+- **Browser joiner (`frontend/acs-join.html`) — a fallback for demos.** Joins with the
+  ACS Calling Web SDK (anonymous, lobby-governed, no admin) over `/ws/acs/browser`. It
+  can only ever hear **the operator's own microphone**, because Teams isolates
+  per-client audio. Useful when you have no admin rights; not a substitute for D.
+
+Both are non-recording and fully opt-in — every `/api/acs/*` route returns 503 when
+disabled. An optional Teams meeting **side-panel control panel**
+(`frontend/companion.html`, opt-in `configurableTabs` via
+`build_package.py --enable-companion`) shows live call status (`GET /api/acs/status`)
+and launches the joiner in a separate window; it is a control plane only, deliberately
+not an unsynced avatar face on the stage.
+
+> An earlier design attempted ACS Call Automation `connect_call` media streaming from
+> the server. Live testing proved it does **not** carry Teams *meeting* audio (every
+> inbound frame arrived silent), which is why the Graph media bot exists.
+
+Details: [`docs/channels/d-in-call-media-bot.md`](channels/d-in-call-media-bot.md) and
+[`d-design-media-bot.md`](channels/d-design-media-bot.md).
 
 ## Tool-calling accuracy
 
@@ -104,8 +154,11 @@ Everything the end user sees is anchored to the avatar:
 - **Avatar video** — the WebRTC (or WebSocket/MSE) photo or standard avatar.
 - **Identity lockup** — top-left, a branding block with the avatar's **name** (bold)
   and an optional **tagline** (italic). The name comes from `AVATAR_DISPLAY_NAME`
-  (the single branding knob, also used for the Teams bot) or is derived from the
-  selected avatar model; the tagline is `AVATAR_TAGLINE` (empty hides it).
+  or, when that is unset, from the selected avatar model — the same rule the
+  assistant's spoken persona, the Teams bot and the meeting roster use, so the
+  name on screen is the name she answers to
+  ([`backend/avatar_identity.py`](../backend/avatar_identity.py)). The tagline is
+  `AVATAR_TAGLINE` (empty hides it).
 - **Bottom control row** — the **text composer** (when shown) fills the left; the
   **Stop button** and the **docked mic** cluster in the right corner. They share a
   height and scale with the avatar across screen sizes.
@@ -120,7 +173,7 @@ Everything the end user sees is anchored to the avatar:
   mic, always visible while the avatar is on screen: greyed when idle, red and
   actionable while the avatar speaks. Tapping it truncates the avatar mid-answer via
   the same interrupt path as voice barge-in (`response.cancel()` **and**
-  `output_audio_buffer.clear()` server-side — see [below](#interrupt-truncation)).
+  `output_audio_buffer.clear()` server-side — see [below](#interrupt-and-truncation)).
 - **Thinking indicator** — shows between the user's turn and the avatar's first
   words, with rotating captions and a failsafe timeout.
 - **Connection & permission states** — a status pill (and toasts) surface connecting,
@@ -142,7 +195,7 @@ The UI is themeable via CSS custom properties and ships a **dark variant** follo
 the OS `prefers-color-scheme` (with an `applyTheme(light|dark|system)` hook); all
 animations respect `prefers-reduced-motion`.
 
-### Interrupt / truncation
+### Interrupt and truncation
 
 Voice barge-in works because the server VAD config in
 [`backend/voice/builders.py`](../backend/voice/builders.py) (`interrupt_response`,
@@ -158,7 +211,7 @@ call is what actually stops her.
 
 ```
 avatar-forge/
-├── backend/                       # FastAPI server (Python)
+├── backend/                       # FastAPI server (Python) — the one brain
 │   ├── main.py                    # App factory, lifespan, middleware, static mount, run()
 │   ├── config.py                  # .env loading, logging, UI defaults (get_ui_defaults)
 │   ├── api/
@@ -171,40 +224,68 @@ avatar-forge/
 │   │   ├── catalog.py             # Meeting catalogue fetch from AI Search (injected at session start)
 │   │   ├── functions.py           # Built-in tool implementations (get_time, get_weather, calculate)
 │   │   └── auth.py                # DefaultAzureCredential + caching wrapper
-│   └── bot/                       # Teams conversational bot (Phase 2a)
-│       ├── app.py                 # M365 Agents SDK app + POST /api/messages route
-│       ├── agent_runtime.py       # Foundry-agent bridge (reuses the voice agent)
-│       └── cards.py               # Adaptive Card + deep link back to the tab
+│   ├── bot/                       # Channel C — Teams conversational bot
+│   │   ├── app.py                 # M365 Agents SDK app + POST /api/messages route
+│   │   ├── agent_runtime.py       # Foundry-agent bridge (reuses the voice agent)
+│   │   └── cards.py               # Adaptive Card + deep link back to the tab
+│   └── acs/                       # Channels D/E — in-call media bridge (opt-in)
+│       ├── client.py              # ACS Call Automation + Identity clients (browser-joiner path)
+│       ├── bridge.py              # AcsVoiceBridge / BrowserVoiceBridge <-> VoiceSessionHandler
+│       ├── avatar_stream.py       # fMP4 demux + H.264 decode -> NV12 frames for the media bot
+│       └── routes.py              # /api/acs/{config,status,token,call,callback} + /ws/acs/{audio,browser}
 │
-├── frontend/                      # Static client assets (served at /)
+├── frontend/                      # Static client assets (served at /) — channels A and B
 │   ├── index.html                 # Avatar stage: video, identity lockup, composer, stop, mic, captions
 │   ├── style.css                  # Styles (speaking-state colour, caption band, stop button, chips)
 │   ├── app.js                     # Audio capture/playback, WebRTC, WebSocket, UI logic, Teams host gate
+│   ├── acs-join.html / .js        # Browser joiner: join a Teams meeting via the ACS Calling Web SDK
+│   ├── companion*.html / .js      # Optional in-meeting control panel + its configurableTabs page
 │   └── teams.js                   # No-op unless in Teams: loads Teams JS SDK, mirrors host theme
 │
+├── meeting-bot/                   # Channel D — .NET/Windows Graph media bot (separate host)
+│   ├── Bot/                       # MeetingBot, CallHandler, AuthenticationProvider
+│   ├── Bridge/                    # VoiceLiveBridgeClient — the Python contract
+│   ├── Http/                      # JoinController (operator API), CallingController (Graph webhook)
+│   ├── Configuration/BotOptions.cs
+│   ├── tests/                     # Contract tests for the Python seam (dotnet test, any OS)
+│   ├── scripts/setup-host.ps1     # 4-stage Windows host setup: Prep, Cert, Build, Run
+│   └── README.md                  # Build, configuration, and the traps that cost debugging time
+│
+├── docs/                          # Documentation hub (see docs/channels/README.md to choose a channel)
+│   ├── channels/                  # One page per delivery channel (a-web … e-in-call-headless) + design records
+│   ├── architecture.md            # This file — the shared core
+│   ├── admin-checklist.md         # Every manual step and who must perform it
+│   ├── configuration.md           # Every environment variable
+│   ├── deployment.md              # azd mechanics, greenfield and brownfield
+│   ├── development.md             # Local dev, index build, smoke tests
+│   ├── auth.md                    # Identity and RBAC model
+│   └── testing-meetings.md        # Runbook for the two in-meeting paths
+│
 ├── scripts/                       # Utility / one-off scripts (not part of the server)
+│   ├── channels.py                # Single source of truth for deploy profiles and their steps
+│   ├── set_profile.py             # Step 0: choose a channel, record DEPLOY_PROFILE, print the plan
+│   ├── preflight.py               # Gate before azd up: regions, providers, tooling, per-profile inputs
 │   ├── setup_foundry_agent.py     # Creates the Foundry agent with AI Search + Bing Custom Search tools
 │   ├── setup_aisearch_index.py    # Creates/updates the AI Search index and ingests data/
 │   ├── test_aisearch_query.py     # Smoke-tests the index (hybrid + semantic query)
 │   ├── test_foundry_agent.py      # Smoke-tests the live agent end-to-end
-│   ├── grant_byo_rbac.py          # Idempotently grants BYO runtime RBAC (brownfield)
-│   └── preflight.py               # Region/capability checks (Voice Live + Avatar) before azd up
+│   └── grant_byo_rbac.py          # Idempotently grants BYO runtime RBAC (brownfield)
 │
-├── teams/                         # Microsoft Teams app package (tab + Phase 2a bot)
-│   ├── README.md                  # Sideload + bot setup walkthrough + validation checklist
+├── teams/                         # Teams app package for channels B and C
 │   ├── manifest.template.json     # Manifest (schema v1.17): staticTabs + bots, templated placeholders
 │   ├── build_package.py           # Stdlib-only: renders the manifest and zips a sideloadable package
-│   └── icons/                     # color.png (192×192) + outline.png (32×32)
+│   └── README.md                  # Packaging mechanics + sideload walkthrough
 │
 ├── infra/                         # Bicep IaC consumed by azd (azure.yaml)
-│   ├── main.bicep                 # Deployment entry point
+│   ├── main.bicep                 # Deployment entry point; derives what to deploy from DEPLOY_PROFILE
 │   ├── resources.bicep            # Resource composition (BYO/create switches)
-│   └── modules/                   # Per-resource modules (containerApp, foundry, aiSearch, botService, RBAC, ...)
+│   └── modules/                   # containerApp, foundry, aiSearch, botService, meetingBotHost, RBAC, ...
 │
+├── assets/brand/                  # Canonical brand assets (logo, outline icon, favicon, generator)
 ├── assets/avatar/                 # Source photo(s) for custom photo-avatar training (not runtime)
 ├── data/                          # Source corpus ingested into the AI Search index (.docx/.pdf/.md/.txt)
 ├── prompts/agent/                 # Agent prompt content (Markdown), loaded by setup_foundry_agent.py
-├── azure.yaml                     # azd service + hooks (infra path, postprovision/predeploy)
+├── azure.yaml                     # azd service + hooks (infra path, preprovision/postprovision)
 ├── pyproject.toml / uv.lock       # Project metadata + locked dependencies
 ├── Dockerfile                     # Container build (python:3.12-slim + uv)
 └── .env.example                   # Template for .env (copy and fill)

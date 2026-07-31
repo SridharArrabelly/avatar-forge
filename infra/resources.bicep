@@ -30,6 +30,27 @@ param voiceLiveVoice string
 param bingConnectionName string = ''
 param bingCustomConfigName string = ''
 
+@description('Deploy Grounding with Bing Custom Search (account + site allow-list + Foundry connection). Opt-in: when false nothing Bing-related is created and the agent uses AI Search alone.')
+param deployBingGrounding bool = false
+@allowed([ 'G1', 'G2' ])
+param bingSkuName string = 'G2'
+@description('The curated site allow-list. See modules/bingGrounding.bicep for the entry shape.')
+param bingAllowedDomains array = []
+
+// Bing is only created when it is asked for AND there is a Foundry project to
+// attach the connection to. Without the project the account would be an orphan
+// the agent could never use.
+var createBing = deployBingGrounding && createFoundry
+// Deployed names are generated when not pinned, so a first-time deploy needs no
+// prior knowledge of them — they come back as outputs and land in the azd env.
+var bingConnectionNameEffective = empty(bingConnectionName) ? 'bing-grounding-connection' : bingConnectionName
+var bingCustomConfigNameEffective = empty(bingCustomConfigName) ? 'avatar-web-search' : bingCustomConfigName
+// 'bing-' + '-' + a 13-char resourceToken = 19, leaving 45 of the 64-char account
+// name limit for the env segment.
+var bingEnvSegment = take(environmentName, 45)
+var bingEnvSegmentClean = endsWith(bingEnvSegment, '-') ? take(bingEnvSegment, length(bingEnvSegment) - 1) : bingEnvSegment
+var bingAccountName = toLower('bing-${bingEnvSegmentClean}-${resourceToken}')
+
 param modelName string
 param modelVersion string
 param modelDeploymentName string
@@ -58,6 +79,23 @@ param botAppPassword string = ''
 param botDisplayName string = 'Avatar Forge'
 param teamsAppId string = ''
 param agentId string = ''
+
+// ───────── channel D in-call media (#27) ─────────
+@description('Enable channel D ACS Call Automation media participant ("true"/"false"). When not "true" (default), no ACS resource is created and the container behaves as today.')
+param enableAcs string = 'false'
+@description('ACS data residency geography (NOT an Azure region), e.g. "United States", "Europe", "Africa".')
+param acsDataLocation string = 'United States'
+
+@description('"true"/"false". Serve the .NET Teams media-bot bridge (/ws/acs/audio) without an ACS resource — sets MEETING_BOT_ENABLED. Independent of enableAcs.')
+param meetingBotEnabled string = 'false'
+@description('PCM sample rate (Hz) the media bot streams. Teams media bot uses 16000.')
+param acsAudioSampleRate string = ''
+@description('"true"/"false". In-call avatar only answers after a wake phrase.')
+param acsRequireWakePhrase string = ''
+@description('"true"/"false". In-call avatar sends an outgoing video tile (visible participant).')
+param acsAvatarVideoEnabled string = ''
+
+var acsEnabled = toLower(enableAcs) == 'true'
 
 var abbrs = loadJsonContent('abbreviations.json')
 
@@ -142,6 +180,9 @@ module foundry 'modules/foundry.bicep' = if (createFoundry) {
     searchEndpoint: createSearch ? search!.outputs.endpoint : ''
     searchResourceId: createSearch ? search!.outputs.id : ''
     searchConnectionName: createSearch ? searchConnectionName : ''
+    bingAccountId: createBing ? bingGrounding!.outputs.accountId : ''
+    bingAccountName: createBing ? bingGrounding!.outputs.accountName : ''
+    bingConnectionName: createBing ? bingConnectionNameEffective : ''
   }
 }
 
@@ -162,6 +203,26 @@ module search 'modules/aiSearch.bicep' = if (createSearch) {
 }
 
 // BYO Search: role assignment handled by scripts/grant_byo_rbac.py (see note above).
+
+// ───────── Grounding with Bing Custom Search (conditional) ─────────
+// On by default, and additive: with deployBingGrounding=false nothing here is created and the
+// agent is built with the AI Search tool alone, exactly as before. When enabled,
+// all three layers are deployed — the account, the curated site allow-list, and
+// the Foundry connection — so no portal step or manual .env edit is required.
+module bingGrounding 'modules/bingGrounding.bicep' = if (createBing) {
+  name: 'bing-grounding'
+  params: {
+    // Truncated the same way the container app name is: a long azd env name would
+    // otherwise overrun the account-name limit and fail at deploy, which is exactly
+    // how the container app broke in a fresh tenant. The resourceToken is kept whole
+    // so uniqueness survives the truncation.
+    name: bingAccountName
+    tags: tags
+    skuName: bingSkuName
+    configName: bingCustomConfigNameEffective
+    allowedDomains: bingAllowedDomains
+  }
+}
 
 // Grant Foundry project SMI Search RBAC for the agents azure_ai_search tool (greenfield search only).
 module searchRoleForProject 'modules/searchRoleForProject.bicep' = if (createSearch && createFoundry) {
@@ -185,15 +246,45 @@ module foundryRoleForSearch 'modules/foundryRoleForSearch.bicep' = if (createSea
   }
 }
 
+// ───────── channel D in-call media (#27) ─────────
+// Only provisioned when channel D is explicitly enabled. Additive + conditional,
+// mirroring the botService opt-in: a deploy with enableAcs=false never creates ACS.
+module acs 'modules/communicationServices.bicep' = if (acsEnabled) {
+  name: 'acs'
+  params: {
+    name: '${abbrs.communicationServices}-${environmentName}-${resourceToken}'
+    tags: tags
+    dataLocation: acsDataLocation
+  }
+}
+
+// Grant the Container App's managed identity access to the ACS resource so it can
+// authenticate the Call Automation / Identity clients via Entra (ACS_ENDPOINT path).
+module acsRoleForApp 'modules/acsRoleForApp.bicep' = if (acsEnabled) {
+  name: 'acs-role-for-app'
+  params: {
+    acsName: acs!.outputs.name
+    appPrincipalId: uami.outputs.principalId
+  }
+}
+
 // ───────── Container App ─────────
 var foundryEndpointEffective = createFoundry ? foundry!.outputs.accountEndpoint : 'https://${existingFoundryAccountName}.services.ai.azure.com/'
 var foundryProjectEndpointEffective = createFoundry ? foundry!.outputs.projectEndpoint : existingFoundryProjectEndpoint
 var searchEndpointEffective = createSearch ? search!.outputs.endpoint : 'https://${existingSearchServiceName}.search.windows.net/'
 
+// Container App names are capped at 32 characters, must not contain '--' and must end
+// in an alphanumeric. The 'ca-' prefix plus the 13-char resourceToken consume 17, so the
+// environment segment is truncated to the remaining budget (keeping the token, and thus
+// uniqueness, intact) and any trailing '-' left by that cut is removed.
+var caEnvBudget = 32 - length('${abbrs.containerApp}-') - length('-${resourceToken}')
+var caEnvSegment = take(environmentName, caEnvBudget)
+var caEnvSegmentClean = endsWith(caEnvSegment, '-') ? take(caEnvSegment, length(caEnvSegment) - 1) : caEnvSegment
+
 module app 'modules/containerApp.bicep' = {
   name: 'app'
   params: {
-    name: '${abbrs.containerApp}-${environmentName}-${resourceToken}'
+    name: toLower('${abbrs.containerApp}-${caEnvSegmentClean}-${resourceToken}')
     location: location
     tags: union(tags, { 'azd-service-name': 'web' })
     containerAppsEnvironmentId: containerAppsEnv.outputs.id
@@ -208,8 +299,8 @@ module app 'modules/containerApp.bicep' = {
     searchIndexName: searchIndexName
     searchEndpoint: searchEndpointEffective
     voiceLiveVoice: voiceLiveVoice
-    bingConnectionName: bingConnectionName
-    bingCustomConfigName: bingCustomConfigName
+    bingConnectionName: createBing ? bingConnectionNameEffective : bingConnectionName
+    bingCustomConfigName: createBing ? bingCustomConfigNameEffective : bingCustomConfigName
     appInsightsConnectionString: appInsightsConnectionStringEffective
     agentModel: agentModel
     embeddingDeployment: embeddingDeployment
@@ -228,10 +319,15 @@ module app 'modules/containerApp.bicep' = {
     botAppPassword: botAppPassword
     teamsAppId: teamsAppId
     agentId: agentId
+    acsEndpoint: acsEnabled ? acs!.outputs.endpoint : ''
+    meetingBotEnabled: meetingBotEnabled
+    acsAudioSampleRate: acsAudioSampleRate
+    acsRequireWakePhrase: acsRequireWakePhrase
+    acsAvatarVideoEnabled: acsAvatarVideoEnabled
   }
 }
 
-// ───────── Teams bot (issue #53, Phase 2a) ─────────
+// ───────── Teams bot (channel C, issue #53) ─────────
 // Only provisioned when a bot app id is supplied. The messaging endpoint is the
 // Container App HTTPS URL + /api/messages.
 module botService 'modules/botService.bicep' = if (!empty(botAppId)) {
@@ -259,4 +355,12 @@ output searchEndpoint string = searchEndpointEffective
 output appInsightsConnectionString string = appInsightsConnectionStringEffective
 output effectiveAgentProjectName string = createFoundry ? 'proj-${environmentName}' : agentProjectName
 output botMessagingEndpoint string = !empty(botAppId) ? '${app.outputs.uri}/api/messages' : ''
+output acsEndpoint string = acsEnabled ? acs!.outputs.endpoint : ''
+
+// The two values the agent setup script needs to wire the web tool. When Bing is
+// deployed these are the names that were actually created, so they flow into the
+// azd env and no one has to copy them out of the portal by hand. When it is not,
+// they pass through whatever was supplied (possibly empty = web tool disabled).
+output bingConnectionName string = createBing ? bingConnectionNameEffective : bingConnectionName
+output bingCustomConfigName string = createBing ? bingCustomConfigNameEffective : bingCustomConfigName
 
