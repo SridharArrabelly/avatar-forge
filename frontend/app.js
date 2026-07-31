@@ -155,7 +155,6 @@ document.addEventListener('DOMContentLoaded', () => {
     updateConditionalFields();
     updateControlStates();
     fetchServerConfig();
-    warmWebRTCEngine();
 });
 
 // ===== Theme =====
@@ -188,7 +187,27 @@ function initTheme() {
 // public STUN as a stand-in proved unreliable — see the note above
 // preparePeerConnection). The only thing this saves is the first-time
 // engine-warm cost, which is small but free.
+// Construct (and immediately close) a throwaway RTCPeerConnection so the browser
+// loads/initializes its WebRTC native code, codec backends, and JS-to-native
+// bridges before we build the real peer connection. Real ICE candidates are NOT
+// pre-gathered here (we don't have the Azure ICE servers yet, and using public
+// STUN as a stand-in proved unreliable — see the note above preparePeerConnection).
+//
+// This is expensive and SYNCHRONOUS: measured at ~1.2s of main-thread block on a
+// cold browser profile, after which the real peer connections construct in ~1ms.
+// So it is a fixed one-time cost that has to be paid somewhere, and the only
+// thing that matters is WHERE. It used to run at DOMContentLoaded, where it
+// delayed the /api/config response callback and therefore everything downstream.
+// Deferring it to requestIdleCallback did NOT help — the thread is idle exactly
+// while the config request is in flight, so it ran at the same moment.
+//
+// It is now called once the voice WebSocket is connecting, so it overlaps a wait
+// that is purely network-bound (~0.6-3s) and costs nothing on the main thread.
+let webrtcEngineWarmed = false;
+
 function warmWebRTCEngine() {
+    if (webrtcEngineWarmed) return;
+    webrtcEngineWarmed = true;
     if (typeof RTCPeerConnection === 'undefined') return;
     try {
         const warm = new RTCPeerConnection({});
@@ -704,6 +723,13 @@ async function connectSession() {
             }
             intentionalDisconnect = false;
         };
+
+        // Warm the WebRTC engine while the socket handshake and the Voice Live
+        // session setup are in flight. Both are network-bound, so this ~1.2s of
+        // one-time main-thread work is absorbed by a wait we were spending anyway
+        // — and by the time ice_servers arrives the real peer connection builds
+        // in ~1ms. See warmWebRTCEngine() for why earlier placements were worse.
+        warmWebRTCEngine();
 
     } catch (err) {
         console.error('Connection error', err);
@@ -2274,6 +2300,49 @@ function retryPausedAvatarMedia(reason) {
     }
 }
 
+// Read an ICE candidate's type ("host" / "srflx" / "relay"). Chromium exposes
+// `.type` directly; parse the SDP candidate line as a fallback so this works on
+// any browser. The line is:
+//   candidate:<foundation> <component> <transport> <priority> <ip> <port> typ <type> ...
+function iceCandidateType(candidate) {
+    if (!candidate) return null;
+    if (candidate.type) return candidate.type;
+    const parts = String(candidate.candidate || '').split(' ');
+    const i = parts.indexOf('typ');
+    return i >= 0 ? (parts[i + 1] || null) : null;
+}
+
+// A "host" candidate is a private LAN address (192.168.x.x); it can never reach
+// the Azure avatar service. Only srflx (NAT-reflexive) or relay (TURN) candidates
+// can. Measured live on a loaded machine: an offer sent carrying only a host
+// candidate failed exactly like an empty one — iceConnectionState=disconnected ->
+// connectionState=failed, avatar never appeared. So "do we have a candidate?" is
+// the wrong question; "do we have one that can reach the server?" is the right one.
+function isConnectableCandidate(candidate) {
+    const t = iceCandidateType(candidate);
+    return t === 'srflx' || t === 'relay';
+}
+
+// How long to keep gathering after the first TURN relay candidate arrives, so
+// sibling candidates (the other media section, additional TURN transports) make
+// it into the offer too. A relay candidate alone is enough to CONNECT; the extra
+// ones only improve path selection, so this is a short settle rather than a wait.
+const ICE_RELAY_SETTLE_MS = 250;
+// Backstop for networks where TURN is unreachable and no relay candidate ever
+// arrives. Sending whatever we have is better than stalling — if 1.5s wasn't
+// enough to reach a TURN server, longer usually isn't either.
+const ICE_GATHER_TIMEOUT_MS = 1500;
+// Hard ceiling for the case where the backstop fires before any *connectable*
+// candidate has been gathered. This app does not trickle ICE — `onicecandidate`
+// only ever triggers sending the whole localDescription, individual candidates
+// are never sent — so the offer must carry every candidate it will ever have.
+// Shipping one with nothing reachable in it produces a session that can never
+// connect, so when we have nothing usable, waiting is strictly better than
+// sending. This ceiling stops that wait from being unbounded: at this point we
+// send whatever exists and let the reveal watchdog surface the failure, which is
+// better than hanging on the spinner forever.
+const ICE_GATHER_MAX_WAIT_MS = 8000;
+
 // Prepare a peer connection ahead of time so ICE candidates are pre-gathered.
 // This avoids the ICE gathering delay when the user starts a new session.
 function preparePeerConnection(iceServers) {
@@ -2289,6 +2358,25 @@ function preparePeerConnection(iceServers) {
     const pc = new RTCPeerConnection({ iceServers: iceConfig, iceCandidatePoolSize: 4 });
     attachAvatarConnectionMonitor(pc);
     let iceGatheringDone = false;
+    let relaySettleTimer = null;
+    let connectableCount = 0;
+    let awaitingUsableCandidate = false;
+
+    // Queue the connection once it can actually connect, instead of waiting for
+    // gathering to fully complete (which routinely takes longer than the backstop
+    // and so effectively never won the race).
+    const markPrepared = (reason) => {
+        if (iceGatheringDone) return;
+        iceGatheringDone = true;
+        clearTimeout(relaySettleTimer);
+        peerConnectionQueue.push(pc);
+        console.log('[' + new Date().toISOString() + '] Peer connection prepared (' + reason + ').');
+        // Keep only the latest prepared connection
+        if (peerConnectionQueue.length > 1) {
+            const old = peerConnectionQueue.shift();
+            try { old.close(); } catch (e) {}
+        }
+    };
 
     // Handle incoming tracks (video and audio)
     pc.ontrack = (event) => attachAvatarTrack(event);
@@ -2300,15 +2388,21 @@ function preparePeerConnection(iceServers) {
     };
 
     pc.onicecandidate = (event) => {
-        if (!event.candidate && !iceGatheringDone) {
-            iceGatheringDone = true;
-            peerConnectionQueue.push(pc);
-            console.log('[' + new Date().toISOString() + '] ICE gathering done, new peer connection prepared.');
-            // Keep only the latest prepared connection
-            if (peerConnectionQueue.length > 1) {
-                const old = peerConnectionQueue.shift();
-                try { old.close(); } catch (e) {}
+        if (!event.candidate) {
+            markPrepared('gathering complete');
+            return;
+        }
+        if (isConnectableCandidate(event.candidate)) connectableCount++;
+        if (awaitingUsableCandidate) {
+            if (connectableCount > 0 && !relaySettleTimer) {
+                relaySettleTimer = setTimeout(
+                    () => markPrepared('usable candidate after timeout'), ICE_RELAY_SETTLE_MS);
             }
+            return;
+        }
+        if (iceCandidateType(event.candidate) === 'relay' && !relaySettleTimer) {
+            relaySettleTimer = setTimeout(
+                () => markPrepared('relay candidate ready'), ICE_RELAY_SETTLE_MS);
         }
     };
 
@@ -2332,20 +2426,21 @@ function preparePeerConnection(iceServers) {
     pc.createOffer().then(offer => {
         return pc.setLocalDescription(offer);
     }).then(() => {
-        // Timeout fallback: if ICE gathering hasn't completed after 1.5 seconds,
-        // push anyway. This is the disconnect-time prewarm; same logic as the
-        // first-connect path — see setupWebRTC() for rationale.
+        // Backstop: queue the connection anyway if no relay candidate ever shows
+        // up. This is the disconnect-time prewarm; same logic as the first-connect
+        // path — see setupWebRTC() for rationale.
         setTimeout(() => {
-            if (!iceGatheringDone) {
-                iceGatheringDone = true;
-                peerConnectionQueue.push(pc);
-                console.log('[' + new Date().toISOString() + '] ICE gathering timed out, peer connection prepared with available candidates.');
-                if (peerConnectionQueue.length > 1) {
-                    const old = peerConnectionQueue.shift();
-                    try { old.close(); } catch (e) {}
-                }
+            if (iceGatheringDone) return;
+            if (connectableCount > 0) {
+                markPrepared('gathering timed out');
+                return;
             }
-        }, 1500);
+            // Queuing a connection with nothing reachable just moves the failure
+            // to whoever reuses it. Wait for a usable candidate, up to the ceiling.
+            awaitingUsableCandidate = true;
+            setTimeout(() => markPrepared('no usable candidates'),
+                ICE_GATHER_MAX_WAIT_MS - ICE_GATHER_TIMEOUT_MS);
+        }, ICE_GATHER_TIMEOUT_MS);
     }).catch(err => {
         console.error('preparePeerConnection offer error', err);
     });
@@ -2399,15 +2494,47 @@ function setupWebRTC(iceServers) {
     };
 
     let iceGatheringDone = false;
+    let relaySettleTimer = null;
+    let connectableCount = 0;
+    let awaitingUsableCandidate = false;
+
+    // Send the offer as soon as we hold a candidate that can actually traverse
+    // NAT, rather than after a flat wait. Measured on the live app: the first TURN
+    // relay candidate arrives ~300ms after gathering starts, while gathering only
+    // reports "complete" at ~2.1s — so the old backstop timer fired on EVERY
+    // session and cost ~1.2s of visible startup for nothing. The timer is kept as
+    // a backstop for networks where TURN is unreachable, which makes this strictly
+    // no worse than the previous behaviour.
+    const sendOfferOnce = (reason) => {
+        if (iceGatheringDone) return;
+        iceGatheringDone = true;
+        clearTimeout(relaySettleTimer);
+        const sdpJson = JSON.stringify(peerConnection.localDescription);
+        const sdpBase64 = btoa(sdpJson);
+        ws.send(JSON.stringify({ type: 'avatar_sdp_offer', clientSdp: sdpBase64 }));
+        console.log('[WebRTC] SDP offer sent (' + reason + ')');
+    };
+
     peerConnection.onicecandidate = (event) => {
-        if (!event.candidate && !iceGatheringDone) {
-            iceGatheringDone = true;
-            // ICE gathering complete, send SDP offer now
-            const sdpJson = JSON.stringify(peerConnection.localDescription);
-            const sdpBase64 = btoa(sdpJson);
-            console.log('[SDP] Sending base64 SDP, starts with:', sdpBase64.substring(0, 40));
-            ws.send(JSON.stringify({ type: 'avatar_sdp_offer', clientSdp: sdpBase64 }));
-            console.log('[WebRTC] SDP offer sent (base64)');
+        if (!event.candidate) {
+            sendOfferOnce('gathering complete');
+            return;
+        }
+        if (isConnectableCandidate(event.candidate)) connectableCount++;
+        // Degraded path: the backstop already passed with nothing reachable, so
+        // take the first connectable candidate of either kind rather than holding
+        // out for a relay. Still settle briefly so a relay arriving just behind an
+        // srflx makes it into the same offer.
+        if (awaitingUsableCandidate) {
+            if (connectableCount > 0 && !relaySettleTimer) {
+                relaySettleTimer = setTimeout(
+                    () => sendOfferOnce('usable candidate after timeout'), ICE_RELAY_SETTLE_MS);
+            }
+            return;
+        }
+        if (iceCandidateType(event.candidate) === 'relay' && !relaySettleTimer) {
+            relaySettleTimer = setTimeout(
+                () => sendOfferOnce('relay candidate ready'), ICE_RELAY_SETTLE_MS);
         }
     };
 
@@ -2431,20 +2558,21 @@ function setupWebRTC(iceServers) {
     peerConnection.createOffer().then(offer => {
         return peerConnection.setLocalDescription(offer);
     }).then(() => {
-        // Timeout fallback: send SDP after 1.5s if ICE gathering hasn't completed.
-        // We send whatever candidates we have rather than waiting longer — if 1.5s
-        // wasn't enough to reach any TURN server, 2.5s usually isn't either and we
-        // were just adding visible Connect latency.
+        // Backstop only — see sendOfferOnce() above for why this should no longer
+        // be the path that normally fires.
         setTimeout(() => {
-            if (!iceGatheringDone) {
-                iceGatheringDone = true;
-                const sdpJson = JSON.stringify(peerConnection.localDescription);
-                const sdpBase64 = btoa(sdpJson);
-                console.log('[SDP] Sending base64 SDP (timeout), starts with:', sdpBase64.substring(0, 40));
-                ws.send(JSON.stringify({ type: 'avatar_sdp_offer', clientSdp: sdpBase64 }));
-                console.log('[WebRTC] SDP offer sent after timeout (base64)');
+            if (iceGatheringDone) return;
+            if (connectableCount > 0) {
+                sendOfferOnce('gathering timed out');
+                return;
             }
-        }, 1500);
+            // Nothing reachable gathered yet. An offer now could never connect
+            // (no trickle — see ICE_GATHER_MAX_WAIT_MS), so wait for a usable
+            // candidate instead of shipping a guaranteed-dead session.
+            awaitingUsableCandidate = true;
+            setTimeout(() => sendOfferOnce('no usable candidates'),
+                ICE_GATHER_MAX_WAIT_MS - ICE_GATHER_TIMEOUT_MS);
+        }, ICE_GATHER_TIMEOUT_MS);
     }).catch(err => {
         console.error('WebRTC offer error', err);
         addMessage('system', 'WebRTC setup failed');
