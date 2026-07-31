@@ -8,13 +8,25 @@ resulting ``manifest.json`` together with the two icons **at the zip root**
 Stdlib only — this is a pure-Python repo (uv) with no Node toolchain.
 
 Usage:
+    # After `azd up` — the hostname is read from the azd environment:
+    uv run python teams/build_package.py
+
+    # Or state it explicitly (no azd needed):
     uv run python teams/build_package.py --hostname my-app.azurecontainerapps.io
     # or via env (PowerShell):
     $env:TEAMS_HOSTNAME = "my-app.azurecontainerapps.io"
     uv run python teams/build_package.py
 
-Inputs (CLI flag overrides env var):
-    --hostname / TEAMS_HOSTNAME      Required. Bare ACA hostname, no scheme/path/port.
+Inputs (precedence: CLI flag > process env / .env > selected azd environment):
+    --hostname / TEAMS_HOSTNAME      Bare ACA hostname, no scheme/path/port. When
+                                     omitted, falls back to the selected azd
+                                     environment's SERVICE_APP_URI (scheme stripped),
+                                     so the command above works unmodified straight
+                                     after a deploy. An explicit value is still
+                                     validated strictly — passing a URL is an error,
+                                     because a scheme in validDomains breaks the
+                                     manifest and silently failing to notice is worse
+                                     than being told.
     --version  / TEAMS_APP_VERSION   Optional. Manifest version (default 1.0.0).
     --app-id   / TEAMS_APP_ID        Optional. Stable GUID. Defaults to a deterministic
                                      uuid5 derived from the hostname so rebuilds match.
@@ -26,10 +38,11 @@ Inputs (CLI flag overrides env var):
                                      AVATAR_DISPLAY_NAME knob, or, when that is unset, the
                                      friendly name of the active avatar model (a "Simone"
                                      avatar gives a "Simone" package). Last resort "Avatar".
-                                     So a package built from a deployed environment is named
-                                     to match what the avatar calls itself, without setting a
-                                     second variable. The full name + description are derived
-                                     from it. See backend/avatar_identity.py for the rule.
+                                     Those avatar variables are read from the azd environment
+                                     as well, so a package built from a deployed environment is
+                                     named to match what the avatar calls itself, without
+                                     setting a second variable. The full name + description are
+                                     derived from it. See backend/avatar_identity.py for the rule.
 
 Output:
     teams/build/avatar-forge-teams.zip
@@ -40,9 +53,13 @@ import argparse
 import json
 import os
 import re
+import shutil
+import subprocess
 import sys
 import uuid
 import zipfile
+from collections.abc import Mapping
+from urllib.parse import urlsplit
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE = os.path.join(HERE, "manifest.template.json")
@@ -65,11 +82,82 @@ _APP_ID_NAMESPACE = uuid.UUID("6f6c1d2e-7a4b-5c8d-9e0f-1a2b3c4d5e6f")
 _HOSTNAME_RE = re.compile(r"^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$", re.IGNORECASE)
 
 
+_AZD_VALUES: dict[str, str] | None = None
+
+
+def _azd_env_values() -> dict[str, str]:
+    """Values from the selected azd environment, or ``{}`` when unavailable.
+
+    azd is deliberately NOT a hard dependency: a missing azd, an unselected
+    environment or a pre-deploy run all yield ``{}`` so the caller falls back to
+    its normal behaviour. Returns ``{}`` rather than raising for the same reason —
+    an unavailable optional convenience must not become a stack trace.
+    """
+    global _AZD_VALUES
+    if _AZD_VALUES is not None:
+        return _AZD_VALUES
+    _AZD_VALUES = {}
+    exe = shutil.which("azd") or shutil.which("azd.exe")
+    if not exe:
+        return _AZD_VALUES
+    try:
+        res = subprocess.run(
+            [exe, "env", "get-values"], capture_output=True, text=True, check=False, timeout=120
+        )
+    except (OSError, subprocess.SubprocessError):
+        return _AZD_VALUES
+    if res.returncode != 0:
+        return _AZD_VALUES
+    for line in res.stdout.splitlines():
+        key, sep, raw = line.partition("=")
+        if sep:
+            _AZD_VALUES[key.strip()] = raw.strip().strip('"')
+    return _AZD_VALUES
+
+
+def _effective_env() -> dict[str, str]:
+    """azd environment values overlaid with any non-empty process env.
+
+    Same precedence as ``scripts/preflight.py::_config()``. It matters here
+    because the package's *branding* is derived from the avatar model variables,
+    and those live in the azd environment — not in the shell. Reading only
+    ``os.environ`` produced a package named "Lisa" (the unset-everything default)
+    for a deployment that calls itself "Simone", which is the very persona
+    mismatch ``backend/avatar_identity.py`` exists to prevent. An explicit shell
+    or ``.env`` value still wins, so local overrides keep working.
+    """
+    values = dict(_azd_env_values())
+    for key, val in os.environ.items():
+        if val:
+            values[key] = val
+    return values
+
+
+def _hostname_from_env(values: Mapping[str, str]) -> str:
+    """Bare hostname derived from the deployed app's ``SERVICE_APP_URI``.
+
+    A FALLBACK only, used when no hostname was supplied. It exists so the command
+    the post-deploy step plan prints (``build_package.py`` with no arguments) does
+    what its own description claims — read the host from your azd environment —
+    instead of exiting with "hostname is required".
+    """
+    uri = (values.get("SERVICE_APP_URI") or "").strip()
+    if not uri:
+        return ""
+    # validDomains needs a bare host; urlsplit also lowercases and drops any port.
+    return urlsplit(uri if "://" in uri else f"https://{uri}").hostname or ""
+
+
 def _normalize_hostname(raw: str) -> str:
     """Reject scheme/path/port; return a bare, validated hostname for validDomains."""
     host = (raw or "").strip()
     if not host:
-        sys.exit("error: hostname is required (pass --hostname or set TEAMS_HOSTNAME)")
+        sys.exit(
+            "error: hostname is required.\n"
+            "  Deployed already? Select the environment (azd env select <name>) and re-run —\n"
+            "  the host is read from SERVICE_APP_URI.\n"
+            "  Otherwise pass it: --hostname my-app.azurecontainerapps.io (or set TEAMS_HOSTNAME)."
+        )
     if "://" in host:
         sys.exit(f"error: hostname must not include a scheme: {host!r} (use the bare host, e.g. my-app.azurecontainerapps.io)")
     if "/" in host:
@@ -155,7 +243,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--version", default=os.getenv("TEAMS_APP_VERSION", "1.0.0"))
     parser.add_argument("--app-id", default=os.getenv("TEAMS_APP_ID"))
     parser.add_argument("--bot-id", default=os.getenv("TEAMS_BOT_ID"))
-    parser.add_argument("--name", default=os.getenv("TEAMS_APP_NAME") or resolve_avatar_display_name())
+    parser.add_argument("--name", default=None)
     parser.add_argument("--full-name", default=os.getenv("TEAMS_APP_FULL_NAME"))
     parser.add_argument(
         "--enable-companion",
@@ -175,10 +263,19 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    hostname = _normalize_hostname(args.hostname)
+    # The deployed environment supplies the baseline, so a package built after
+    # `azd up` inherits that deployment's host AND branding. Explicit input wins.
+    env = _effective_env()
+
+    supplied = (args.hostname or env.get("TEAMS_HOSTNAME") or "").strip()
+    hostname_source = "--hostname/TEAMS_HOSTNAME" if supplied else "azd env SERVICE_APP_URI"
+    hostname = _normalize_hostname(supplied or _hostname_from_env(env))
     app_id = _resolve_app_id(args.app_id, hostname)
     bot_id = _resolve_bot_id(args.bot_id)
-    names = _resolve_names(args.name, args.full_name)
+    names = _resolve_names(
+        args.name or env.get("TEAMS_APP_NAME") or resolve_avatar_display_name(env),
+        args.full_name,
+    )
     version = args.version.strip()
 
     with open(TEMPLATE, "r", encoding="utf-8") as f:
@@ -244,7 +341,7 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"Built {OUTPUT_ZIP}")
     print(f"  name:     {names['APP_NAME']}")
-    print(f"  hostname: {hostname}")
+    print(f"  hostname: {hostname}  (from {hostname_source})")
     print(f"  version:  {version}")
     print(f"  app id:   {app_id}")
     print(f"  bot id:   {bot_id or '(none — tab-only package)'}")

@@ -8,6 +8,22 @@ container app URL channel A already serves.
 
 Requires: [channel A](a-web.md) deployed.
 
+> **Already running channel A? You do not need to redeploy.** The `web` and
+> `teams-tab` profiles provision **identical** infrastructure — `DEPLOY_PROFILE`
+> reaches exactly one decision in `infra/main.bicep`, and that decision only gates
+> channel D's meeting-bot resources. Adding B is therefore two local commands
+> (build the package, upload it); `azd up` is not one of them. Setting the profile
+> is optional and only changes which steps `scripts/preflight.py --remaining`
+> prints:
+>
+> ```powershell
+> uv run python scripts/set_profile.py --profile teams-tab   # optional
+> uv run python teams/build_package.py
+> ```
+>
+> Picking `teams-tab` at the *first* `azd up` deploys the same resources and simply
+> shows you the packaging steps up front. Neither order costs anything extra.
+
 ---
 
 ## 1. How it works
@@ -48,11 +64,21 @@ speaker. Same voice, same grounding, same agent — no second deployment.
 **No Azure resources.** Only a Teams app package:
 
 ```powershell
+uv run python teams/build_package.py
+```
+
+The host and the branding both come from your selected `azd` environment
+(`SERVICE_APP_URI` and the avatar model variables), so the package is tied to the
+deployment it points at. Building outside an `azd` context — or targeting a
+different host — needs it stated explicitly:
+
+```powershell
 uv run python teams/build_package.py --hostname <your-app>.azurecontainerapps.io
 ```
 
-The hostname is required (or set `TEAMS_HOSTNAME`) — it becomes every URL in the
-manifest, so the package is tied to the deployment it points at.
+An explicit value must be a **bare host**: no scheme, path or port. Teams'
+`validDomains` rejects anything else, so passing the full `SERVICE_APP_URI` is an
+error rather than a silent mis-build.
 This fills the placeholders in `teams/manifest.template.json` (schema v1.17) with
 your deployed URL and IDs, and produces an installable `.zip`.
 

@@ -287,13 +287,15 @@ skipped and the deploy behaves exactly like channel B (tab-only).
 ## Teams app package *(build only)*
 
 Read by [`teams/build_package.py`](../teams/build_package.py) when it templates
-`manifest.template.json` into an uploadable zip. Every one has an equivalent command-line
-flag, which wins over the variable — see [`teams/README.md`](../teams/README.md).
+`manifest.template.json` into an uploadable zip. Precedence is **command-line flag →
+process env / `.env` → selected azd environment**, so a build run after `azd up`
+inherits that deployment's host and branding while any local value still overrides
+it — see [`teams/README.md`](../teams/README.md).
 
 | Variable | Flag | Default | Purpose |
 |---|---|---|---|
-| `TEAMS_HOSTNAME` | `--hostname` | — | **Required.** Host of the deployed app (`<name>.azurecontainerapps.io`, no scheme). Becomes every URL in the manifest. |
-| `TEAMS_APP_NAME` | `--name` | *(the resolved persona name)* | Short name shown in Teams — the assistant's persona name. Falls back to `AVATAR_DISPLAY_NAME` and, when that is unset, to the active avatar model's friendly name, so a package built against a deployed environment matches what the avatar calls itself without setting this. |
+| `TEAMS_HOSTNAME` | `--hostname` | *(derived from `SERVICE_APP_URI`)* | Host of the deployed app (`<name>.azurecontainerapps.io`, **no scheme, path or port** — Teams' `validDomains` cannot hold them, so a value carrying them is rejected). Becomes every URL in the manifest. When unset, taken from the selected azd environment's `SERVICE_APP_URI` with the scheme stripped, so the no-argument build targets your deployment. |
+| `TEAMS_APP_NAME` | `--name` | *(the resolved persona name)* | Short name shown in Teams — the assistant's persona name. Falls back to `AVATAR_DISPLAY_NAME` and, when that is unset, to the active avatar model's friendly name. Those are read from the azd environment too, so a package built against a deployment calling itself "Simone" is named Simone without setting this. |
 | `TEAMS_APP_FULL_NAME` | `--full-name` | `<name> — Azure Voice Live Avatar` | Long name shown on the app's detail page. |
 | `TEAMS_APP_VERSION` | `--version` | `1.0.0` | Manifest version. Teams refuses a re-upload unless this increases. |
 | `TEAMS_APP_ID` | `--app-id` | *(uuid5 of the hostname)* | Manifest app id (GUID). Derived deterministically from the hostname when unset, so rebuilds match. |

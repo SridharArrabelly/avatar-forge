@@ -74,8 +74,15 @@ def check(label: str, got, want) -> None:
         _failures.append(label)
 
 
-def build(argv: list[str], env: dict[str, str] | None = None) -> tuple[dict, list[str]]:
-    """Build a package with a clean environment; return (manifest, zip entries)."""
+def build(argv: list[str], env: dict[str, str] | None = None,
+          azd: dict[str, str] | None = None) -> tuple[dict, list[str]]:
+    """Build a package with a clean environment; return (manifest, zip entries).
+
+    ``azd`` pins what the builder sees as the selected azd environment. It
+    defaults to empty so tests stay hermetic — without pinning, the builder would
+    shell out to the developer's real azd environment and the expected names and
+    hostnames would change from machine to machine.
+    """
     saved = {k: os.environ.pop(k, None) for k in _ENV_KEYS}
     try:
         os.environ.update(env or {})
@@ -83,6 +90,7 @@ def build(argv: list[str], env: dict[str, str] | None = None) -> tuple[dict, lis
         spec = importlib.util.spec_from_file_location("build_package", _SCRIPT)
         bp = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(bp)
+        bp._AZD_VALUES = dict(azd or {})
         with tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp) / "pkg.zip"
             bp.BUILD_DIR = tmp
@@ -182,6 +190,42 @@ def main() -> int:
     check("same hostname -> same id", a["id"], b["id"])
     c, _ = build(["--hostname", "other.azurecontainerapps.io"])
     check("different hostname -> different id", c["id"] != a["id"], True)
+
+    print("\n6. The deployed azd environment supplies the baseline")
+    # Regression: the builder used to read only os.environ, so a package built
+    # against a deployment whose avatar is "Simone" was named "Lisa" (the
+    # everything-unset default) and demanded a --hostname the step plan never
+    # passed. Both inputs live in the azd environment, not the shell.
+    DEPLOYED = {
+        "SERVICE_APP_URI": "https://ca-deployed.example.azurecontainerapps.io",
+        "IS_PHOTO_AVATAR": "true",
+        "PHOTO_AVATAR_NAME": "Simone",
+        "AVATAR_NAME": "Lisa-casual-sitting",  # inert: the photo gate is on
+        "AVATAR_DISPLAY_NAME": "",
+    }
+    m, _ = build([], azd=DEPLOYED)
+    check("no args -> host from SERVICE_APP_URI",
+          m["validDomains"][0], "ca-deployed.example.azurecontainerapps.io")
+    check("no args -> name from deployed avatar", m["name"]["short"], "Simone")
+
+    m, _ = build([], azd={**DEPLOYED, "SERVICE_APP_URI": "https://Host.Example.COM:443/app"})
+    check("scheme/port/path stripped from SERVICE_APP_URI",
+          m["validDomains"][0], "host.example.com")
+
+    print("\n   explicit input still wins over the deployed environment")
+    m, _ = build(HOST, azd=DEPLOYED)
+    check("--hostname wins", m["validDomains"][0], "example.azurecontainerapps.io")
+    m, _ = build([], {"AVATAR_DISPLAY_NAME": "Nuru"}, azd=DEPLOYED)
+    check("process env wins over azd", m["name"]["short"], "Nuru")
+    m, _ = build(["--name", "Explicit"], azd=DEPLOYED)
+    check("--name wins", m["name"]["short"], "Explicit")
+
+    print("\n   no azd environment -> unchanged behaviour")
+    try:
+        build([])
+        check("bare build without azd still errors", False, True)
+    except SystemExit:
+        check("bare build without azd still errors", True, True)
 
     print()
     if _failures:
