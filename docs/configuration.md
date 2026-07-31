@@ -291,16 +291,33 @@ it serves the media bot **without** provisioning an ACS resource. See
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `ENABLE_ACS` | `false` | **azd/infra only.** When `true`, provisions the conditional `communicationServices.bicep` and passes `ACS_ENDPOINT` to the container. |
+| `ENABLE_ACS` | `false` | **azd/infra only.** When `true`, provisions the conditional `communicationServices.bicep` and passes `ACS_ENDPOINT` to the container. **Not needed by channels A–D** — see the note below the table. |
 | `ACS_DATA_LOCATION` | `United States` | **azd/infra only.** Data residency geography for the ACS resource. |
-| `ACS_ENDPOINT` | — | ACS resource endpoint (`https://<acs>.communication.azure.com/`). Set automatically by infra; enables channel D. Auth via the container's managed identity (needs a role on the ACS resource). |
-| `ACS_CONNECTION_STRING` | — | Alternative to `ACS_ENDPOINT` + managed identity (includes endpoint + key). Takes precedence when set; simplest for local/dev. Enables channel D. |
+| `ACS_ENDPOINT` | — | ACS resource endpoint (`https://<acs>.communication.azure.com/`). Set automatically by infra when `ENABLE_ACS=true`. Auth via the container's managed identity (needs a role on the ACS resource). |
+| `ACS_CONNECTION_STRING` | — | Alternative to `ACS_ENDPOINT` + managed identity (includes endpoint + key). Takes precedence when set; simplest for local/dev. |
 | `ACS_CALLBACK_BASE_URL` | — | Public HTTPS base URL ACS uses for call-event callbacks and the media WebSocket. Defaults to the app's own external ingress; set for local dev behind a Dev Tunnel/ngrok. |
 | `ACS_AUDIO_SAMPLE_RATE` | `24000` | PCM sample rate (Hz) for the ACS↔Voice Live bridge. `24000` matches Voice Live (no resample); `16000` also valid. |
 | `ACS_WAKE_PHRASES` | *(derived from `AVATAR_DISPLAY_NAME`)* | Comma-separated, case-insensitive phrases that invoke a spoken answer (turn-taking, so it never talks over the room). Defaults to `hey <name>,<name>` lower-cased, so the wake word follows whatever you named the assistant — set this only to override. |
 | `ACS_REQUIRE_WAKE_PHRASE` | `true` | Require a wake phrase before answering (half-duplex). Set `false` in a 1:1 test meeting to answer every turn. |
 | `ACS_IDLE_TIMEOUT_S` | `0` | Leave the call after N seconds of inactivity (`0` disables). |
 | `ACS_FOLLOWUP_WINDOW_S` | `30` | Seconds after an answer during which a follow-up needs **no** wake phrase, so a real back-and-forth doesn't require saying the name every turn. |
+
+> [!NOTE]
+> **The `ACS_` prefix spans two unrelated things.** Read it as two groups:
+>
+> - **The ACS *resource*** — `ENABLE_ACS`, `ACS_DATA_LOCATION`, `ACS_ENDPOINT`,
+>   `ACS_CONNECTION_STRING`, `ACS_CALLBACK_BASE_URL`. **No channel in the A–D ladder
+>   needs these.** They serve the separate browser joiner (`/acs-join.html`), where a
+>   browser tab joins a meeting as an anonymous guest. Leave `ENABLE_ACS` at `false`
+>   unless you are specifically using that page.
+> - **The audio *bridge*** — `ACS_AUDIO_SAMPLE_RATE`, `ACS_WAKE_PHRASES`,
+>   `ACS_REQUIRE_WAKE_PHRASE`, `ACS_IDLE_TIMEOUT_S`, `ACS_FOLLOWUP_WINDOW_S`. These
+>   are read by `backend/acs/bridge.py` and **do apply to channel D**, which speaks
+>   the same wire protocol over `/ws/acs/audio`. The turn-taking ones are the knobs
+>   you will actually tune in a live meeting.
+>
+> Channel D joins through Graph calling on the Windows host and never touches the ACS
+> resource; the `acs` in the paths is the protocol's name, not a dependency.
 
 ### The avatar's face in the meeting
 

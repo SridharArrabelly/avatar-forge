@@ -114,7 +114,7 @@ capability, so environments created before profiles existed are unaffected.
 | `MEETING_BOT_ENABLED` | `in-call` | Serves the media-bot bridge (`/ws/acs/audio`) for **D**. |
 | `DEPLOY_MEETING_BOT_HOST` | `in-call` | Provisions the Windows media host + calling bot registration. |
 | `MEETING_BOT_APP_ID` / `_DNS_LABEL` / `_ADMIN_PASSWORD` | you supply | Required for **D**; the host is skipped if any is missing. |
-| `ENABLE_ACS` | — | Provisions `modules/communicationServices.bicep`. Independent of the above. |
+| `ENABLE_ACS` | `false` | Provisions `modules/communicationServices.bicep`. **No channel above needs this.** It serves the separate browser joiner (`/acs-join.html`), where a browser tab joins a meeting as an anonymous guest. Channel D joins via Graph calling — the `acs` in `/ws/acs/audio` is the bridge protocol's name, not an ACS dependency. |
 | `DEPLOY_BING_GROUNDING` | `true` | Provisions `modules/bingGrounding.bicep` (Bing account + site allow-list) and the Foundry connection to it, enabling the agent's web/news tool. On by default; set `false` to skip. Independent of the above; applies to every channel. |
 
 > **C and D each need an Azure Bot registration, and they cannot share one.** An

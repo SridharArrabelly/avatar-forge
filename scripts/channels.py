@@ -50,6 +50,17 @@ BEFORE = "before"
 DURING = "during"
 AFTER = "after"
 
+# ── When a resource bills ────────────────────────────────────────────────────
+HOURLY = "hourly"  # bills whether or not anyone uses it -- the surprising kind
+PER_USE = "per-use"  # bills only while someone is using it
+FREE = "free"
+
+COST_GROUPS = [
+    (HOURLY, "Billed hourly, used or not"),
+    (PER_USE, "Billed per use, nothing while idle"),
+    (FREE, "Free"),
+]
+
 GREEN = "\033[32m"
 YELLOW = "\033[33m"
 RED = "\033[31m"
@@ -93,6 +104,20 @@ class RequiredInput:
 
 
 @dataclass(frozen=True)
+class CostItem:
+    """One line on the bill, and — the part people actually get wrong — when it bills.
+
+    Idle cost and per-use cost behave so differently that lumping them together
+    misleads in both directions: it makes an idle deployment look free when it is
+    not, and a live session look cheap when the per-minute meters are running.
+    """
+
+    what: str
+    billing: str
+    note: str = ""
+
+
+@dataclass(frozen=True)
 class Profile:
     key: str
     title: str
@@ -104,7 +129,24 @@ class Profile:
     steps: list[Step] = field(default_factory=list)
     # extra ARM resource providers that must be registered
     providers: list[str] = field(default_factory=list)
+    # Cumulative, not incremental: each profile lists everything it deploys, so
+    # nobody has to read the profile below to learn what they are paying for.
+    costs: list[CostItem] = field(default_factory=list)
     cost_note: str = ""
+
+
+# ── What every profile costs ────────────────────────────────────────────────
+def _core_costs() -> list[CostItem]:
+    """Channel A's bill, which every profile inherits because every profile deploys it."""
+    return [
+        CostItem("AI Search", HOURLY, "`basic` tier"),
+        CostItem("Container app", HOURLY, "floor of 1 replica, so it never idles to nothing"),
+        CostItem("Container registry", HOURLY, "`Standard`"),
+        CostItem("Log Analytics + App Insights", HOURLY, "ingestion, 30-day retention"),
+        CostItem("Voice Live minutes", PER_USE, "higher with avatar video; dominates a live session"),
+        CostItem("Model tokens", PER_USE, "`GlobalStandard` chat + embeddings, billed per token"),
+        CostItem("Bing searches", PER_USE, "`DEPLOY_BING_GROUNDING=false` to skip the tool"),
+    ]
 
 
 # ── Steps shared by every profile ────────────────────────────────────────────
@@ -189,18 +231,7 @@ PROFILES: dict[str, Profile] = {
         channels="A",
         summary="The standalone browser app. No Teams, no manifest, no administrator.",
         steps=_core_steps(),
-        cost_note=(
-            "two shapes, and only one of them stops when you stop using it. "
-            "ALWAYS ON, billed by the hour whether or not anyone opens the app: "
-            "AI Search (`basic`), the container app (floor of 1 replica), the "
-            "container registry (Standard) and log ingestion. None of it scales to "
-            "zero, so `azd down --purge` is the only way to stop paying. "
-            "PER USE, nothing while idle: model tokens, Voice Live session minutes "
-            "(higher with the avatar video on) and Bing searches. During a live "
-            "session the per-minute Voice Live charge is the one that moves, not "
-            "the hourly infrastructure — price both at "
-            "https://azure.microsoft.com/pricing/calculator/ before a long pilot."
-        ),
+        costs=_core_costs(),
     ),
     "teams-tab": Profile(
         key="teams-tab",
@@ -211,7 +242,7 @@ PROFILES: dict[str, Profile] = {
             "Provisions ZERO extra Azure resources — the manifest just points at the app URL."
         ),
         steps=_core_steps() + _teams_package_steps(),
-        cost_note="identical to `web` — the tab adds no Azure resources at all.",
+        costs=_core_costs() + [CostItem("Teams personal tab", FREE, "adds no Azure resources at all")],
     ),
     "teams-chat": Profile(
         key="teams-chat",
@@ -273,7 +304,11 @@ PROFILES: dict[str, Profile] = {
                 ),
             ]
         ),
-        cost_note="as `web`, plus an Azure Bot registration — F0, free on the Teams channel.",
+        costs=_core_costs()
+        + [
+            CostItem("Teams personal tab", FREE, "adds no Azure resources at all"),
+            CostItem("Azure Bot registration", FREE, "F0, free on the Teams channel"),
+        ],
     ),
     "in-call": Profile(
         key="in-call",
@@ -385,14 +420,27 @@ PROFILES: dict[str, Profile] = {
                 ),
             ]
         ),
+        costs=[
+            CostItem(
+                "Windows VM (Standard_D4s_v5)",
+                HOURLY,
+                "~$283/mo — the dominant cost; Windows licensing roughly doubles the Linux rate",
+            ),
+            CostItem(
+                "VM OS disk + static public IP",
+                HOURLY,
+                "~$20/mo — keeps billing even while the VM is deallocated",
+            ),
+        ]
+        + _core_costs()
+        + [
+            CostItem("Teams personal tab", FREE, "adds no Azure resources at all"),
+            CostItem("Azure Bot registration", FREE, "F0, calling-enabled"),
+        ],
         cost_note=(
-            "adds the largest line item in the whole project — an always-on Windows "
-            "VM, Standard_D4s_v5 (~$283/month; Windows licensing roughly doubles the "
-            "Linux rate). Deallocate it whenever you are not testing: "
-            "`az vm deallocate -n avatar-meetingbot-vm -g <rg>`. That stops the "
-            "compute charge but not the Premium_LRS OS disk or the static public IP, "
-            "which keep billing (~$20/month) until the resource group goes. The Bot "
-            "registration it adds is F0 (free)."
+            "Deallocate the VM whenever you are not testing — "
+            "`az vm deallocate -n avatar-meetingbot-vm -g <rg>` — which stops the "
+            "compute charge but not the disk or the IP."
         ),
     ),
 }
@@ -471,10 +519,34 @@ def render_steps(profile: Profile, *, color: bool = True, phases: tuple[str, ...
         lines.append(c(DIM, "  See docs/admin-checklist.md - including what to do when you cannot get one."))
         lines.append("")
 
-    if profile.cost_note and not partial:
-        for i, wrapped in enumerate(_wrap(profile.cost_note, 66)):
-            prefix = c(BOLD, "Cost: ") if i == 0 else "      "
-            lines.append(prefix + wrapped)
+    if profile.costs and not partial:
+        lines.append(c(BOLD, f"Cost — everything profile '{profile.key}' deploys"))
+        width = max(len(i.what) for i in profile.costs)
+        for billing, heading in COST_GROUPS:
+            group = [i for i in profile.costs if i.billing == billing]
+            if not group:
+                continue
+            lines.append(c(DIM, f"  {heading}:"))
+            for item in group:
+                row = f"    {item.what.ljust(width)}"
+                if not item.note:
+                    lines.append(row)
+                    continue
+                # Wrap the note under itself so a long one never runs off the line.
+                pad = " " * (len(row) + 2)
+                for j, wrapped in enumerate(_wrap(item.note, max(24, 74 - len(row)))):
+                    lines.append((row + "  " if j == 0 else pad) + c(DIM, wrapped))
+        lines.append("")
+        tail = (
+            "The hourly group does not scale to zero, so `azd down --purge` is the only "
+            "way to stop paying for it. During a live session it is the per-use meters "
+            "that move, not the hourly infrastructure — price both at "
+            "https://azure.microsoft.com/pricing/calculator/ before a long pilot."
+        )
+        if profile.cost_note:
+            tail = profile.cost_note + " " + tail
+        for wrapped in _wrap(tail, 72):
+            lines.append(f"  {c(DIM, wrapped)}")
         lines.append("")
 
     return "\n".join(lines)
