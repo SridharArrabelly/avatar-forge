@@ -204,7 +204,9 @@ az vm start -n avatar-meetingbot-vm -g <rg>      # when you next need it
 
 Deallocating preserves the DNS label and the Teams access policy, so restarting
 costs nothing but time. **Deallocate after every test session** — this is the
-single easiest way to waste money on this project.
+single easiest way to waste money on this project. It does not take you to zero:
+the `Premium_LRS` OS disk and the static public IP keep billing (~$20/month) until
+the resource group goes.
 
 To remove the channel entirely: delete the VM resources and set
 `MEETING_BOT_ENABLED=false`, then redeploy. Channels A–C are unaffected.

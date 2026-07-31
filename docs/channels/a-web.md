@@ -111,8 +111,22 @@ If the avatar appears but never answers, check
 
 ## 6. Cost & teardown
 
-The container app scales to a low floor but the Foundry and Search resources bill
-continuously. To stop paying entirely:
+Two different billing shapes, and only one of them stops when you stop using it.
+
+| Shape | What | Stops when idle? |
+| --- | --- | --- |
+| **Hourly, regardless of use** | AI Search (`basic`), container app (floor of 1 replica), container registry (`Standard`), log ingestion | **No** |
+| **Per use** | model tokens, Voice Live session minutes (higher with avatar video), Bing searches | Yes |
+
+The Foundry account itself is `S0` — that tier is a container for the model
+deployments, which are `GlobalStandard` and bill per token, not per hour. So an idle
+deployment still costs money, but it is the Search + container-app + registry floor,
+not the AI. Conversely, during a live session the Voice Live per-minute charge is the
+figure that moves. Price both at the
+[Azure pricing calculator](https://azure.microsoft.com/pricing/calculator/) before a
+long pilot.
+
+To stop paying entirely:
 
 ```powershell
 azd down --purge
@@ -124,5 +138,5 @@ azd down --purge
 > that environment name fails or silently restores the old account.
 >
 > Teardown also empties the azd environment's stored values, so re-set whatever you had
-> configured (`DEPLOY_PROFILE`, any `BOT_*`, `DEPLOY_BING_GROUNDING`, ...) before the
-> next `azd up` — `uv run python scripts/preflight.py` lists what is missing.
+> configured (`DEPLOY_PROFILE`, any `BOT_*`, ...) before the next `azd up` —
+> `uv run python scripts/preflight.py` lists what is missing and asks for the rest.

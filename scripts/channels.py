@@ -190,9 +190,16 @@ PROFILES: dict[str, Profile] = {
         summary="The standalone browser app. No Teams, no manifest, no administrator.",
         steps=_core_steps(),
         cost_note=(
-            "Container app + Foundry + AI Search. Note this does NOT scale to zero: AI "
-            "Search is a `basic` service billed hourly and the container app holds a floor "
-            "of 1 replica. `azd down` is the only way to stop paying."
+            "two shapes, and only one of them stops when you stop using it. "
+            "ALWAYS ON, billed by the hour whether or not anyone opens the app: "
+            "AI Search (`basic`), the container app (floor of 1 replica), the "
+            "container registry (Standard) and log ingestion. None of it scales to "
+            "zero, so `azd down --purge` is the only way to stop paying. "
+            "PER USE, nothing while idle: model tokens, Voice Live session minutes "
+            "(higher with the avatar video on) and Bing searches. During a live "
+            "session the per-minute Voice Live charge is the one that moves, not "
+            "the hourly infrastructure — price both at "
+            "https://azure.microsoft.com/pricing/calculator/ before a long pilot."
         ),
     ),
     "teams-tab": Profile(
@@ -204,7 +211,7 @@ PROFILES: dict[str, Profile] = {
             "Provisions ZERO extra Azure resources — the manifest just points at the app URL."
         ),
         steps=_core_steps() + _teams_package_steps(),
-        cost_note="Identical to `web`. The tab is free.",
+        cost_note="identical to `web` — the tab adds no Azure resources at all.",
     ),
     "teams-chat": Profile(
         key="teams-chat",
@@ -266,7 +273,7 @@ PROFILES: dict[str, Profile] = {
                 ),
             ]
         ),
-        cost_note="Adds an Azure Bot registration (F0 — free).",
+        cost_note="as `web`, plus an Azure Bot registration — F0, free on the Teams channel.",
     ),
     "in-call": Profile(
         key="in-call",
@@ -379,8 +386,13 @@ PROFILES: dict[str, Profile] = {
             ]
         ),
         cost_note=(
-            "Adds an always-on Windows VM, Standard_D4s_v5 (~$283/month). Deallocate it "
-            "when not testing: `az vm deallocate -n avatar-meetingbot-vm -g <rg>`."
+            "adds the largest line item in the whole project — an always-on Windows "
+            "VM, Standard_D4s_v5 (~$283/month; Windows licensing roughly doubles the "
+            "Linux rate). Deallocate it whenever you are not testing: "
+            "`az vm deallocate -n avatar-meetingbot-vm -g <rg>`. That stops the "
+            "compute charge but not the Premium_LRS OS disk or the static public IP, "
+            "which keep billing (~$20/month) until the resource group goes. The Bot "
+            "registration it adds is F0 (free)."
         ),
     ),
 }
@@ -460,7 +472,9 @@ def render_steps(profile: Profile, *, color: bool = True, phases: tuple[str, ...
         lines.append("")
 
     if profile.cost_note and not partial:
-        lines.append(c(BOLD, "Cost: ") + profile.cost_note)
+        for i, wrapped in enumerate(_wrap(profile.cost_note, 66)):
+            prefix = c(BOLD, "Cost: ") if i == 0 else "      "
+            lines.append(prefix + wrapped)
         lines.append("")
 
     return "\n".join(lines)
