@@ -95,19 +95,24 @@ azd auth login
 # 2. Create an azd environment
 azd env new <environment-name>
 
-# 3. Choose the channel (step 0 above) — records DEPLOY_PROFILE and prints the plan
+# 3. Pick the region. Only these four support both Voice Live and the avatar:
+#    eastus2 · southeastasia · swedencentral · westus2
+#    Skip it and preflight asks; either way it is validated before azd runs.
+azd env set AZURE_LOCATION swedencentral
+
+# 4. Choose the channel (step 0 above) — records DEPLOY_PROFILE and prints the plan
 uv run python scripts/set_profile.py
 
-# 4. Verify you can actually finish that plan
+# 5. Verify you can actually finish that plan. Also settles the deploy target —
+#    subscription, region, resource group — so step 6 never stops to ask.
 uv run python scripts/preflight.py
 
-# 5. Provision infra + build + deploy app
-#    azd prompts for anything still missing: Subscription, Location, Resource Group name
+# 6. Provision infra + build + deploy app
 azd up
 ```
 
-Steps 3 and 4 are not optional extras — they are what makes the rest predictable.
-Preflight also re-runs automatically as the `preprovision` hook, so skipping step 4
+Steps 4 and 5 are not optional extras — they are what makes the rest predictable.
+Preflight also re-runs automatically as the `preprovision` hook, so skipping step 5
 only means you find out at `azd up` instead of before it.
 
 > [!IMPORTANT]
@@ -170,15 +175,15 @@ azd env set APPINSIGHTS_RESOURCE_GROUP rg-shared-observability
 azd env set AGENT_NAME              MtnAvatarAgent
 azd env set SEARCH_CONNECTION_NAME  aisearch-connection
 
-# (optional) Enable the web/news tool. Recommended: let azd deploy the whole thing —
-# the Bing account, the curated site allow-list and the Foundry connection — and feed
-# the two names back automatically. Edit the allow-list in infra/main.bicep first
-# (bingAllowedDomains) so it points at YOUR sources rather than the sample ones.
-azd env set DEPLOY_BING_GROUNDING true
+# The web/news tool is ON by default: azd deploys the Bing account, the curated site
+# allow-list and the Foundry connection, and feeds the two names back automatically.
+# Edit the allow-list in infra/main.bicep (bingAllowedDomains) so it points at YOUR
+# sources rather than the sample ones. To skip the tool (it is billable):
+# azd env set DEPLOY_BING_GROUNDING false
 
-# ...or, if you already have a Grounding-with-Bing-Custom-Search connection, name it
-# instead of deploying one. Leave all three unset for a working search-only agent;
-# add them later and re-run `azd hooks run postprovision` to switch the tool on.
+# ...or, to point at a Grounding-with-Bing-Custom-Search connection you already have,
+# set DEPLOY_BING_GROUNDING=false and name it instead. Naming one that does not exist
+# skips the tool with a warning; add it later and re-run `azd hooks run postprovision`.
 # azd env set BING_CONNECTION_NAME    <your-bing-grounding-connection>
 # azd env set BING_CUSTOM_CONFIG_NAME <your-bing-custom-config>
 
@@ -311,7 +316,8 @@ If the agent could not be created at all, the hook **exits non-zero** so a broke
 can never look successful. Your Azure resources are still fine — only the data-plane
 step needs re-running; nothing needs re-provisioning.
 
-To add the web tool later, pick whichever fits:
+To add the web tool later — for example after a deploy where you set
+`DEPLOY_BING_GROUNDING=false` — pick whichever fits:
 
 - **Let azd deploy it** — `azd env set DEPLOY_BING_GROUNDING true` then `azd up`. This
   creates the Bing account, the curated allow-list and the Foundry connection, and sets

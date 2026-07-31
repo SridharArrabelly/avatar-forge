@@ -116,12 +116,18 @@ discover that halfway through, the tooling tells you the whole sequence up front
 azd auth login
 azd env new <environment-name>
 
+# Pick the region. Only these four support both Voice Live and the avatar:
+#   eastus2 · southeastasia · swedencentral · westus2
+azd env set AZURE_LOCATION swedencentral
+
 # 1. Choose which channel you are deploying. Sets DEPLOY_PROFILE and prints
 #    the full numbered plan, marking who performs each step.
 uv run python scripts/set_profile.py
 
 # 2. Check you can actually finish it — region support, providers, tooling and
 #    every input your channel needs. Cheap now; expensive after a 20-minute deploy.
+#    Also settles subscription, region and resource group if you have not, so
+#    step 3 does not stop halfway to ask.
 uv run python scripts/preflight.py
 
 # 3. Deploy. Preflight runs again automatically and blocks a doomed deploy.

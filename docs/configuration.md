@@ -71,7 +71,7 @@ agent-creation time; the runtime backend never talks to Bing directly.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `DEPLOY_BING_GROUNDING` | `false` | **Optional, infra-only.** When `true`, `azd up` deploys the whole web tool — the Bing account, the curated site allow-list and the Foundry connection — and sets the two variables below automatically. Off by default because it provisions a billable resource. Only takes effect on a greenfield deploy (there must be a Foundry project to attach the connection to). |
+| `DEPLOY_BING_GROUNDING` | `true` | **Infra-only.** `azd up` deploys the whole web tool — the Bing account, the curated site allow-list and the Foundry connection — and sets the two variables below automatically. Set `false` to skip it (it is a billable resource); the agent then answers from AI Search alone. Only takes effect on a greenfield deploy (there must be a Foundry project to attach the connection to). |
 | `BING_SKU_NAME` | `G2` | **Optional, infra-only.** Bing pricing tier when `DEPLOY_BING_GROUNDING=true`. `G2` is the tier this project has run on; `G1` is the lower tier. |
 | `BING_CONNECTION_NAME` | *(unset — web tool disabled)* | **Optional.** Foundry connection for Grounding with Bing Custom Search (the agent's only external tool). Set for you when `DEPLOY_BING_GROUNDING=true`; otherwise name an existing connection. Leave unset for a search-only agent; naming a connection that doesn't exist skips the tool with a warning rather than failing. |
 | `BING_CUSTOM_CONFIG_NAME` | *(unset — web tool disabled)* | **Optional.** Bing Custom Search configuration name — the curated domain allow-list the web tool is restricted to. Set for you when `DEPLOY_BING_GROUNDING=true`; otherwise required alongside `BING_CONNECTION_NAME`. |

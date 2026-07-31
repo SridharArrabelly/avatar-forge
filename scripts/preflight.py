@@ -66,7 +66,7 @@ AVATAR_REGIONS = {
     "eastus2",
 }
 
-BASE_PROVIDERS = ["Microsoft.CognitiveServices", "Microsoft.App", "Microsoft.Search"]
+BASE_PROVIDERS = ["Microsoft.CognitiveServices", "Microsoft.App", "Microsoft.Search", "Microsoft.Bing"]
 
 
 @dataclass
@@ -105,7 +105,11 @@ def _print_target(cfg: dict[str, str]) -> None:
     """
     env_name = cfg.get("AZURE_ENV_NAME", "") or "(unset)"
     sub_id = cfg.get("AZURE_SUBSCRIPTION_ID", "") or "(unset)"
-    rg = cfg.get("AZURE_RESOURCE_GROUP") or cfg.get("AZURE_RESOURCE_GROUP_NAME") or f"rg-{env_name}"
+    rg = cfg.get("AZURE_RESOURCE_GROUP") or cfg.get("AZURE_RESOURCE_GROUP_NAME")
+    # main.parameters.json maps resourceGroupName to ${AZURE_RESOURCE_GROUP_NAME} with
+    # no default, so when it is unset azd ASKS during `azd up`. Printing a guess here
+    # would state as settled something the user has not chosen yet.
+    rg_label = rg if rg else f"{DIM}azd will ask during `azd up` (suggests rg-{env_name}){RESET}"
     sub_label = sub_id
     if sub_id and sub_id != "(unset)":
         code, out, _ = _run(["account", "show", "--subscription", sub_id, "--query", "name", "-o", "tsv"])
@@ -114,7 +118,7 @@ def _print_target(cfg: dict[str, str]) -> None:
     print(f"{BOLD}Deploying into{RESET}")
     print(f"  environment  : {BOLD}{env_name}{RESET}")
     print(f"  subscription : {sub_label}")
-    print(f"  resource grp : {rg}")
+    print(f"  resource grp : {rg_label}")
     print(f"{DIM}  Not what you expected? azd env select <name>, or azd env new <name>{RESET}\n")
 
 
@@ -328,6 +332,79 @@ def check_vm_password(cfg: dict[str, str]) -> CheckResult | None:
     )
 
 
+def _azd_env_set(var: str, value: str) -> bool:
+    """Persist a value into the azd environment. False if azd could not store it."""
+    exe = shutil.which("azd") or shutil.which("azd.exe")
+    if not exe:
+        return False
+    res = subprocess.run(
+        [exe, "env", "set", var, value], capture_output=True, text=True, check=False
+    )
+    return res.returncode == 0
+
+
+def _settle_subscription(cfg: dict[str, str]) -> str:
+    """Choose the target subscription here rather than leaving it to `azd up`.
+
+    azd resolves subscription before everything else, so an unset one is the FIRST
+    thing it stops for. Settling it here also keeps preflight honest: the provider
+    and quota checks below run against a subscription, and if that is not the one
+    the deploy uses, a green preflight says nothing about the deploy.
+    """
+    existing = (cfg.get("AZURE_SUBSCRIPTION_ID") or "").strip()
+    if existing or not sys.stdin.isatty():
+        return existing
+    code, out, _ = _run(["account", "show", "--query", "[id,name]", "-o", "tsv"])
+    if code != 0 or not out.strip():
+        return ""  # not signed in to az -- nothing to suggest, let azd ask
+    parts = [p.strip() for p in out.strip().split("\t")]
+    default = parts[0]
+    name = parts[1] if len(parts) > 1 else ""
+    print(f"{BOLD}No subscription set for this environment yet.{RESET}")
+    print(f"{DIM}  Signed in to az as: {name or default}{RESET}")
+    try:
+        answer = input(f"Subscription id [{default}]: ").strip() or default
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return ""
+    if _azd_env_set("AZURE_SUBSCRIPTION_ID", answer):
+        print(f"{GREEN}  Saved: azd env set AZURE_SUBSCRIPTION_ID {answer}{RESET}\n")
+    else:
+        print(f"{YELLOW}  Could not save it; using it for this run only.{RESET}\n")
+    return answer
+
+
+def _settle_resource_group(cfg: dict[str, str]) -> str:
+    """Choose the resource group here so `azd up` does not stop to ask for it.
+
+    main.parameters.json maps resourceGroupName to ${AZURE_RESOURCE_GROUP_NAME}
+    with no default, so azd prompts whenever it is unset. That is the last
+    interactive stop between a green preflight and a finished deploy.
+    """
+    existing = (
+        cfg.get("AZURE_RESOURCE_GROUP") or cfg.get("AZURE_RESOURCE_GROUP_NAME") or ""
+    ).strip()
+    if existing or not sys.stdin.isatty():
+        return existing
+    env_name = (cfg.get("AZURE_ENV_NAME") or "").strip()
+    default = f"rg-{env_name}" if env_name else ""
+    print(f"{BOLD}No resource group set for this environment yet.{RESET}")
+    print(f"{DIM}  Everything this profile deploys lands in it. It is created if absent.{RESET}")
+    try:
+        prompt = f"Resource group [{default}]: " if default else "Resource group: "
+        answer = (input(prompt).strip() or default).strip()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return ""
+    if not answer:
+        return ""
+    if _azd_env_set("AZURE_RESOURCE_GROUP_NAME", answer):
+        print(f"{GREEN}  Saved: azd env set AZURE_RESOURCE_GROUP_NAME {answer}{RESET}\n")
+    else:
+        print(f"{YELLOW}  Could not save it; using it for this run only.{RESET}\n")
+    return answer
+
+
 def _prompt_for_location() -> str:
     """Ask for a region when the environment has none, and persist the answer.
 
@@ -353,13 +430,7 @@ def _prompt_for_location() -> str:
         return ""
     exe = shutil.which("azd") or shutil.which("azd.exe")
     if exe:
-        res = subprocess.run(
-            [exe, "env", "set", "AZURE_LOCATION", answer],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if res.returncode == 0:
+        if _azd_env_set("AZURE_LOCATION", answer):
             print(f"{GREEN}  Saved: azd env set AZURE_LOCATION {answer}{RESET}\n")
         else:
             print(f"{YELLOW}  Could not save it; using it for this run only.{RESET}\n")
@@ -410,12 +481,26 @@ def main() -> int:
         print(f"        {BOLD}azd env select <name>{RESET}     # point at an existing one")
         return 2
 
+    # Settle the whole deploy target here -- subscription, region, resource group --
+    # so `azd up` has nothing left to stop and ask for. azd resolves them in this
+    # order, and each one it cannot find is an interactive halt partway through a
+    # deploy. Each is skipped when already set or when there is no TTY (the hook).
+    sub = _settle_subscription(cfg)
+    if sub:
+        cfg["AZURE_SUBSCRIPTION_ID"] = sub
+
     location = (args.location or cfg.get("AZURE_LOCATION") or "").strip()
     if not location:
         location = _prompt_for_location()
     if not location:
         print(f"{RED}FAIL{RESET}  No location. Pass --location or run `azd env set AZURE_LOCATION <region>`.")
         return 2
+    cfg["AZURE_LOCATION"] = location
+
+    rg = _settle_resource_group(cfg)
+    if rg:
+        cfg["AZURE_RESOURCE_GROUP_NAME"] = rg
+
     voicelive_loc = (args.voicelive_location or cfg.get("FOUNDRY_LOCATION") or location).strip()
 
     print(f"{BOLD}Preflight — profile '{profile.key}' (channels {profile.channels}){RESET}")

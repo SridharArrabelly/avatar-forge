@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.43.8.12551",
-      "templateHash": "4824588165757019530"
+      "templateHash": "13839584210820886376"
     }
   },
   "parameters": {
@@ -116,7 +116,7 @@
     },
     "deployBingGrounding": {
       "type": "string",
-      "defaultValue": "false",
+      "defaultValue": "true",
       "metadata": {
         "description": "Deploy Grounding with Bing Custom Search: the Bing account, the curated site allow-list, and the Foundry connection. Opt-in and additive — when false nothing Bing-related is created and the agent runs on AI Search alone."
       }

@@ -122,19 +122,22 @@ def _core_steps() -> list[Step]:
             YOU,
             BEFORE,
             "Confirms region support, providers, tooling and every input this profile needs. "
-            "Fixes here are cheap; the same problems found after a 20-minute deploy are not.",
+            "Also settles the deploy target — subscription, region and resource group — so "
+            "`azd up` runs straight through instead of stopping to ask. Fixes here are cheap; "
+            "the same problems found after a 20-minute deploy are not.",
             "uv run python scripts/preflight.py",
         ),
         Step(
-            "Decide on the web/news tool",
+            "Point the web/news tool at your own sources",
             YOU,
             BEFORE,
-            "Optional. Without it the avatar answers from your indexed documents alone — a "
-            "supported end state, not a broken one. To include it, edit the curated site "
-            "allow-list (bingAllowedDomains in infra/main.bicep) to your own sources, then "
-            "set the flag below; azd creates the Bing account, the allow-list and the "
-            "Foundry connection, and fills in the two BING_* names for you.",
-            "azd env set DEPLOY_BING_GROUNDING true",
+            "azd deploys the web tool by default — the Bing account, the curated site "
+            "allow-list and the Foundry connection — and fills in the two BING_* names "
+            "for you. Edit bingAllowedDomains in infra/main.bicep so it searches your "
+            "sources rather than the sample ones. To skip the tool entirely (it is a "
+            "billable resource), set the flag below to false; the avatar then answers "
+            "from your indexed documents alone, which is a supported end state.",
+            "azd env set DEPLOY_BING_GROUNDING false   # only if you do NOT want it",
         ),
         Step(
             "Provision + deploy Azure resources",

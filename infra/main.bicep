@@ -51,7 +51,7 @@ param bingConnectionName string = ''
 param bingCustomConfigName string = ''
 
 @description('Deploy Grounding with Bing Custom Search: the Bing account, the curated site allow-list, and the Foundry connection. Opt-in and additive — when false nothing Bing-related is created and the agent runs on AI Search alone.')
-param deployBingGrounding string = 'false'
+param deployBingGrounding string = 'true'
 
 @description('Bing pricing tier. G2 is the tier this project has run on; G1 is the lower tier.')
 @allowed([ 'G1', 'G2' ])

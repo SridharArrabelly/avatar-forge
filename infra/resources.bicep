@@ -205,7 +205,7 @@ module search 'modules/aiSearch.bicep' = if (createSearch) {
 // BYO Search: role assignment handled by scripts/grant_byo_rbac.py (see note above).
 
 // ───────── Grounding with Bing Custom Search (conditional) ─────────
-// Opt-in and additive: without deployBingGrounding nothing here is created and the
+// On by default, and additive: with deployBingGrounding=false nothing here is created and the
 // agent is built with the AI Search tool alone, exactly as before. When enabled,
 // all three layers are deployed — the account, the curated site allow-list, and
 // the Foundry connection — so no portal step or manual .env edit is required.

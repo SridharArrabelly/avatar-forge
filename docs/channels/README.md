@@ -115,7 +115,7 @@ capability, so environments created before profiles existed are unaffected.
 | `DEPLOY_MEETING_BOT_HOST` | `in-call` | Provisions the Windows media host + calling bot registration. |
 | `MEETING_BOT_APP_ID` / `_DNS_LABEL` / `_ADMIN_PASSWORD` | you supply | Required for **D**; the host is skipped if any is missing. |
 | `ENABLE_ACS` | — | Provisions `modules/communicationServices.bicep`. Independent of the above. |
-| `DEPLOY_BING_GROUNDING` | — | Provisions `modules/bingGrounding.bicep` (Bing account + site allow-list) and the Foundry connection to it, enabling the agent's web/news tool. Independent of the above; applies to every channel. |
+| `DEPLOY_BING_GROUNDING` | `true` | Provisions `modules/bingGrounding.bicep` (Bing account + site allow-list) and the Foundry connection to it, enabling the agent's web/news tool. On by default; set `false` to skip. Independent of the above; applies to every channel. |
 
 > **C and D each need an Azure Bot registration, and they cannot share one.** An
 > Entra app can back only *one* Azure Bot resource, so the chat bot (`BOT_APP_ID`)
