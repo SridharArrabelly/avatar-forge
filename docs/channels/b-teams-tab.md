@@ -56,8 +56,11 @@ manifest, so the package is tied to the deployment it points at.
 This fills the placeholders in `teams/manifest.template.json` (schema v1.17) with
 your deployed URL and IDs, and produces an installable `.zip`.
 
-If `AVATAR_DISPLAY_NAME` is set, it names the tab and bot — the single branding
-knob. See [`../configuration.md`](../configuration.md).
+The name shown in Teams comes from `--name`, falling back to `TEAMS_APP_NAME`,
+then to `AVATAR_DISPLAY_NAME` — so a package built against a deployed environment
+picks up that environment's branding without setting a second variable. It
+defaults to `Avatar` when none is set, and the full name and description are
+derived from it. See [`../configuration.md`](../configuration.md).
 
 ## 4. Manual / admin steps
 
@@ -73,7 +76,8 @@ recommended stopping point when admin access is limited. Full detail:
 
 ## 5. How to verify
 
-1. In Teams → **Apps → Manage your apps → Upload a custom app** → select the zip
+1. In Teams → **Apps → Manage your apps → Upload an app → Upload a custom app** →
+   select the zip
 2. Open the app; the avatar stage should load
 3. Ask a grounded question and confirm you hear the answer
 

@@ -9,8 +9,9 @@ Stdlib only — this is a pure-Python repo (uv) with no Node toolchain.
 
 Usage:
     uv run python teams/build_package.py --hostname my-app.azurecontainerapps.io
-    # or via env:
-    TEAMS_HOSTNAME=my-app.azurecontainerapps.io uv run python teams/build_package.py
+    # or via env (PowerShell):
+    $env:TEAMS_HOSTNAME = "my-app.azurecontainerapps.io"
+    uv run python teams/build_package.py
 
 Inputs (CLI flag overrides env var):
     --hostname / TEAMS_HOSTNAME      Required. Bare ACA hostname, no scheme/path/port.
@@ -20,10 +21,13 @@ Inputs (CLI flag overrides env var):
     --bot-id   / TEAMS_BOT_ID        Optional. Azure Bot / Entra app GUID. When omitted the
                                      build is tab-only (channel B) — the additive `bots` entry
                                      is dropped so the Tab package always builds.
-    --name     / TEAMS_APP_NAME      Optional. Assistant persona / display name shown in Teams
-                                     (default "Avatar"; pass e.g. "Nuru" for a branded build).
-                                     The full name + description are derived from it. This is
-                                     the brand name, decoupled from the avatar model binding
+    --name     / TEAMS_APP_NAME      Optional. Assistant persona / display name shown in Teams.
+                                     Falls back to AVATAR_DISPLAY_NAME — the single branding
+                                     knob the running app uses — so a package built from a
+                                     deployed environment is named to match it without a second
+                                     variable. Default "Avatar" when neither is set. The full
+                                     name + description are derived from it. This is the brand
+                                     name, decoupled from the avatar model binding
                                      (CUSTOM_AVATAR_NAME).
 
 Output:
@@ -143,7 +147,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--version", default=os.getenv("TEAMS_APP_VERSION", "1.0.0"))
     parser.add_argument("--app-id", default=os.getenv("TEAMS_APP_ID"))
     parser.add_argument("--bot-id", default=os.getenv("TEAMS_BOT_ID"))
-    parser.add_argument("--name", default=os.getenv("TEAMS_APP_NAME"))
+    parser.add_argument("--name", default=os.getenv("TEAMS_APP_NAME") or os.getenv("AVATAR_DISPLAY_NAME"))
     parser.add_argument("--full-name", default=os.getenv("TEAMS_APP_FULL_NAME"))
     parser.add_argument(
         "--enable-companion",

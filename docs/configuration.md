@@ -190,7 +190,7 @@ brand it "Nuru".
 | `CUSTOM_AVATAR_NAME` | — | Custom avatar **model** id; free-text, must match a model provisioned in your Speech resource. Used whenever `IS_CUSTOM_AVATAR=true` (custom video **or** custom photo); case is preserved and no style suffix is parsed. Pointing at a non-existent model breaks rendering. |
 | `PHOTO_AVATAR_NAME` | `Anika` | Prebuilt photo-realistic character. Used when `IS_PHOTO_AVATAR=true` and no custom name applies. |
 | `AVATAR_BACKGROUND_IMAGE_URL` | — | Optional background image behind the avatar. |
-| **`AVATAR_DISPLAY_NAME`** | — | **The single branding knob.** Sets the bold name shown top-left on the avatar stage **and** names the Teams bot. Purely cosmetic — does **not** select the avatar model. Unset: the bot uses `Avatar`; the stage label derives from the selected avatar model. |
+| **`AVATAR_DISPLAY_NAME`** | — | **The single branding knob.** Sets the bold name shown top-left on the avatar stage, names the Teams bot, and is the fallback for the Teams package name (`TEAMS_APP_NAME`). Purely cosmetic — does **not** select the avatar model. Unset: the bot and Teams package use `Avatar`; the stage label derives from the selected avatar model. |
 | `AVATAR_TAGLINE` | `Your Digital Assistant` | Italic tagline under the name in the stage identity lockup. Company-agnostic by default; set a branded value (e.g. `Your MTN Digital Assistant`) per deployment. Empty hides the tagline line. |
 
 > **Default vs. shipped default.** The Default column is the backend's fallback when
@@ -268,7 +268,7 @@ flag, which wins over the variable — see [`teams/README.md`](../teams/README.m
 | Variable | Flag | Default | Purpose |
 |---|---|---|---|
 | `TEAMS_HOSTNAME` | `--hostname` | — | **Required.** Host of the deployed app (`<name>.azurecontainerapps.io`, no scheme). Becomes every URL in the manifest. |
-| `TEAMS_APP_NAME` | `--name` | `Avatar` | Short name shown in Teams — the assistant's persona name. Pass your `AVATAR_DISPLAY_NAME` here so the package matches the web app. |
+| `TEAMS_APP_NAME` | `--name` | `AVATAR_DISPLAY_NAME`, else `Avatar` | Short name shown in Teams — the assistant's persona name. Falls back to `AVATAR_DISPLAY_NAME`, so a package built against a deployed environment matches the web app without setting this. |
 | `TEAMS_APP_FULL_NAME` | `--full-name` | `<name> — Azure Voice Live Avatar` | Long name shown on the app's detail page. |
 | `TEAMS_APP_VERSION` | `--version` | `1.0.0` | Manifest version. Teams refuses a re-upload unless this increases. |
 | `TEAMS_APP_ID` | `--app-id` | *(uuid5 of the hostname)* | Manifest app id (GUID). Derived deterministically from the hostname when unset, so rebuilds match. |
