@@ -73,6 +73,15 @@ from dotenv import load_dotenv
 
 from rbac_propagation import wait_for_data_plane
 
+# Repo root on sys.path so this deploy-time script and the runtime backend share
+# ONE persona-name rule instead of each keeping its own copy — which is exactly
+# how the agent ended up introducing itself as "Avatar" while the stage showed
+# "Simone". Redundant under `uv run` (the project is installed editable) but makes
+# a plain `python scripts/setup_foundry_agent.py` work too.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from backend.avatar_identity import resolve_avatar_display_name  # noqa: E402
+
 # Exit code meaning "the agent exists and works, but an OPTIONAL tool was left
 # out". Distinct from 0 (fully wired) and from 1 (nothing usable was created) so
 # the azd postprovision hook can report DEGRADED without claiming failure.
@@ -84,15 +93,21 @@ EXIT_DEGRADED = 3
 # travel with the code that depends on the prompt's structure.
 _PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
 
-# The avatar's brand name — the single knob (AVATAR_DISPLAY_NAME), shared with the
-# backend and the meeting bot. Prompt files use the {{AVATAR_NAME}} placeholder so
-# the persona is never hardcoded; it's substituted here at load time. Empty -> "Avatar".
-_AVATAR_NAME = os.getenv("AVATAR_DISPLAY_NAME", "").strip() or "Avatar"
+# The avatar's persona name. Prompt files use the {{AVATAR_NAME}} placeholder so
+# the persona is never hardcoded; it is substituted at load time from the shared
+# rule in backend/avatar_identity.py — AVATAR_DISPLAY_NAME, else the friendly name
+# of the ACTIVE avatar model (so a "Simone" avatar says "I'm Simone"), else
+# "Avatar".
+#
+# Resolved on every call rather than snapshotted at import: this module is
+# imported before load_settings() runs load_dotenv(), so an import-time constant
+# would read the process environment only and silently ignore .env — the
+# documented way to re-run this script by hand after changing the avatar.
 
 
 def _apply_brand(text: str) -> str:
     """Substitute brand placeholders ({{AVATAR_NAME}}) in a loaded prompt."""
-    return text.replace("{{AVATAR_NAME}}", _AVATAR_NAME)
+    return text.replace("{{AVATAR_NAME}}", resolve_avatar_display_name())
 
 
 def _load_prompt(*relative: str) -> str:
@@ -102,7 +117,9 @@ def _load_prompt(*relative: str) -> str:
     )
 
 
-AGENT_DESCRIPTION = _load_prompt("agent", "description.md")
+def agent_description() -> str:
+    """Agent description, brand-substituted at call time (see _apply_brand)."""
+    return _load_prompt("agent", "description.md")
 
 # Agent instructions — voice-first, two variants tuned by model family.
 #
@@ -451,9 +468,14 @@ def create_agent(project: AIProjectClient, settings: dict) -> tuple[object, bool
     agent = project.agents.create_version(
         agent_name=settings["agent_name"],
         definition=PromptAgentDefinition(**definition_kwargs),
-        description=AGENT_DESCRIPTION,
+        description=agent_description(),
     )
     print(f"Agent created (id: {agent.id}, name: {agent.name}, version: {agent.version})")
+    print(
+        f"Persona name: {resolve_avatar_display_name()!r} — from AVATAR_DISPLAY_NAME "
+        "if set, else the active avatar model. This is what the agent calls itself, "
+        "and it must match the name on the stage."
+    )
     return agent, web_tool_enabled
 
 

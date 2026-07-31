@@ -177,8 +177,10 @@ Applied when `DEVELOPER_MODE=false`; each also has a matching control in develop
 ## Avatar — model & identity
 
 The avatar **model** (which face renders) and the **display name** (the branding
-label) are deliberately separate knobs, so you can run e.g. the "Lisa" avatar but
-brand it "Nuru".
+label) are separate knobs, so you can run e.g. the "Lisa" avatar but brand it
+"Nuru". They are not *independent* by default, though: leave the name unset and it
+is derived from the model you selected, so a deployment running the `Simone` photo
+avatar is called "Simone" everywhere without configuring anything.
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -190,8 +192,31 @@ brand it "Nuru".
 | `CUSTOM_AVATAR_NAME` | — | Custom avatar **model** id; free-text, must match a model provisioned in your Speech resource. Used whenever `IS_CUSTOM_AVATAR=true` (custom video **or** custom photo); case is preserved and no style suffix is parsed. Pointing at a non-existent model breaks rendering. |
 | `PHOTO_AVATAR_NAME` | `Anika` | Prebuilt photo-realistic character. Used when `IS_PHOTO_AVATAR=true` and no custom name applies. |
 | `AVATAR_BACKGROUND_IMAGE_URL` | — | Optional background image behind the avatar. |
-| **`AVATAR_DISPLAY_NAME`** | — | **The single branding knob.** Sets the bold name shown top-left on the avatar stage, names the Teams bot, and is the fallback for the Teams package name (`TEAMS_APP_NAME`). Purely cosmetic — does **not** select the avatar model. Unset: the bot and Teams package use `Avatar`; the stage label derives from the selected avatar model. |
+| **`AVATAR_DISPLAY_NAME`** | *(the avatar model's name)* | **The branding knob.** Sets the bold name on the avatar stage, the name the assistant calls itself, the Teams bot name, the wake phrase and the Teams package name. Purely cosmetic — does **not** select the avatar model. **Unset it falls back to the friendly name of the *active* avatar model** (`Simone`, or `Lisa-casual-sitting` → `Lisa`), so every surface agrees without setting anything; `Avatar` only if that is empty too. Set it to override, e.g. run the `Lisa` avatar but call her `Nuru`. |
 | `AVATAR_TAGLINE` | `Your Digital Assistant` | Italic tagline under the name in the stage identity lockup. Company-agnostic by default; set a branded value (e.g. `Your MTN Digital Assistant`) per deployment. Empty hides the tagline line. |
+
+> **One name, every surface.** The stage label, the assistant's own answers ("I'm
+> Simone"), the Teams bot welcome, the Teams package name, the meeting-roster name
+> and the wake phrase all resolve the name with the same rule
+> ([`backend/avatar_identity.py`](../backend/avatar_identity.py)):
+> `AVATAR_DISPLAY_NAME` → the active avatar model's friendly name → `Avatar`.
+> Pinned by `uv run python scripts/test_avatar_identity.py`.
+
+> **Renaming after a deploy needs one extra step.** The stage, bot, package and
+> wake phrase pick the new name up from the environment, but the assistant's
+> *spoken* persona is baked into the Foundry agent's prompt when the agent is
+> built — so a rename that skips that step leaves her still introducing herself by
+> the old name:
+>
+> ```powershell
+> azd env set AVATAR_DISPLAY_NAME Nuru
+> azd up
+> uv run python scripts/setup_foundry_agent.py   # re-brands the agent prompt
+> ```
+>
+> `azd up` re-runs that script for you when Avatar Forge created the Foundry
+> account (the greenfield default). Run it by hand after `azd deploy`, or when you
+> brought your own Foundry account — neither triggers the postprovision hook.
 
 > **Default vs. shipped default.** The Default column is the backend's fallback when
 > a variable is **unset**. The values Avatar Forge actually ships with are different:
@@ -268,7 +293,7 @@ flag, which wins over the variable — see [`teams/README.md`](../teams/README.m
 | Variable | Flag | Default | Purpose |
 |---|---|---|---|
 | `TEAMS_HOSTNAME` | `--hostname` | — | **Required.** Host of the deployed app (`<name>.azurecontainerapps.io`, no scheme). Becomes every URL in the manifest. |
-| `TEAMS_APP_NAME` | `--name` | `AVATAR_DISPLAY_NAME`, else `Avatar` | Short name shown in Teams — the assistant's persona name. Falls back to `AVATAR_DISPLAY_NAME`, so a package built against a deployed environment matches the web app without setting this. |
+| `TEAMS_APP_NAME` | `--name` | *(the resolved persona name)* | Short name shown in Teams — the assistant's persona name. Falls back to `AVATAR_DISPLAY_NAME` and, when that is unset, to the active avatar model's friendly name, so a package built against a deployed environment matches what the avatar calls itself without setting this. |
 | `TEAMS_APP_FULL_NAME` | `--full-name` | `<name> — Azure Voice Live Avatar` | Long name shown on the app's detail page. |
 | `TEAMS_APP_VERSION` | `--version` | `1.0.0` | Manifest version. Teams refuses a re-upload unless this increases. |
 | `TEAMS_APP_ID` | `--app-id` | *(uuid5 of the hostname)* | Manifest app id (GUID). Derived deterministically from the hostname when unset, so rebuilds match. |
@@ -297,7 +322,7 @@ it serves the media bot **without** provisioning an ACS resource. See
 | `ACS_CONNECTION_STRING` | — | Alternative to `ACS_ENDPOINT` + managed identity (includes endpoint + key). Takes precedence when set; simplest for local/dev. |
 | `ACS_CALLBACK_BASE_URL` | — | Public HTTPS base URL ACS uses for call-event callbacks and the media WebSocket. Defaults to the app's own external ingress; set for local dev behind a Dev Tunnel/ngrok. |
 | `ACS_AUDIO_SAMPLE_RATE` | `24000` | PCM sample rate (Hz) for the ACS↔Voice Live bridge. `24000` matches Voice Live (no resample); `16000` also valid. |
-| `ACS_WAKE_PHRASES` | *(derived from `AVATAR_DISPLAY_NAME`)* | Comma-separated, case-insensitive phrases that invoke a spoken answer (turn-taking, so it never talks over the room). Defaults to `hey <name>,<name>` lower-cased, so the wake word follows whatever you named the assistant — set this only to override. |
+| `ACS_WAKE_PHRASES` | *(derived from the persona name)* | Comma-separated, case-insensitive phrases that invoke a spoken answer (turn-taking, so it never talks over the room). Defaults to `hey <name>,<name>` lower-cased, where `<name>` is the resolved persona name — so you say "hey Simone" to the avatar shown as Simone. Set this only to override. |
 | `ACS_REQUIRE_WAKE_PHRASE` | `true` | Require a wake phrase before answering (half-duplex). Set `false` in a 1:1 test meeting to answer every turn. |
 | `ACS_IDLE_TIMEOUT_S` | `0` | Leave the call after N seconds of inactivity (`0` disables). |
 | `ACS_FOLLOWUP_WINDOW_S` | `30` | Seconds after an answer during which a follow-up needs **no** wake phrase, so a real back-and-forth doesn't require saying the name every turn. |

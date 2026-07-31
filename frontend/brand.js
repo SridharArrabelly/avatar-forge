@@ -1,7 +1,9 @@
 // Shared brand substitution: replaces the {{AVATAR_NAME}} placeholder in static
-// pages with the avatar's display name from /api/config (env AVATAR_DISPLAY_NAME).
-// Keeps the avatar name out of the markup so it's never hardcoded — change the env
-// var in one place and every page follows. Falls back to "Avatar" when unset.
+// pages with the assistant's resolved persona name from /api/config
+// (assistantName: AVATAR_DISPLAY_NAME if set, else the active avatar model's
+// friendly name — see backend/avatar_identity.py). Keeps the avatar name out of
+// the markup so it's never hardcoded and every page matches what she calls
+// herself. Falls back to "Avatar" if the fetch fails.
 (function () {
     const TOKEN = "{{AVATAR_NAME}}";
 
@@ -46,7 +48,7 @@
             const res = await fetch("/api/config");
             if (res.ok) {
                 const cfg = await res.json();
-                name = (cfg.defaults && cfg.defaults.avatarDisplayName) || "";
+                name = (cfg.defaults && cfg.defaults.assistantName) || "";
             }
         } catch (_) {
             // Network/parse failure -> fall back to "Avatar".

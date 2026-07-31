@@ -154,8 +154,11 @@ Everything the end user sees is anchored to the avatar:
 - **Avatar video** — the WebRTC (or WebSocket/MSE) photo or standard avatar.
 - **Identity lockup** — top-left, a branding block with the avatar's **name** (bold)
   and an optional **tagline** (italic). The name comes from `AVATAR_DISPLAY_NAME`
-  (the single branding knob, also used for the Teams bot) or is derived from the
-  selected avatar model; the tagline is `AVATAR_TAGLINE` (empty hides it).
+  or, when that is unset, from the selected avatar model — the same rule the
+  assistant's spoken persona, the Teams bot and the meeting roster use, so the
+  name on screen is the name she answers to
+  ([`backend/avatar_identity.py`](../backend/avatar_identity.py)). The tagline is
+  `AVATAR_TAGLINE` (empty hides it).
 - **Bottom control row** — the **text composer** (when shown) fills the left; the
   **Stop button** and the **docked mic** cluster in the right corner. They share a
   height and scale with the avatar across screen sizes.

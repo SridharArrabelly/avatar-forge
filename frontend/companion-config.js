@@ -13,12 +13,13 @@ function configure() {
 
     teams.app.initialize().then(async () => {
         const origin = window.location.origin;
-        // Tab name comes from the server's single branding knob
-        // (AVATAR_DISPLAY_NAME) — never hardcode the avatar name.
+        // Tab name comes from the server's resolved persona name
+        // (assistantName: AVATAR_DISPLAY_NAME, else the active avatar model's
+        // friendly name) — never hardcode the avatar name.
         let displayName = "Avatar";
         try {
             const cfg = await (await fetch("/api/config")).json();
-            displayName = (cfg.defaults && cfg.defaults.avatarDisplayName) || "Avatar";
+            displayName = (cfg.defaults && cfg.defaults.assistantName) || "Avatar";
         } catch (_) { /* keep fallback */ }
         teams.pages.config.registerOnSaveHandler((saveEvent) => {
             teams.pages.config.setConfig({

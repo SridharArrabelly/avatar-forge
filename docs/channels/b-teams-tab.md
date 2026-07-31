@@ -57,10 +57,11 @@ This fills the placeholders in `teams/manifest.template.json` (schema v1.17) wit
 your deployed URL and IDs, and produces an installable `.zip`.
 
 The name shown in Teams comes from `--name`, falling back to `TEAMS_APP_NAME`,
-then to `AVATAR_DISPLAY_NAME` — so a package built against a deployed environment
-picks up that environment's branding without setting a second variable. It
-defaults to `Avatar` when none is set, and the full name and description are
-derived from it. See [`../configuration.md`](../configuration.md).
+then to the app's resolved persona name (`AVATAR_DISPLAY_NAME`, or the active
+avatar model's friendly name when that is unset) — so a package built against a
+deployed environment is named for whatever the avatar calls itself, without
+setting a second variable. The full name and description are derived from it.
+See [`../configuration.md`](../configuration.md).
 
 ## 4. Manual / admin steps
 

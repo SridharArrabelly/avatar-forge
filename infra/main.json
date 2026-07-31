@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.43.8.12551",
-      "templateHash": "6111643111951908098"
+      "templateHash": "18151855007289390632"
     }
   },
   "parameters": {
@@ -407,7 +407,16 @@
     "wantMeetingBotBridge": "[or(variables('profileInCall'), equals(toLower(parameters('meetingBotEnabled')), 'true'))]",
     "wantMeetingBotHost": "[or(variables('profileInCall'), equals(toLower(parameters('deployMeetingBotHost')), 'true'))]",
     "meetingBotInputsReady": "[and(and(not(empty(parameters('meetingBotAppId'))), not(empty(parameters('meetingBotDnsLabel')))), not(empty(parameters('meetingBotAdminPassword'))))]",
-    "deployHost": "[and(variables('wantMeetingBotHost'), variables('meetingBotInputsReady'))]"
+    "deployHost": "[and(variables('wantMeetingBotHost'), variables('meetingBotInputsReady'))]",
+    "truthyValues": [
+      "1",
+      "true",
+      "yes",
+      "on"
+    ],
+    "activeAvatarModel": "[if(contains(variables('truthyValues'), toLower(trim(parameters('isCustomAvatar')))), parameters('customAvatarName'), if(contains(variables('truthyValues'), toLower(trim(parameters('isPhotoAvatar')))), parameters('photoAvatarName'), parameters('avatarName')))]",
+    "derivedAvatarName": "[split(variables('activeAvatarModel'), '-')[0]]",
+    "resolvedAvatarDisplayName": "[if(not(empty(parameters('avatarDisplayName'))), parameters('avatarDisplayName'), if(empty(variables('derivedAvatarName')), 'Avatar', variables('derivedAvatarName')))]"
   },
   "resources": [
     {
@@ -2924,7 +2933,9 @@
             "value": "[parameters('meetingBotAppId')]"
           },
           "botAppTenantId": "[if(empty(parameters('meetingBotAppTenantId')), createObject('value', tenant().tenantId), createObject('value', parameters('meetingBotAppTenantId')))]",
-          "avatarDisplayName": "[if(empty(parameters('avatarDisplayName')), createObject('value', 'Avatar'), createObject('value', parameters('avatarDisplayName')))]",
+          "avatarDisplayName": {
+            "value": "[variables('resolvedAvatarDisplayName')]"
+          },
           "botIconUrl": {
             "value": "[parameters('meetingBotIconUrl')]"
           },

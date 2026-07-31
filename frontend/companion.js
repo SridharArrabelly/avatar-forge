@@ -25,8 +25,9 @@ const liveText = $("liveText");
 const TEAMS_SDK_URL = "https://res.cdn.office.net/teams-js/2.31.1/js/MicrosoftTeams.min.js";
 
 let joinerWindow = null;
-// Avatar brand name, resolved from the server (/api/config -> AVATAR_DISPLAY_NAME)
-// so it's never hardcoded; falls back to "Avatar" until the fetch resolves.
+// Avatar brand name, resolved from the server (/api/config -> assistantName, i.e.
+// AVATAR_DISPLAY_NAME if set, else the active avatar model's friendly name) so
+// it's never hardcoded; falls back to "Avatar" until the fetch resolves.
 let avatarName = "Avatar";
 
 async function loadAvatarName() {
@@ -34,7 +35,7 @@ async function loadAvatarName() {
         const res = await fetch("/api/config");
         if (res.ok) {
             const cfg = await res.json();
-            avatarName = (cfg.defaults && cfg.defaults.avatarDisplayName) || "Avatar";
+            avatarName = (cfg.defaults && cfg.defaults.assistantName) || "Avatar";
             refreshStatus();
         }
     } catch (_) { /* keep the fallback */ }

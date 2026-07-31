@@ -22,13 +22,14 @@ Inputs (CLI flag overrides env var):
                                      build is tab-only (channel B) — the additive `bots` entry
                                      is dropped so the Tab package always builds.
     --name     / TEAMS_APP_NAME      Optional. Assistant persona / display name shown in Teams.
-                                     Falls back to AVATAR_DISPLAY_NAME — the single branding
-                                     knob the running app uses — so a package built from a
-                                     deployed environment is named to match it without a second
-                                     variable. Default "Avatar" when neither is set. The full
-                                     name + description are derived from it. This is the brand
-                                     name, decoupled from the avatar model binding
-                                     (CUSTOM_AVATAR_NAME).
+                                     Falls back to the app's resolved persona name — the
+                                     AVATAR_DISPLAY_NAME knob, or, when that is unset, the
+                                     friendly name of the active avatar model (a "Simone"
+                                     avatar gives a "Simone" package). Last resort "Avatar".
+                                     So a package built from a deployed environment is named
+                                     to match what the avatar calls itself, without setting a
+                                     second variable. The full name + description are derived
+                                     from it. See backend/avatar_identity.py for the rule.
 
 Output:
     teams/build/avatar-forge-teams.zip
@@ -45,6 +46,13 @@ import zipfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE = os.path.join(HERE, "manifest.template.json")
+
+# Repo root on sys.path so the package name comes from the SAME persona rule the
+# running app uses (backend/avatar_identity.py) rather than a second copy of it.
+sys.path.insert(0, os.path.dirname(HERE))
+
+from backend.avatar_identity import resolve_avatar_display_name  # noqa: E402
+
 # Brand assets live in the repo-root canonical folder (assets/brand) so the web
 # app, Teams package, and meeting bot all derive from a single source of truth.
 ICONS_DIR = os.path.join(os.path.dirname(HERE), "assets", "brand")
@@ -147,7 +155,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--version", default=os.getenv("TEAMS_APP_VERSION", "1.0.0"))
     parser.add_argument("--app-id", default=os.getenv("TEAMS_APP_ID"))
     parser.add_argument("--bot-id", default=os.getenv("TEAMS_BOT_ID"))
-    parser.add_argument("--name", default=os.getenv("TEAMS_APP_NAME") or os.getenv("AVATAR_DISPLAY_NAME"))
+    parser.add_argument("--name", default=os.getenv("TEAMS_APP_NAME") or resolve_avatar_display_name())
     parser.add_argument("--full-name", default=os.getenv("TEAMS_APP_FULL_NAME"))
     parser.add_argument(
         "--enable-companion",

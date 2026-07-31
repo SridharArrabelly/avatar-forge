@@ -237,6 +237,22 @@ module resources 'resources.bicep' = {
 
 // ───────── channel D: Windows media host + calling bot registration ─────────
 // Conditional and additive. Only instantiated for the in-call channel.
+
+// The name in the Teams meeting roster must match the name on the web stage and
+// the name the agent calls itself. The Windows host has no avatar-model variables
+// to derive from, so resolve it here with the same rule backend/avatar_identity.py
+// applies: the explicit knob, else the ACTIVE avatar model's leading segment,
+// else 'Avatar'. The IS_* gating is what makes reading the model safe —
+// customAvatarName is a Speech model id that is stale unless its gate is on.
+var truthyValues = ['1', 'true', 'yes', 'on']
+var activeAvatarModel = contains(truthyValues, toLower(trim(isCustomAvatar)))
+  ? customAvatarName
+  : (contains(truthyValues, toLower(trim(isPhotoAvatar))) ? photoAvatarName : avatarName)
+var derivedAvatarName = split(activeAvatarModel, '-')[0]
+var resolvedAvatarDisplayName = !empty(avatarDisplayName)
+  ? avatarDisplayName
+  : (empty(derivedAvatarName) ? 'Avatar' : derivedAvatarName)
+
 module meetingBotHost 'modules/meetingBotHost.bicep' = if (deployHost) {
   name: 'meeting-bot-host'
   scope: rg
@@ -245,7 +261,7 @@ module meetingBotHost 'modules/meetingBotHost.bicep' = if (deployHost) {
     tags: tags
     botAppId: meetingBotAppId
     botAppTenantId: empty(meetingBotAppTenantId) ? tenant().tenantId : meetingBotAppTenantId
-    avatarDisplayName: empty(avatarDisplayName) ? 'Avatar' : avatarDisplayName
+    avatarDisplayName: resolvedAvatarDisplayName
     botIconUrl: meetingBotIconUrl
     adminPassword: meetingBotAdminPassword
     vmSize: meetingBotVmSize

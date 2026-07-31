@@ -13,12 +13,16 @@ to build a package with no ``bots`` entry at all.
 The naming half pins a defect the docs had already promised was fixed: the
 builder read only ``TEAMS_APP_NAME``, so a deployment branded via
 ``AVATAR_DISPLAY_NAME`` — the single branding knob everywhere else — produced a
-package called "Avatar" while the running app called itself something else.
+package called "Avatar" while the running app called itself something else. It
+now asks ``backend.avatar_identity`` for the same persona name every other
+surface uses, so an unbranded deployment running the "Simone" avatar gets a
+"Simone" package rather than an "Avatar" one.
 
 What it pins:
 
 * flag matrix -> staticTabs / bots / supportsCalling / configurableTabs
-* name resolution order: ``--name`` > ``TEAMS_APP_NAME`` > ``AVATAR_DISPLAY_NAME``
+* name resolution order: ``--name`` > ``TEAMS_APP_NAME`` > resolved persona name
+  (``AVATAR_DISPLAY_NAME``, else the active avatar model)
 * the derived full name and descriptions follow the resolved name
 * hostname validation rejects a scheme, a path, a port and a non-hostname
 * the archive is flat (Teams rejects nested folders)
@@ -48,6 +52,11 @@ _ENV_KEYS = (
     "TEAMS_APP_ID",
     "TEAMS_BOT_ID",
     "AVATAR_DISPLAY_NAME",
+    "AVATAR_NAME",
+    "CUSTOM_AVATAR_NAME",
+    "PHOTO_AVATAR_NAME",
+    "IS_CUSTOM_AVATAR",
+    "IS_PHOTO_AVATAR",
     "TEAMS_ENABLE_CALLING",
     "TEAMS_ENABLE_COMPANION",
 )
@@ -117,10 +126,22 @@ def main() -> int:
     m, _ = build(HOST + ["--bot-id", BOT], {"TEAMS_ENABLE_COMPANION": "1"})
     check("TEAMS_ENABLE_COMPANION=1", surfaces(m)[3], True)
 
-    print("\n2. Name resolution: --name > TEAMS_APP_NAME > AVATAR_DISPLAY_NAME")
+    print("\n2. Name resolution: --name > TEAMS_APP_NAME > resolved persona name")
+    # The persona name itself is AVATAR_DISPLAY_NAME, else the active avatar
+    # model's friendly name (backend/avatar_identity.py, pinned by
+    # scripts/test_avatar_identity.py). What matters here is that the builder
+    # asks for it instead of keeping its own fallback: a package must never be
+    # called "Avatar" while the running app calls itself "Simone".
     name_cases = [
-        ("neither set -> default", HOST, {}, "Avatar"),
+        ("neither set -> default avatar model's name", HOST, {}, "Lisa"),
         ("AVATAR_DISPLAY_NAME only", HOST, {"AVATAR_DISPLAY_NAME": "Nuru"}, "Nuru"),
+        ("photo avatar, nothing branded", HOST,
+         {"IS_PHOTO_AVATAR": "true", "PHOTO_AVATAR_NAME": "Simone"}, "Simone"),
+        ("custom avatar, nothing branded", HOST,
+         {"IS_CUSTOM_AVATAR": "true", "CUSTOM_AVATAR_NAME": "Nuru"}, "Nuru"),
+        ("knob beats the avatar model", HOST,
+         {"AVATAR_DISPLAY_NAME": "Ada", "IS_PHOTO_AVATAR": "true",
+          "PHOTO_AVATAR_NAME": "Simone"}, "Ada"),
         ("TEAMS_APP_NAME only", HOST, {"TEAMS_APP_NAME": "Legacy"}, "Legacy"),
         ("both -> TEAMS_APP_NAME wins", HOST,
          {"TEAMS_APP_NAME": "Legacy", "AVATAR_DISPLAY_NAME": "Nuru"}, "Legacy"),

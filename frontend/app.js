@@ -94,6 +94,11 @@ let intentionalDisconnect = false;
 let onboardingHintText = 'Tap the mic to ask me anything';
 let avatarTaglineText = '';
 let avatarDisplayNameText = '';
+// Server-resolved persona name (/api/config -> assistantName): AVATAR_DISPLAY_NAME
+// if set, else the active avatar model's friendly name. Never empty. Used as the
+// stage-label fallback so the label can never come out blank, and so it agrees
+// with what the agent calls itself. See backend/avatar_identity.py.
+let assistantNameText = 'Avatar';
 let suggestedPrompts = [];
 // Onboarding lifecycle: dismissed permanently after the first real user action;
 // hidden temporarily while the avatar speaks (e.g. the proactive greeting).
@@ -280,6 +285,7 @@ async function fetchServerConfig() {
             : 'Tap the mic to ask me anything');
         avatarTaglineText = d.avatarTagline ?? avatarTaglineText;
         avatarDisplayNameText = d.avatarDisplayName ?? avatarDisplayNameText;
+        assistantNameText = d.assistantName || assistantNameText;
         const taglineEl = document.getElementById('avatarTagline');
         if (taglineEl) taglineEl.textContent = avatarTaglineText || '';
         suggestedPrompts = Array.isArray(d.suggestedPrompts) ? d.suggestedPrompts : [];
@@ -1117,13 +1123,17 @@ function setAvatarNameLabelFromConfig() {
     }
     const isCustomA = document.getElementById('isCustomAvatar')?.checked;
     const isPhotoA = document.getElementById('isPhotoAvatar')?.checked;
-    const rawName = isCustomA
+    const rawName = (isCustomA
         ? (document.getElementById('customAvatarName')?.value || '')
         : isPhotoA
             ? (document.getElementById('photoAvatarName')?.value || '')
-            : (document.getElementById('avatarName')?.value || '');
+            : (document.getElementById('avatarName')?.value || '')).trim();
     // Strip suffixes like '-business', '-casual-sitting' for a friendlier label.
-    labelEl.textContent = rawName ? rawName.split('-')[0] : '';
+    // Deriving from the live inputs (rather than the server-resolved
+    // assistantName) is what lets the label follow the dropdown in DEVELOPER_MODE;
+    // assistantName is the fallback so a blank/misconfigured model never leaves
+    // the stage nameless.
+    labelEl.textContent = rawName ? rawName.split('-')[0] : assistantNameText;
 }
 
 // Safety net for an avatar that never appears. The reveal is driven solely by the
