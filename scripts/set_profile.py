@@ -120,7 +120,7 @@ def main() -> int:
         flags = ", ".join(f"{k}={v}" for k, v in profile.flags.items())
         print(f"{DIM}  Derived flags: {flags}{RESET}")
 
-    missing = [r for r in profile.requires if not env.get(r.name)]
+    missing = [r for r in profile.requires if not env.get(r.name) and not r.optional]
     if missing:
         print()
         print(f"{BOLD}This profile still needs {len(missing)} value(s) from you:{RESET}")

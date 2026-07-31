@@ -222,12 +222,15 @@ def check_required_inputs(profile, cfg: dict[str, str]) -> list[CheckResult]:
     for req in profile.requires:
         value = cfg.get(req.name, "")
         shown = "set" if (req.secret and value) else (value or "not set")
+        if not value and req.optional:
+            shown = "not set — using the deployment default"
         results.append(
             CheckResult(
                 req.name,
                 bool(value),
                 shown,
                 fix=f"        {req.how}\n        azd env set {req.name} <value>",
+                warn_only=req.optional,
             )
         )
     return results

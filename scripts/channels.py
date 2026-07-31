@@ -72,16 +72,24 @@ class Step:
 
 @dataclass(frozen=True)
 class RequiredInput:
-    """An azd env var the profile cannot deploy without.
+    """An azd env var the profile needs from you.
 
     `how` explains where the value comes from — the difference between a check
     that blocks someone and a check that unblocks them.
+
+    Most are genuinely required. Set `optional=True` when infra supplies a
+    working default (e.g. a tenant id that falls back to the deployment tenant):
+    preflight then reports it as a WARN instead of failing the deploy, so nobody
+    is stopped over a value they never needed to provide.
     """
 
     name: str
     how: str
     who: str = YOU
     secret: bool = False
+    # Advisory rather than blocking: infra supplies a sane default when this is
+    # unset, so preflight reports it but must not fail the deploy over it.
+    optional: bool = False
 
 
 @dataclass(frozen=True)
@@ -214,7 +222,10 @@ PROFILES: dict[str, Profile] = {
             ),
             RequiredInput(
                 "BOT_APP_TENANT_ID",
-                "The tenant the app registration lives in (`az account show --query tenantId -o tsv`).",
+                "Only if the app registration lives in a DIFFERENT tenant than the "
+                "subscription. Left unset, infra uses the deployment tenant, which is "
+                "correct for a single-tenant app (`az account show --query tenantId -o tsv`).",
+                optional=True,
             ),
         ],
         providers=["Microsoft.BotService"],
@@ -225,9 +236,9 @@ PROFILES: dict[str, Profile] = {
                     "Create the bot's Entra app registration + secret",
                     YOU,
                     BEFORE,
-                    "Single-tenant. Copy the client id, tenant id and a client secret into the azd env. "
+                    "Single-tenant. Copy the client id and a client secret into the azd env. "
                     "Bicep cannot create app registrations — they live in the directory, not the subscription.",
-                    'azd env set BOT_APP_ID <id>; azd env set BOT_APP_TENANT_ID <tid>; azd env set BOT_APP_PASSWORD "<secret>"',
+                    'azd env set BOT_APP_ID <id>; azd env set BOT_APP_PASSWORD "<secret>"',
                 ),
             ]
             + _core_steps()[2:]
@@ -269,7 +280,9 @@ PROFILES: dict[str, Profile] = {
             ),
             RequiredInput(
                 "MEETING_BOT_APP_TENANT_ID",
-                "Tenant of that app registration.",
+                "Only if that app registration lives in a DIFFERENT tenant than the "
+                "subscription. Left unset, infra uses the deployment tenant.",
+                optional=True,
             ),
             RequiredInput(
                 "MEETING_BOT_DNS_LABEL",
@@ -293,7 +306,7 @@ PROFILES: dict[str, Profile] = {
                     "Separate from the chat bot. Add the application permissions "
                     "Calls.JoinGroupCall.All, Calls.JoinGroupCallAsGuest.All, Calls.AccessMedia.All "
                     "and OnlineMeetings.Read.All.",
-                    "azd env set MEETING_BOT_APP_ID <id>; azd env set MEETING_BOT_APP_TENANT_ID <tid>",
+                    "azd env set MEETING_BOT_APP_ID <id>",
                 ),
                 Step(
                     "Grant admin consent for those Graph permissions",
