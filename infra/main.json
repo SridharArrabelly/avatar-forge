@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.43.8.12551",
-      "templateHash": "13839584210820886376"
+      "templateHash": "6111643111951908098"
     }
   },
   "parameters": {
@@ -588,7 +588,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.43.8.12551",
-              "templateHash": "14862708581530424009"
+              "templateHash": "20875438189608848"
             }
           },
           "parameters": {
@@ -1328,7 +1328,7 @@
                     "_generator": {
                       "name": "bicep",
                       "version": "0.43.8.12551",
-                      "templateHash": "10393316235670516067"
+                      "templateHash": "4792431322175992725"
                     }
                   },
                   "parameters": {
@@ -1357,7 +1357,7 @@
                       "type": "string",
                       "defaultValue": "",
                       "metadata": {
-                        "description": "Object ID of the deployer (optional). Granted Azure AI Developer for setup scripts."
+                        "description": "Object ID of the deployer (optional). Granted Foundry User on the account so the postprovision setup scripts can call the data plane."
                       }
                     },
                     "modelName": {
@@ -1454,7 +1454,7 @@
                   },
                   "variables": {
                     "cogServicesUserRoleId": "a97b65f3-24c7-4388-baec-2e87135dc908",
-                    "aiDeveloperRoleId": "64702f94-c441-49e6-a78b-ef80e0188fee"
+                    "foundryUserRoleId": "53ca6127-db72-4b80-b1b0-d745d6d5456d"
                   },
                   "resources": [
                     {
@@ -1552,32 +1552,18 @@
                       ]
                     },
                     {
-                      "type": "Microsoft.Authorization/roleAssignments",
-                      "apiVersion": "2022-04-01",
-                      "scope": "[resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('accountName'), parameters('projectName'))]",
-                      "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('accountName'), parameters('projectName')), parameters('uamiPrincipalId'), variables('aiDeveloperRoleId'))]",
-                      "properties": {
-                        "principalId": "[parameters('uamiPrincipalId')]",
-                        "principalType": "ServicePrincipal",
-                        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('aiDeveloperRoleId'))]"
-                      },
-                      "dependsOn": [
-                        "[resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('accountName'), parameters('projectName'))]"
-                      ]
-                    },
-                    {
                       "condition": "[not(empty(parameters('deployerPrincipalId')))]",
                       "type": "Microsoft.Authorization/roleAssignments",
                       "apiVersion": "2022-04-01",
-                      "scope": "[resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('accountName'), parameters('projectName'))]",
-                      "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('accountName'), parameters('projectName')), parameters('deployerPrincipalId'), variables('aiDeveloperRoleId'))]",
+                      "scope": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName'))]",
+                      "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName')), parameters('deployerPrincipalId'), variables('foundryUserRoleId'))]",
                       "properties": {
                         "principalId": "[parameters('deployerPrincipalId')]",
                         "principalType": "User",
-                        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('aiDeveloperRoleId'))]"
+                        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('foundryUserRoleId'))]"
                       },
                       "dependsOn": [
-                        "[resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('accountName'), parameters('projectName'))]"
+                        "[resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName'))]"
                       ]
                     },
                     {

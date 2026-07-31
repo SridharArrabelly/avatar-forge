@@ -219,8 +219,12 @@ always safe.
 
 It grants the UAMI:
 
-- **Cognitive Services User** + **Azure AI Developer** on the BYO Foundry account
+- **Cognitive Services User** + **Foundry User** on the BYO Foundry account
 - **Search Index Data Reader** + **Search Service Contributor** on the BYO Search service
+
+It also grants **you** (the deploying identity) **Foundry User** on the BYO Foundry
+account, because the two data-plane setup steps that run straight afterwards — building
+the search index and creating the agent — call the account as *you*, not as the UAMI.
 
 When **both** are BYO, it also grants the existing Foundry project's system-assigned
 identity **Search Index Data Contributor** + **Search Service Contributor** on the BYO

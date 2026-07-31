@@ -33,7 +33,11 @@ Required environment variables (see ``.env.example``):
     BING_CUSTOM_CONFIG_NAME   OPTIONAL. Bing Custom Search configuration (instance) name — the curated
                               allow-list of sites that the tool is restricted to.
 
-Auth: uses ``DefaultAzureCredential`` - run ``az login`` first.
+Auth: uses ``DefaultAzureCredential`` - run ``az login`` first. The signed-in
+identity needs "Foundry User" on the Foundry **account** (subscription
+Owner/Contributor grant no ``Microsoft.CognitiveServices`` data actions, so they
+are not sufficient). ``azd up`` assigns it; a new assignment can take several
+minutes to take effect, which this script waits out.
 
 Usage:
     uv run python scripts/setup_foundry_agent.py
@@ -66,6 +70,8 @@ from azure.ai.projects.models import (
 from azure.core.exceptions import ResourceNotFoundError
 from azure.identity import DefaultAzureCredential
 from dotenv import load_dotenv
+
+from rbac_propagation import wait_for_data_plane
 
 # Exit code meaning "the agent exists and works, but an OPTIONAL tool was left
 # out". Distinct from 0 (fully wired) and from 1 (nothing usable was created) so
@@ -345,7 +351,13 @@ def create_agent(project: AIProjectClient, settings: dict) -> tuple[object, bool
     # deploying at all — so this fails fast with an actionable message rather
     # than a raw SDK traceback.
     try:
-        azs_connection = project.connections.get(settings["search_connection_name"])
+        # First Foundry data-plane call, so this is where a just-created role
+        # assignment surfaces as 401 while it propagates. The wait only covers
+        # 401/403 — a genuine 404 still falls through to the message below.
+        azs_connection = wait_for_data_plane(
+            lambda: project.connections.get(settings["search_connection_name"]),
+            what="reading the project's connections",
+        )
     except ResourceNotFoundError:
         sys.exit(
             f"ERROR: AI Search connection {settings['search_connection_name']!r} was not found "

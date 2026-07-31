@@ -83,8 +83,14 @@ What the script does each run:
 This is a one-off bootstrap — the running app never re-ingests, it only queries.
 
 Required roles for the signed-in user: **Search Index Data Contributor** + **Search
-Service Contributor** on AI Search, and **Azure AI User** (or equivalent) on the
-Foundry project with access to the embedding deployment.
+Service Contributor** on AI Search, and **Foundry User** on the Foundry **account**
+(not the project — the embedding call is an account-level data action).
+
+`azd up` assigns all three automatically when `AZURE_PRINCIPAL_ID` is set, which `azd`
+does for you. You only need to grant them by hand when running this script against a
+Foundry account you did not deploy. Note that **Azure AI Developer** is *not* a
+substitute: it carries no `Microsoft.CognitiveServices` data actions, so the embedding
+call returns `401 PermissionDenied` even though the role name suggests otherwise.
 
 ```powershell
 uv run python scripts/setup_aisearch_index.py

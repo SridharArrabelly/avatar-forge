@@ -40,7 +40,11 @@ Optional:
 
 Auth: ``az login``. Signed-in user needs:
   - "Search Index Data Contributor" + "Search Service Contributor" on the search service
-  - "Azure AI User" (or equivalent) on the Foundry project
+  - "Foundry User" on the Foundry **account** (not the project) — this is what grants
+    ``Microsoft.CognitiveServices/*`` data actions, including the embeddings call below.
+    Subscription Owner/Contributor are control-plane roles and are NOT sufficient.
+    ``azd up`` assigns this for you; a freshly-created assignment can take several
+    minutes to take effect, which the script waits out.
 
 Usage:
     uv run python scripts/setup_aisearch_index.py
@@ -84,6 +88,8 @@ from azure.search.documents.indexes.models import (
 from docx import Document
 from pypdf import PdfReader
 from dotenv import load_dotenv
+
+from rbac_propagation import wait_for_data_plane
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-7s %(message)s")
@@ -477,7 +483,13 @@ def main() -> None:
     log.info("Data dir:  %s", s["data_dir"])
 
     aoai = make_embeddings_client(s)
-    s["embed_dim"] = detect_embed_dim(aoai, s["embed_deployment"])
+    # First data-plane call of the deploy, so this is where a just-created role
+    # assignment shows up as 401 while it propagates. See scripts/rbac_propagation.py.
+    s["embed_dim"] = wait_for_data_plane(
+        lambda: detect_embed_dim(aoai, s["embed_deployment"]),
+        what="probing the embedding deployment",
+        log=log.info,
+    )
     log.info("Embedding dim (detected): %d", s["embed_dim"])
 
     ensure_index(s)
