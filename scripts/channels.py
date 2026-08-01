@@ -10,7 +10,6 @@ Profiles map onto the channel ladder documented in `docs/channels/README.md`:
 
     web         A            the core web app
     teams-tab   A + B        adds a Teams personal tab (no extra Azure resources)
-    teams-chat  A + B + C    adds the @mentionable conversational bot
     in-call     A + B + D    adds the live in-meeting avatar (media bot)
 
 `teams-tab` provisions exactly the same Azure resources as `web` — the difference
@@ -244,72 +243,6 @@ PROFILES: dict[str, Profile] = {
         steps=_core_steps() + _teams_package_steps(),
         costs=_core_costs() + [CostItem("Teams personal tab", FREE, "adds no Azure resources at all")],
     ),
-    "teams-chat": Profile(
-        key="teams-chat",
-        title="Web + tab + conversational bot",
-        channels="A + B + C",
-        summary="Adds an @mentionable bot that answers in Teams chat via the same Foundry agent.",
-        flags={},
-        requires=[
-            RequiredInput(
-                "BOT_APP_ID",
-                "Entra app registration (single tenant) for the chat bot. "
-                "Create it in Entra > App registrations, then copy the Application (client) ID.",
-            ),
-            RequiredInput(
-                "BOT_APP_PASSWORD",
-                "A client secret on that same app registration: Entra > App registrations > "
-                "your app > Certificates & secrets > New client secret. Copy the VALUE "
-                "(not the Secret ID) — it is shown only once.",
-                secret=True,
-            ),
-            RequiredInput(
-                "BOT_APP_TENANT_ID",
-                "Only if the app registration lives in a DIFFERENT tenant than the "
-                "subscription. Left unset, infra uses the deployment tenant, which is "
-                "correct for a single-tenant app (`az account show --query tenantId -o tsv`).",
-                optional=True,
-            ),
-        ],
-        providers=["Microsoft.BotService"],
-        steps=(
-            _core_steps()[:2]
-            + [
-                Step(
-                    "Create the bot's Entra app registration + secret",
-                    YOU,
-                    BEFORE,
-                    "Single-tenant. Copy the client id and a client secret into the azd env. "
-                    "Bicep cannot create app registrations — they live in the directory, not the subscription.",
-                    'azd env set BOT_APP_ID <id>; azd env set BOT_APP_PASSWORD "<secret>"',
-                ),
-            ]
-            + _core_steps()[2:]
-            + [
-                Step(
-                    "Grant admin consent for the bot app",
-                    ADMIN,
-                    AFTER,
-                    "One-time, by someone with Privileged Role Administrator or Global Administrator. "
-                    "Without it the bot installs but never receives messages.",
-                ),
-            ]
-            + _teams_package_steps()
-            + [
-                Step(
-                    "@mention the bot in a chat",
-                    YOU,
-                    AFTER,
-                    "It should answer from the same agent as the web app and deep-link to the tab.",
-                ),
-            ]
-        ),
-        costs=_core_costs()
-        + [
-            CostItem("Teams personal tab", FREE, "adds no Azure resources at all"),
-            CostItem("Azure Bot registration", FREE, "F0, free on the Teams channel"),
-        ],
-    ),
     "in-call": Profile(
         key="in-call",
         title="Web + tab + in-call meeting avatar",
@@ -322,8 +255,8 @@ PROFILES: dict[str, Profile] = {
         requires=[
             RequiredInput(
                 "MEETING_BOT_APP_ID",
-                "A SEPARATE Entra app registration for the calling bot. It must not be the same "
-                "app as BOT_APP_ID — an Entra app can back only one Azure Bot resource.",
+                "An Entra app registration for the calling bot. It must be dedicated to this "
+                "bot — an Entra app can back only one Azure Bot resource.",
             ),
             RequiredInput(
                 "MEETING_BOT_APP_TENANT_ID",
@@ -350,7 +283,7 @@ PROFILES: dict[str, Profile] = {
                     "Create the CALLING bot's Entra app registration + secret",
                     YOU,
                     BEFORE,
-                    "Separate from the chat bot. Add the application permissions "
+                    "Dedicated to this bot. Add the application permissions "
                     "Calls.JoinGroupCall.All, Calls.JoinGroupCallAsGuest.All, Calls.AccessMedia.All "
                     "and OnlineMeetings.Read.All.",
                     "azd env set MEETING_BOT_APP_ID <id>",
@@ -446,7 +379,7 @@ PROFILES: dict[str, Profile] = {
 }
 
 DEFAULT_PROFILE = "web"
-PROFILE_ORDER = ["web", "teams-tab", "teams-chat", "in-call"]
+PROFILE_ORDER = ["web", "teams-tab", "in-call"]
 
 
 def get_profile(key: str | None) -> Profile:

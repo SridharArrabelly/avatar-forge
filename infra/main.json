@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.43.8.12551",
-      "templateHash": "18151855007289390632"
+      "templateHash": "1419011907645219484"
     }
   },
   "parameters": {
@@ -228,48 +228,6 @@
     "recognitionLanguage": {
       "type": "string",
       "defaultValue": "auto"
-    },
-    "botAppId": {
-      "type": "string",
-      "defaultValue": "",
-      "metadata": {
-        "description": "Bot Entra app client id (Microsoft App ID). Leave empty to skip bot provisioning. Surfaces as TEAMS_BOT_ID."
-      }
-    },
-    "botAppTenantId": {
-      "type": "string",
-      "defaultValue": "",
-      "metadata": {
-        "description": "Bot app tenant id (single-tenant). Defaults to the deployment tenant when empty."
-      }
-    },
-    "botAppPassword": {
-      "type": "securestring",
-      "defaultValue": "",
-      "metadata": {
-        "description": "Bot app client secret. Stored as a Container App secret. Required when botAppId is set."
-      }
-    },
-    "botDisplayName": {
-      "type": "string",
-      "defaultValue": "Avatar Forge",
-      "metadata": {
-        "description": "Display name for the Azure Bot resource."
-      }
-    },
-    "teamsAppId": {
-      "type": "string",
-      "defaultValue": "",
-      "metadata": {
-        "description": "Teams app (manifest) id used for bot deep links to the personal tab. Surfaces as TEAMS_APP_ID."
-      }
-    },
-    "agentId": {
-      "type": "string",
-      "defaultValue": "",
-      "metadata": {
-        "description": "Foundry agent id override. Empty resolves the agent by AGENT_NAME."
-      }
     },
     "deployProfile": {
       "type": "string",
@@ -555,24 +513,6 @@
           "recognitionLanguage": {
             "value": "[parameters('recognitionLanguage')]"
           },
-          "botAppId": {
-            "value": "[parameters('botAppId')]"
-          },
-          "botAppTenantId": {
-            "value": "[parameters('botAppTenantId')]"
-          },
-          "botAppPassword": {
-            "value": "[parameters('botAppPassword')]"
-          },
-          "botDisplayName": {
-            "value": "[parameters('botDisplayName')]"
-          },
-          "teamsAppId": {
-            "value": "[parameters('teamsAppId')]"
-          },
-          "agentId": {
-            "value": "[parameters('agentId')]"
-          },
           "enableAcs": {
             "value": "[parameters('enableAcs')]"
           },
@@ -597,7 +537,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.43.8.12551",
-              "templateHash": "20875438189608848"
+              "templateHash": "16999574611024663267"
             }
           },
           "parameters": {
@@ -759,30 +699,6 @@
             "recognitionLanguage": {
               "type": "string",
               "defaultValue": "auto"
-            },
-            "botAppId": {
-              "type": "string",
-              "defaultValue": ""
-            },
-            "botAppTenantId": {
-              "type": "string",
-              "defaultValue": ""
-            },
-            "botAppPassword": {
-              "type": "securestring",
-              "defaultValue": ""
-            },
-            "botDisplayName": {
-              "type": "string",
-              "defaultValue": "Avatar Forge"
-            },
-            "teamsAppId": {
-              "type": "string",
-              "defaultValue": ""
-            },
-            "agentId": {
-              "type": "string",
-              "defaultValue": ""
             },
             "enableAcs": {
               "type": "string",
@@ -2351,19 +2267,6 @@
                   "recognitionLanguage": {
                     "value": "[parameters('recognitionLanguage')]"
                   },
-                  "botAppId": {
-                    "value": "[parameters('botAppId')]"
-                  },
-                  "botAppTenantId": "[if(empty(parameters('botAppTenantId')), createObject('value', tenant().tenantId), createObject('value', parameters('botAppTenantId')))]",
-                  "botAppPassword": {
-                    "value": "[parameters('botAppPassword')]"
-                  },
-                  "teamsAppId": {
-                    "value": "[parameters('teamsAppId')]"
-                  },
-                  "agentId": {
-                    "value": "[parameters('agentId')]"
-                  },
                   "acsEndpoint": "[if(variables('acsEnabled'), createObject('value', reference(resourceId('Microsoft.Resources/deployments', 'acs'), '2025-04-01').outputs.endpoint.value), createObject('value', ''))]",
                   "meetingBotEnabled": {
                     "value": "[parameters('meetingBotEnabled')]"
@@ -2385,7 +2288,7 @@
                     "_generator": {
                       "name": "bicep",
                       "version": "0.43.8.12551",
-                      "templateHash": "6510987069171003795"
+                      "templateHash": "9945785726405931866"
                     }
                   },
                   "parameters": {
@@ -2515,41 +2418,6 @@
                         "description": "Recognition language locale (BCP-47, e.g. en-ZA). Use \"auto\" to let the SR model auto-detect."
                       }
                     },
-                    "botAppId": {
-                      "type": "string",
-                      "defaultValue": "",
-                      "metadata": {
-                        "description": "Bot Entra app client id. Surfaces as the SERVICE_CONNECTION client id + TEAMS_BOT_ID. Empty disables bot env wiring."
-                      }
-                    },
-                    "botAppTenantId": {
-                      "type": "string",
-                      "defaultValue": "",
-                      "metadata": {
-                        "description": "Bot app tenant id (single-tenant). Defaults handled by caller."
-                      }
-                    },
-                    "botAppPassword": {
-                      "type": "securestring",
-                      "defaultValue": "",
-                      "metadata": {
-                        "description": "Bot app client secret. Stored as a Container App secret and referenced by the SERVICE_CONNECTION client secret env var."
-                      }
-                    },
-                    "teamsAppId": {
-                      "type": "string",
-                      "defaultValue": "",
-                      "metadata": {
-                        "description": "Teams app (manifest) id used to build deep links from the bot to the personal tab."
-                      }
-                    },
-                    "agentId": {
-                      "type": "string",
-                      "defaultValue": "",
-                      "metadata": {
-                        "description": "Foundry agent id override. Empty means resolve the agent by AGENT_NAME."
-                      }
-                    },
                     "acsEndpoint": {
                       "type": "string",
                       "defaultValue": "",
@@ -2596,10 +2464,7 @@
                   "variables": {
                     "acsEnv": "[if(not(empty(parameters('acsEndpoint'))), createArray(createObject('name', 'ACS_ENDPOINT', 'value', parameters('acsEndpoint'))), createArray())]",
                     "meetingBotOn": "[equals(toLower(parameters('meetingBotEnabled')), 'true')]",
-                    "meetingBotEnv": "[concat(if(variables('meetingBotOn'), createArray(createObject('name', 'MEETING_BOT_ENABLED', 'value', 'true')), createArray()), if(not(empty(parameters('acsAudioSampleRate'))), createArray(createObject('name', 'ACS_AUDIO_SAMPLE_RATE', 'value', parameters('acsAudioSampleRate'))), createArray()), if(not(empty(parameters('acsRequireWakePhrase'))), createArray(createObject('name', 'ACS_REQUIRE_WAKE_PHRASE', 'value', parameters('acsRequireWakePhrase'))), createArray()), if(not(empty(parameters('acsAvatarVideoEnabled'))), createArray(createObject('name', 'ACS_AVATAR_VIDEO_ENABLED', 'value', parameters('acsAvatarVideoEnabled'))), createArray()))]",
-                    "botEnabled": "[not(empty(parameters('botAppId')))]",
-                    "botSecrets": "[if(not(empty(parameters('botAppPassword'))), createArray(createObject('name', 'bot-app-password', 'value', parameters('botAppPassword'))), createArray())]",
-                    "botEnv": "[if(variables('botEnabled'), concat(createArray(createObject('name', 'TEAMS_BOT_ID', 'value', parameters('botAppId')), createObject('name', 'TEAMS_APP_ID', 'value', parameters('teamsAppId')), createObject('name', 'AGENT_ID', 'value', parameters('agentId')), createObject('name', 'CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTID', 'value', parameters('botAppId')), createObject('name', 'CONNECTIONS__SERVICE_CONNECTION__SETTINGS__TENANTID', 'value', parameters('botAppTenantId'))), if(not(empty(parameters('botAppPassword'))), createArray(createObject('name', 'CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTSECRET', 'secretRef', 'bot-app-password')), createArray())), createArray())]"
+                    "meetingBotEnv": "[concat(if(variables('meetingBotOn'), createArray(createObject('name', 'MEETING_BOT_ENABLED', 'value', 'true')), createArray()), if(not(empty(parameters('acsAudioSampleRate'))), createArray(createObject('name', 'ACS_AUDIO_SAMPLE_RATE', 'value', parameters('acsAudioSampleRate'))), createArray()), if(not(empty(parameters('acsRequireWakePhrase'))), createArray(createObject('name', 'ACS_REQUIRE_WAKE_PHRASE', 'value', parameters('acsRequireWakePhrase'))), createArray()), if(not(empty(parameters('acsAvatarVideoEnabled'))), createArray(createObject('name', 'ACS_AVATAR_VIDEO_ENABLED', 'value', parameters('acsAvatarVideoEnabled'))), createArray()))]"
                   },
                   "resources": [
                     {
@@ -2618,7 +2483,6 @@
                         "managedEnvironmentId": "[parameters('containerAppsEnvironmentId')]",
                         "configuration": {
                           "activeRevisionsMode": "Single",
-                          "secrets": "[variables('botSecrets')]",
                           "ingress": {
                             "external": true,
                             "targetPort": 3000,
@@ -2656,7 +2520,7 @@
                                 "cpu": "[json('1.0')]",
                                 "memory": "2.0Gi"
                               },
-                              "env": "[concat(createArray(createObject('name', 'PORT', 'value', '3000'), createObject('name', 'AZURE_CLIENT_ID', 'value', parameters('uamiClientId')), createObject('name', 'DEVELOPER_MODE', 'value', 'false'), createObject('name', 'AZURE_VOICELIVE_ENDPOINT', 'value', parameters('voiceliveEndpoint')), createObject('name', 'PROJECT_ENDPOINT', 'value', parameters('projectEndpoint')), createObject('name', 'AGENT_NAME', 'value', parameters('agentName')), createObject('name', 'AGENT_PROJECT_NAME', 'value', parameters('agentProjectName')), createObject('name', 'AGENT_MODEL', 'value', parameters('agentModel')), createObject('name', 'EMBEDDING_DEPLOYMENT', 'value', parameters('embeddingDeployment')), createObject('name', 'AZURE_SEARCH_ENDPOINT', 'value', parameters('searchEndpoint')), createObject('name', 'SEARCH_CONNECTION_NAME', 'value', parameters('searchConnectionName')), createObject('name', 'SEARCH_INDEX_NAME', 'value', parameters('searchIndexName')), createObject('name', 'VOICELIVE_VOICE', 'value', parameters('voiceLiveVoice')), createObject('name', 'BING_CONNECTION_NAME', 'value', parameters('bingConnectionName')), createObject('name', 'BING_CUSTOM_CONFIG_NAME', 'value', parameters('bingCustomConfigName')), createObject('name', 'AVATAR_NAME', 'value', parameters('avatarName')), createObject('name', 'CUSTOM_AVATAR_NAME', 'value', parameters('customAvatarName')), createObject('name', 'AVATAR_DISPLAY_NAME', 'value', parameters('avatarDisplayName')), createObject('name', 'AVATAR_TAGLINE', 'value', parameters('avatarTagline')), createObject('name', 'PHOTO_AVATAR_NAME', 'value', parameters('photoAvatarName')), createObject('name', 'IS_PHOTO_AVATAR', 'value', parameters('isPhotoAvatar')), createObject('name', 'IS_CUSTOM_AVATAR', 'value', parameters('isCustomAvatar')), createObject('name', 'AVATAR_BACKGROUND_IMAGE_URL', 'value', parameters('avatarBackgroundImageUrl')), createObject('name', 'SR_MODEL', 'value', parameters('srModel')), createObject('name', 'RECOGNITION_LANGUAGE', 'value', parameters('recognitionLanguage')), createObject('name', 'APPLICATIONINSIGHTS_CONNECTION_STRING', 'value', parameters('appInsightsConnectionString'))), concat(variables('botEnv'), variables('acsEnv'), variables('meetingBotEnv')))]",
+                              "env": "[concat(createArray(createObject('name', 'PORT', 'value', '3000'), createObject('name', 'AZURE_CLIENT_ID', 'value', parameters('uamiClientId')), createObject('name', 'DEVELOPER_MODE', 'value', 'false'), createObject('name', 'AZURE_VOICELIVE_ENDPOINT', 'value', parameters('voiceliveEndpoint')), createObject('name', 'PROJECT_ENDPOINT', 'value', parameters('projectEndpoint')), createObject('name', 'AGENT_NAME', 'value', parameters('agentName')), createObject('name', 'AGENT_PROJECT_NAME', 'value', parameters('agentProjectName')), createObject('name', 'AGENT_MODEL', 'value', parameters('agentModel')), createObject('name', 'EMBEDDING_DEPLOYMENT', 'value', parameters('embeddingDeployment')), createObject('name', 'AZURE_SEARCH_ENDPOINT', 'value', parameters('searchEndpoint')), createObject('name', 'SEARCH_CONNECTION_NAME', 'value', parameters('searchConnectionName')), createObject('name', 'SEARCH_INDEX_NAME', 'value', parameters('searchIndexName')), createObject('name', 'VOICELIVE_VOICE', 'value', parameters('voiceLiveVoice')), createObject('name', 'BING_CONNECTION_NAME', 'value', parameters('bingConnectionName')), createObject('name', 'BING_CUSTOM_CONFIG_NAME', 'value', parameters('bingCustomConfigName')), createObject('name', 'AVATAR_NAME', 'value', parameters('avatarName')), createObject('name', 'CUSTOM_AVATAR_NAME', 'value', parameters('customAvatarName')), createObject('name', 'AVATAR_DISPLAY_NAME', 'value', parameters('avatarDisplayName')), createObject('name', 'AVATAR_TAGLINE', 'value', parameters('avatarTagline')), createObject('name', 'PHOTO_AVATAR_NAME', 'value', parameters('photoAvatarName')), createObject('name', 'IS_PHOTO_AVATAR', 'value', parameters('isPhotoAvatar')), createObject('name', 'IS_CUSTOM_AVATAR', 'value', parameters('isCustomAvatar')), createObject('name', 'AVATAR_BACKGROUND_IMAGE_URL', 'value', parameters('avatarBackgroundImageUrl')), createObject('name', 'SR_MODEL', 'value', parameters('srModel')), createObject('name', 'RECOGNITION_LANGUAGE', 'value', parameters('recognitionLanguage')), createObject('name', 'APPLICATIONINSIGHTS_CONNECTION_STRING', 'value', parameters('appInsightsConnectionString'))), concat(variables('acsEnv'), variables('meetingBotEnv')))]",
                               "probes": [
                                 {
                                   "type": "Liveness",
@@ -2714,133 +2578,6 @@
                 "[resourceId('Microsoft.Resources/deployments', 'search')]",
                 "[resourceId('Microsoft.Resources/deployments', 'uami')]"
               ]
-            },
-            {
-              "condition": "[not(empty(parameters('botAppId')))]",
-              "type": "Microsoft.Resources/deployments",
-              "apiVersion": "2025-04-01",
-              "name": "bot",
-              "properties": {
-                "expressionEvaluationOptions": {
-                  "scope": "inner"
-                },
-                "mode": "Incremental",
-                "parameters": {
-                  "name": {
-                    "value": "[format('{0}-{1}-{2}', variables('abbrs').botService, parameters('environmentName'), parameters('resourceToken'))]"
-                  },
-                  "botDisplayName": {
-                    "value": "[parameters('botDisplayName')]"
-                  },
-                  "tags": {
-                    "value": "[parameters('tags')]"
-                  },
-                  "msaAppId": {
-                    "value": "[parameters('botAppId')]"
-                  },
-                  "msaAppTenantId": "[if(empty(parameters('botAppTenantId')), createObject('value', tenant().tenantId), createObject('value', parameters('botAppTenantId')))]",
-                  "endpoint": {
-                    "value": "[format('{0}/api/messages', reference(resourceId('Microsoft.Resources/deployments', 'app'), '2025-04-01').outputs.uri.value)]"
-                  }
-                },
-                "template": {
-                  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
-                  "contentVersion": "1.0.0.0",
-                  "metadata": {
-                    "_generator": {
-                      "name": "bicep",
-                      "version": "0.43.8.12551",
-                      "templateHash": "6075084121373233895"
-                    }
-                  },
-                  "parameters": {
-                    "name": {
-                      "type": "string",
-                      "metadata": {
-                        "description": "Name of the Azure Bot resource."
-                      }
-                    },
-                    "botDisplayName": {
-                      "type": "string",
-                      "metadata": {
-                        "description": "Display name shown for the bot."
-                      }
-                    },
-                    "tags": {
-                      "type": "object",
-                      "metadata": {
-                        "description": "Resource tags."
-                      }
-                    },
-                    "msaAppId": {
-                      "type": "string",
-                      "metadata": {
-                        "description": "Microsoft App ID (Entra app client id) backing the bot."
-                      }
-                    },
-                    "msaAppTenantId": {
-                      "type": "string",
-                      "metadata": {
-                        "description": "Tenant ID for the single-tenant bot app registration."
-                      }
-                    },
-                    "endpoint": {
-                      "type": "string",
-                      "metadata": {
-                        "description": "Messaging endpoint — the ACA HTTPS URL + /api/messages."
-                      }
-                    }
-                  },
-                  "resources": [
-                    {
-                      "type": "Microsoft.BotService/botServices",
-                      "apiVersion": "2022-09-15",
-                      "name": "[parameters('name')]",
-                      "location": "global",
-                      "tags": "[parameters('tags')]",
-                      "sku": {
-                        "name": "F0"
-                      },
-                      "kind": "azurebot",
-                      "properties": {
-                        "displayName": "[parameters('botDisplayName')]",
-                        "endpoint": "[parameters('endpoint')]",
-                        "msaAppId": "[parameters('msaAppId')]",
-                        "msaAppType": "SingleTenant",
-                        "msaAppTenantId": "[parameters('msaAppTenantId')]"
-                      }
-                    },
-                    {
-                      "type": "Microsoft.BotService/botServices/channels",
-                      "apiVersion": "2022-09-15",
-                      "name": "[format('{0}/{1}', parameters('name'), 'MsTeamsChannel')]",
-                      "location": "global",
-                      "properties": {
-                        "channelName": "MsTeamsChannel",
-                        "properties": {
-                          "isEnabled": true
-                        }
-                      },
-                      "dependsOn": [
-                        "[resourceId('Microsoft.BotService/botServices', parameters('name'))]"
-                      ]
-                    }
-                  ],
-                  "outputs": {
-                    "id": {
-                      "type": "string",
-                      "value": "[resourceId('Microsoft.BotService/botServices', parameters('name'))]"
-                    },
-                    "name": {
-                      "type": "string",
-                      "value": "[parameters('name')]"
-                    }
-                  }
-                }
-              },
-              "dependsOn": [
-                "[resourceId('Microsoft.Resources/deployments', 'app')]"
-              ]
             }
           ],
           "outputs": {
@@ -2887,10 +2624,6 @@
             "effectiveAgentProjectName": {
               "type": "string",
               "value": "[if(parameters('createFoundry'), format('proj-{0}', parameters('environmentName')), parameters('agentProjectName'))]"
-            },
-            "botMessagingEndpoint": {
-              "type": "string",
-              "value": "[if(not(empty(parameters('botAppId'))), format('{0}/api/messages', reference(resourceId('Microsoft.Resources/deployments', 'app'), '2025-04-01').outputs.uri.value), '')]"
             },
             "acsEndpoint": {
               "type": "string",
@@ -3371,18 +3104,6 @@
       "type": "string",
       "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('resourceGroupName')), 'Microsoft.Resources/deployments', 'resources'), '2025-04-01').outputs.appInsightsConnectionString.value]"
     },
-    "BOT_MESSAGING_ENDPOINT": {
-      "type": "string",
-      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('resourceGroupName')), 'Microsoft.Resources/deployments', 'resources'), '2025-04-01').outputs.botMessagingEndpoint.value]"
-    },
-    "TEAMS_BOT_ID": {
-      "type": "string",
-      "value": "[parameters('botAppId')]"
-    },
-    "TEAMS_APP_ID": {
-      "type": "string",
-      "value": "[parameters('teamsAppId')]"
-    },
     "ACS_ENDPOINT": {
       "type": "string",
       "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('resourceGroupName')), 'Microsoft.Resources/deployments', 'resources'), '2025-04-01').outputs.acsEndpoint.value]"
@@ -3486,10 +3207,6 @@
     "IS_CUSTOM_AVATAR": {
       "type": "string",
       "value": "[parameters('isCustomAvatar')]"
-    },
-    "AGENT_ID": {
-      "type": "string",
-      "value": "[parameters('agentId')]"
     }
   }
 }

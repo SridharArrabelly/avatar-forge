@@ -250,29 +250,6 @@ def check_required_inputs(profile, cfg: dict[str, str]) -> list[CheckResult]:
     return results
 
 
-def check_distinct_bot_apps(cfg: dict[str, str]) -> CheckResult | None:
-    """An Entra app can back only ONE Azure Bot resource.
-
-    Reusing the chat bot's app id for the calling bot fails deployment with
-    'MsaAppId is already in use' — an error that reads like a transient Azure
-    problem and is not.
-    """
-    chat = cfg.get("BOT_APP_ID", "").strip().lower()
-    calling = cfg.get("MEETING_BOT_APP_ID", "").strip().lower()
-    if not chat or not calling:
-        return None
-    ok = chat != calling
-    return CheckResult(
-        "Chat bot and calling bot use different Entra apps",
-        ok,
-        "distinct" if ok else f"both are {chat}",
-        fix=(
-            "        Register a SECOND Entra app for the calling bot. One app cannot back\n"
-            "        two Azure Bot resources; deployment fails with 'MsaAppId is already in use'."
-        ),
-    )
-
-
 def check_dns_label(cfg: dict[str, str], location: str) -> CheckResult | None:
     label = cfg.get("MEETING_BOT_DNS_LABEL", "").strip()
     if not label:
@@ -531,7 +508,6 @@ def main() -> int:
         ]
     checks += check_required_inputs(profile, cfg)
     for extra in (
-        check_distinct_bot_apps(cfg),
         check_dns_label(cfg, location),
         check_vm_password(cfg),
     ):

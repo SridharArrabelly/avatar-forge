@@ -13,7 +13,6 @@ from fastapi.staticfiles import StaticFiles
 
 from .api import routes, websocket as ws
 from .acs import build_acs_router
-from .bot.app import build_bot_router, shutdown_bot
 from .config import DEVELOPER_MODE, HOST, PORT, configure_logging
 from .voice.auth import close_credential, create_credential
 from .voice.catalog import close_search_client, prewarm_catalog
@@ -84,7 +83,6 @@ async def lifespan(app: FastAPI):
     # SearchClient (which uses the credential), THEN close the
     # credential's underlying aiohttp.ClientSession.
     await ws.shutdown_all()
-    await shutdown_bot()
     await close_search_client()
     await close_credential()
     logger.info("Avatar Forge server stopped.")
@@ -194,9 +192,6 @@ app.add_middleware(SelectiveGZipMiddleware, minimum_size=1024, compresslevel=6)
 
 app.include_router(routes.router)
 app.include_router(ws.router)
-# Teams bot messaging endpoint (issue #53). Mounted before the static SPA so
-# POST /api/messages is handled by the bot, not the catch-all frontend mount.
-app.include_router(build_bot_router())
 # Teams in-call media participant (channel D, issue #27). Additive + opt-in: every
 # ACS endpoint returns 503 when ACS is not configured, so this never changes a
 # non-ACS deploy. Mounted before the static SPA so /api/acs/* + /ws/acs/* resolve.

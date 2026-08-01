@@ -71,15 +71,6 @@ param avatarBackgroundImageUrl string = ''
 param srModel string = 'mai-transcribe-1'
 param recognitionLanguage string = 'auto'
 
-// ───────── Teams bot (issue #53) ─────────
-param botAppId string = ''
-param botAppTenantId string = ''
-@secure()
-param botAppPassword string = ''
-param botDisplayName string = 'Avatar Forge'
-param teamsAppId string = ''
-param agentId string = ''
-
 // ───────── channel D in-call media (#27) ─────────
 @description('Enable channel D ACS Call Automation media participant ("true"/"false"). When not "true" (default), no ACS resource is created and the container behaves as today.')
 param enableAcs string = 'false'
@@ -314,31 +305,11 @@ module app 'modules/containerApp.bicep' = {
     avatarBackgroundImageUrl: avatarBackgroundImageUrl
     srModel: srModel
     recognitionLanguage: recognitionLanguage
-    botAppId: botAppId
-    botAppTenantId: empty(botAppTenantId) ? tenant().tenantId : botAppTenantId
-    botAppPassword: botAppPassword
-    teamsAppId: teamsAppId
-    agentId: agentId
     acsEndpoint: acsEnabled ? acs!.outputs.endpoint : ''
     meetingBotEnabled: meetingBotEnabled
     acsAudioSampleRate: acsAudioSampleRate
     acsRequireWakePhrase: acsRequireWakePhrase
     acsAvatarVideoEnabled: acsAvatarVideoEnabled
-  }
-}
-
-// ───────── Teams bot (channel C, issue #53) ─────────
-// Only provisioned when a bot app id is supplied. The messaging endpoint is the
-// Container App HTTPS URL + /api/messages.
-module botService 'modules/botService.bicep' = if (!empty(botAppId)) {
-  name: 'bot'
-  params: {
-    name: '${abbrs.botService}-${environmentName}-${resourceToken}'
-    botDisplayName: botDisplayName
-    tags: tags
-    msaAppId: botAppId
-    msaAppTenantId: empty(botAppTenantId) ? tenant().tenantId : botAppTenantId
-    endpoint: '${app.outputs.uri}/api/messages'
   }
 }
 
@@ -354,7 +325,6 @@ output foundryProjectEndpoint string = foundryProjectEndpointEffective
 output searchEndpoint string = searchEndpointEffective
 output appInsightsConnectionString string = appInsightsConnectionStringEffective
 output effectiveAgentProjectName string = createFoundry ? 'proj-${environmentName}' : agentProjectName
-output botMessagingEndpoint string = !empty(botAppId) ? '${app.outputs.uri}/api/messages' : ''
 output acsEndpoint string = acsEnabled ? acs!.outputs.endpoint : ''
 
 // The two values the agent setup script needs to wire the web tool. When Bing is

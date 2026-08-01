@@ -36,19 +36,6 @@ param srModel string = 'mai-transcribe-1'
 @description('Recognition language locale (BCP-47, e.g. en-ZA). Use "auto" to let the SR model auto-detect.')
 param recognitionLanguage string = 'auto'
 
-// ───────── Teams bot (issue #53) ─────────
-@description('Bot Entra app client id. Surfaces as the SERVICE_CONNECTION client id + TEAMS_BOT_ID. Empty disables bot env wiring.')
-param botAppId string = ''
-@description('Bot app tenant id (single-tenant). Defaults handled by caller.')
-param botAppTenantId string = ''
-@description('Bot app client secret. Stored as a Container App secret and referenced by the SERVICE_CONNECTION client secret env var.')
-@secure()
-param botAppPassword string = ''
-@description('Teams app (manifest) id used to build deep links from the bot to the personal tab.')
-param teamsAppId string = ''
-@description('Foundry agent id override. Empty means resolve the agent by AGENT_NAME.')
-param agentId string = ''
-
 // ───────── channel D in-call media (#27) ─────────
 @description('ACS endpoint for the Call Automation media participant. Empty disables channel D in the container.')
 param acsEndpoint string = ''
@@ -89,43 +76,6 @@ var meetingBotEnv = concat(
   !empty(acsAvatarVideoEnabled) ? [ { name: 'ACS_AVATAR_VIDEO_ENABLED', value: acsAvatarVideoEnabled } ] : []
 )
 
-var botEnabled = !empty(botAppId)
-var botSecrets = !empty(botAppPassword) ? [
-  {
-    name: 'bot-app-password'
-    value: botAppPassword
-  }
-] : []
-// Bot env vars. The CONNECTIONS__SERVICE_CONNECTION__SETTINGS__* names are the
-// Microsoft 365 Agents SDK's configuration convention for the bot's identity.
-var botEnv = botEnabled ? concat([
-  {
-    name: 'TEAMS_BOT_ID'
-    value: botAppId
-  }
-  {
-    name: 'TEAMS_APP_ID'
-    value: teamsAppId
-  }
-  {
-    name: 'AGENT_ID'
-    value: agentId
-  }
-  {
-    name: 'CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTID'
-    value: botAppId
-  }
-  {
-    name: 'CONNECTIONS__SERVICE_CONNECTION__SETTINGS__TENANTID'
-    value: botAppTenantId
-  }
-], !empty(botAppPassword) ? [
-  {
-    name: 'CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTSECRET'
-    secretRef: 'bot-app-password'
-  }
-] : []) : []
-
 resource app 'Microsoft.App/containerApps@2024-10-02-preview' = {
   name: name
   location: location
@@ -138,7 +88,6 @@ resource app 'Microsoft.App/containerApps@2024-10-02-preview' = {
     managedEnvironmentId: containerAppsEnvironmentId
     configuration: {
       activeRevisionsMode: 'Single'
-      secrets: botSecrets
       ingress: {
         external: true
         targetPort: 3000
@@ -193,7 +142,7 @@ resource app 'Microsoft.App/containerApps@2024-10-02-preview' = {
             { name: 'SR_MODEL', value: srModel }
             { name: 'RECOGNITION_LANGUAGE', value: recognitionLanguage }
             { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: appInsightsConnectionString }
-          ], concat(botEnv, acsEnv, meetingBotEnv))
+          ], concat(acsEnv, meetingBotEnv))
           probes: [
             {
               type: 'Liveness'

@@ -88,23 +88,8 @@ param avatarBackgroundImageUrl string = ''
 param srModel string = 'mai-transcribe-1'
 param recognitionLanguage string = 'auto'
 
-// ───────── Teams bot (channel C, issue #53) ─────────
-@description('Bot Entra app client id (Microsoft App ID). Leave empty to skip bot provisioning. Surfaces as TEAMS_BOT_ID.')
-param botAppId string = ''
-@description('Bot app tenant id (single-tenant). Defaults to the deployment tenant when empty.')
-param botAppTenantId string = ''
-@description('Bot app client secret. Stored as a Container App secret. Required when botAppId is set.')
-@secure()
-param botAppPassword string = ''
-@description('Display name for the Azure Bot resource.')
-param botDisplayName string = 'Avatar Forge'
-@description('Teams app (manifest) id used for bot deep links to the personal tab. Surfaces as TEAMS_APP_ID.')
-param teamsAppId string = ''
-@description('Foundry agent id override. Empty resolves the agent by AGENT_NAME.')
-param agentId string = ''
-
 // ───────── channel D in-call media (#27) ─────────
-@description('Deployment profile from `scripts/set_profile.py` — one of "web", "teams-tab", "teams-chat", "in-call". Drives which optional channels deploy. Empty keeps the pre-profile behaviour (explicit flags only).')
+@description('Deployment profile from `scripts/set_profile.py` — one of "web", "teams-tab", "in-call". Drives which optional channels deploy. Empty keeps the pre-profile behaviour (explicit flags only).')
 param deployProfile string = ''
 @description('Enable channel D ACS Call Automation media participant ("true"/"false"). When not "true" (default), no ACS resource is created and the deployment behaves exactly as today.')
 param enableAcs string = 'false'
@@ -220,12 +205,6 @@ module resources 'resources.bicep' = {
     avatarBackgroundImageUrl: avatarBackgroundImageUrl
     srModel: srModel
     recognitionLanguage: recognitionLanguage
-    botAppId: botAppId
-    botAppTenantId: botAppTenantId
-    botAppPassword: botAppPassword
-    botDisplayName: botDisplayName
-    teamsAppId: teamsAppId
-    agentId: agentId
     enableAcs: enableAcs
     acsDataLocation: acsDataLocation
     meetingBotEnabled: wantMeetingBotBridge ? 'true' : 'false'
@@ -294,12 +273,6 @@ output BING_CONNECTION_NAME string = resources.outputs.bingConnectionName
 output BING_CUSTOM_CONFIG_NAME string = resources.outputs.bingCustomConfigName
 output APPLICATIONINSIGHTS_CONNECTION_STRING string = resources.outputs.appInsightsConnectionString
 
-// Teams bot (issue #53). Echoed so the operator can configure the manifest and
-// the Azure Bot messaging endpoint without re-deriving them.
-output BOT_MESSAGING_ENDPOINT string = resources.outputs.botMessagingEndpoint
-output TEAMS_BOT_ID string = botAppId
-output TEAMS_APP_ID string = teamsAppId
-
 // Channel D in-call media (#27). Empty unless enableAcs=true.
 output ACS_ENDPOINT string = resources.outputs.acsEndpoint
 
@@ -338,4 +311,3 @@ output AVATAR_TAGLINE string = avatarTagline
 output AVATAR_BACKGROUND_IMAGE_URL string = avatarBackgroundImageUrl
 output IS_PHOTO_AVATAR string = isPhotoAvatar
 output IS_CUSTOM_AVATAR string = isCustomAvatar
-output AGENT_ID string = agentId

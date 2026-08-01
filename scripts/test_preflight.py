@@ -180,15 +180,15 @@ def main() -> int:
             pf._settle_subscription({}) == "sub-from-az",
         )
 
-    # --- the bot-app collision check --------------------------------------
+    # --- meeting-bot input checks -----------------------------------------
     check(
-        "bot apps: silent when only one is configured",
-        pf.check_distinct_bot_apps({"BOT_APP_ID": "a"}) is None,
+        "dns label: silent when unset",
+        pf.check_dns_label({}, "swedencentral") is None,
     )
-    same = pf.check_distinct_bot_apps({"BOT_APP_ID": "A-1", "MEETING_BOT_APP_ID": "a-1"})
-    check("bot apps: same id caught case-insensitively", same is not None and not same.ok)
-    diff = pf.check_distinct_bot_apps({"BOT_APP_ID": "a", "MEETING_BOT_APP_ID": "b"})
-    check("bot apps: distinct ids pass", diff is not None and diff.ok)
+    bad = pf.check_dns_label({"MEETING_BOT_DNS_LABEL": "Bad_Label"}, "swedencentral")
+    check("dns label: invalid label caught", bad is not None and not bad.ok)
+    good = pf.check_dns_label({"MEETING_BOT_DNS_LABEL": "avatar-bot-contoso"}, "swedencentral")
+    check("dns label: valid label passes", good is not None and good.ok)
 
     print()
     if _failures:
