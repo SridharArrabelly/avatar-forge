@@ -73,7 +73,7 @@ preference.
 ### Why mix languages instead of going all-.NET
 
 - **Only one component is .NET/Windows-locked** — the media ingestion. Everything else
-  (Voice Live, the Foundry agent, RAG, the channel C bot, the web app, infra) is fully
+  (Voice Live, the Foundry agent, RAG, the web app, infra) is fully
   supported in Python and already deployed and working.
 - **The .NET bot carries no business logic.** It is a *media pump*: join → grab PCM →
   forward → play back. All intelligence (STT, retrieval, answer, TTS, turn-taking) stays
@@ -175,7 +175,7 @@ needed. (`ACS_AUDIO_SAMPLE_RATE` already governs this on the Python side.)
 
 ## 6. Identity, permissions & admission
 
-The bot needs its **own** Entra app registration — separate from the chat bot's,
+The bot needs its **own** Entra app registration — dedicated to it,
 because an Entra app can back only one Azure Bot resource (reusing one fails with
 `MsaAppId is already in use`).
 
@@ -192,7 +192,7 @@ because an Entra app can back only one Azure Bot resource (reusing one fails wit
    (`az ad app credential reset`).
 2. **An Azure Bot registration with a *calling* webhook** — Graph delivers call
    signaling (incoming/established/participants) to this HTTPS endpoint. Follows the
-   `infra/modules/botService.bicep` pattern plus the calling webhook URL; codified in
+   the repo's additive-module pattern plus the calling webhook URL; codified in
    `infra/modules/meetingBotHost.bicep`.
 3. **Teams app manifest** with `supportsCalling: true`, and a **tenant policy** that
    allows bots in meetings.
@@ -235,7 +235,7 @@ The .NET bot does **not** implement any of this — it just carries audio and ho
 | Azure Bot registration | global | Calling webhook → the bot's signaling URL. |
 | ACS resource | optional | Only if a fallback ACS path is kept; not required for option (b). |
 
-All new infra is **additive and conditional** (mirrors `botService.bicep` /
+All new infra is **additive and conditional** (mirrors
 `communicationServices.bicep`): a deploy **without** channel D enabled behaves exactly as
 today. The Windows host is the one piece that is materially new and carries ongoing cost.
 

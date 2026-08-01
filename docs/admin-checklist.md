@@ -52,15 +52,6 @@ Those are deliberate security boundaries, not gaps in our automation.
 **Usually achievable without an administrator.** This is why B is the recommended
 stopping point when admin access is limited.
 
-### C — Teams conversational bot
-
-| Step | Who | If you cannot get it |
-| --- | --- | --- |
-| Register an Entra application + client secret | You *(if app registration is permitted)* | Ask an admin to create it and hand you the IDs |
-| **Admin consent** for the bot's permissions | **Entra admin** | Hard blocker — one-time only |
-| Set `BOT_APP_ID` / `BOT_APP_PASSWORD`, redeploy | You | — |
-| Add the bot to the Teams app package | You | — |
-
 ### D — In-call avatar (Graph media bot)
 
 This is the demanding one. **Verify the Teams app access policy is achievable

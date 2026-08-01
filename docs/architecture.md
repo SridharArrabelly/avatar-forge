@@ -12,6 +12,13 @@ The channel-level view ("one brain, several front doors") is in the
 [channel page](channels/README.md). This page is the **inside of the brain** — the part
 every channel shares.
 
+The diagram below shows the default **agent** binding, where a turn is transcribed,
+reasoned over by the Foundry agent, and synthesised back to speech. Voice Live can
+instead bind straight to a realtime speech-to-speech model, which removes the
+recognizer from the answer path and moves the tools in-process — see
+[voice-binding.md](voice-binding.md). The binding changes the shape of a turn but not
+the channels, the session lifecycle, or anything else on this page.
+
 ```mermaid
 flowchart LR
     EDGE["<b>Channel edge</b><br/>browser · Teams tab · media bot<br/><i>mic capture · audio playback · video render</i>"]
@@ -21,7 +28,6 @@ flowchart LR
         WS["WebSocket endpoints<br/>/ws · /ws/acs/audio · /ws/acs/browser"]
         H["VoiceSessionHandler<br/>one Voice Live session per call"]
         EV["Event relay<br/>+ meeting-catalogue injection"]
-        BOT["POST /api/messages<br/>Teams chat bot · text only"]
         WS --- H
         H --- EV
     end
@@ -35,7 +41,6 @@ flowchart LR
     EDGE <-. "avatar video · WebRTC peer-to-peer<br/><b>never transits the server</b>" .-> VLS
     H <-- "Voice Live SDK<br/><b>server-side only</b>" --> VLS
     VLS -- "agent_config" --> AGENT
-    BOT -- "text" --> AGENT
     AGENT --> SEARCH
     AGENT --> NEWS
 ```
@@ -57,10 +62,6 @@ audio forwarding, event processing). The browser only:
 - relays WebRTC signaling for the avatar video (SDP offer/answer through the backend)
   and renders the avatar via a direct WebRTC peer connection to Azure;
 - (WebSocket video mode) receives fMP4 chunks for MediaSource Extensions playback.
-
-The **Teams bot** (channel C) is hosted inside the same FastAPI app as a `POST
-/api/messages` route and reuses the same Foundry agent — see
-[`teams/README.md`](../teams/README.md).
 
 The **in-call avatar** (issue #27) reuses the same Voice Live + Foundry pipeline inside a
 *live Teams meeting*. Two transports exist, and they are not equivalent:
@@ -155,7 +156,7 @@ Everything the end user sees is anchored to the avatar:
 - **Identity lockup** — top-left, a branding block with the avatar's **name** (bold)
   and an optional **tagline** (italic). The name comes from `AVATAR_DISPLAY_NAME`
   or, when that is unset, from the selected avatar model — the same rule the
-  assistant's spoken persona, the Teams bot and the meeting roster use, so the
+  assistant's spoken persona and the meeting roster use, so the
   name on screen is the name she answers to
   ([`backend/avatar_identity.py`](../backend/avatar_identity.py)). The tagline is
   `AVATAR_TAGLINE` (empty hides it).
@@ -167,8 +168,7 @@ Everything the end user sees is anchored to the avatar:
   primary) and stays disabled until the session connects. Shown on the **web** app
   (default on, `ENABLE_TEXT_INPUT`); **always hidden inside Teams** — the frontend
   detects the Teams host (`isEmbeddedInTeams()`, mirroring `frontend/teams.js`) and
-  suppresses it, because the bot chat tab has Teams' native compose box and the
-  avatar tab is voice-first. Hidden in developer mode, which keeps its own input.
+  suppresses it, because the Teams tab is voice-first. Hidden in developer mode, which keeps its own input.
 - **Stop button** *(`ENABLE_STOP_BUTTON`, default on)* — a small control beside the
   mic, always visible while the avatar is on screen: greyed when idle, red and
   actionable while the avatar speaks. Tapping it truncates the avatar mid-answer via
@@ -223,11 +223,9 @@ avatar-forge/
 │   │   ├── event_handlers.py      # SDK event -> frontend message translation
 │   │   ├── catalog.py             # Meeting catalogue fetch from AI Search (injected at session start)
 │   │   ├── functions.py           # Built-in tool implementations (get_time, get_weather, calculate)
+│   │   ├── tools.py               # Model-mode tools: search_minutes (AI Search) + search_web (Web IQ)
+│   │   ├── instructions.py        # Model-mode prompt loader (prompts/realtime/)
 │   │   └── auth.py                # DefaultAzureCredential + caching wrapper
-│   ├── bot/                       # Channel C — Teams conversational bot
-│   │   ├── app.py                 # M365 Agents SDK app + POST /api/messages route
-│   │   ├── agent_runtime.py       # Foundry-agent bridge (reuses the voice agent)
-│   │   └── cards.py               # Adaptive Card + deep link back to the tab
 │   └── acs/                       # Channels D/E — in-call media bridge (opt-in)
 │       ├── client.py              # ACS Call Automation + Identity clients (browser-joiner path)
 │       ├── bridge.py              # AcsVoiceBridge / BrowserVoiceBridge <-> VoiceSessionHandler
@@ -279,12 +277,13 @@ avatar-forge/
 ├── infra/                         # Bicep IaC consumed by azd (azure.yaml)
 │   ├── main.bicep                 # Deployment entry point; derives what to deploy from DEPLOY_PROFILE
 │   ├── resources.bicep            # Resource composition (BYO/create switches)
-│   └── modules/                   # containerApp, foundry, aiSearch, botService, meetingBotHost, RBAC, ...
+│   └── modules/                   # containerApp, foundry, aiSearch, bingGrounding, meetingBotHost, RBAC, ...
 │
 ├── assets/brand/                  # Canonical brand assets (logo, outline icon, favicon, generator)
 ├── assets/avatar/                 # Source photo(s) for custom photo-avatar training (not runtime)
 ├── data/                          # Source corpus ingested into the AI Search index (.docx/.pdf/.md/.txt)
 ├── prompts/agent/                 # Agent prompt content (Markdown), loaded by setup_foundry_agent.py
+├── prompts/realtime/              # Model-mode prompt, sent with the session (VOICE_BINDING=model)
 ├── azure.yaml                     # azd service + hooks (infra path, preprovision/postprovision)
 ├── pyproject.toml / uv.lock       # Project metadata + locked dependencies
 ├── Dockerfile                     # Container build (python:3.12-slim + uv)

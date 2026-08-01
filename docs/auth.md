@@ -66,11 +66,11 @@ scope at startup, not one per SDK call. In Azure with managed identity those
 acquisitions are in-process HTTP calls to IMDS (cached ~1 hour) rather than subprocess
 spawns.
 
-## Teams bot identity (separate)
+## Calling bot identity (separate)
 
-The channel C bot uses its **own** identity — an Entra app registration (client id +
-secret) registered as an Azure Bot resource — which is separate from the backend
-managed identity above and separate from user SSO (deferred). The bot still reaches
-Foundry/Search through the backend's managed identity; only the Bot Framework channel
-auth uses the bot's app credentials. Setup steps are in
-[`teams/README.md`](../teams/README.md#identity-model-read-this-first).
+Channel D's calling bot uses its **own** identity — an Entra app registration (client id
++ secret) registered as an Azure Bot resource — which is separate from the backend
+managed identity above and separate from user SSO (deferred). It reaches
+Foundry/Search through the backend's managed identity over the bridge websocket; only
+the Graph calling/Bot Framework channel auth uses the bot's app credentials. Setup steps
+are in [`../meeting-bot/README.md`](../meeting-bot/README.md).

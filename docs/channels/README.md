@@ -30,13 +30,12 @@ access you need**.
 | --- | --- | --- | --- | --- | --- |
 | **A** | **Web** (standalone) | Shipped | — *(this is the core)* | **None** beyond an Azure subscription | [a-web.md](a-web.md) |
 | **B** | **Teams personal tab** | Shipped | **None** | Upload/sideload a Teams app package | [b-teams-tab.md](b-teams-tab.md) |
-| **C** | **Teams conversational bot** | Shipped *(optional)* | Azure Bot + Teams channel | Entra app + **admin consent** | [c-teams-chat-bot.md](c-teams-chat-bot.md) |
 | **D** | **In-call avatar** — Graph media bot | **Working** | Azure Bot (calling) + **Windows VM** + DNS + TLS | **Highest**: Graph app permissions, admin consent, **Teams app access policy** | [d-in-call-media-bot.md](d-in-call-media-bot.md) |
 | **E** | **In-call avatar** — headless browser | Placeholder | Container/job | TBD (expected lower than D) | [e-in-call-headless.md](e-in-call-headless.md) |
 
 ### Two things this table is deliberately saying
 
-**A → B → C is a ladder, not a menu.** Each step is additive on the one before.
+**A → B is a ladder, not a menu.** Each step is additive on the one before.
 B is the best-value step in the whole product: it adds a Teams surface for **zero
 extra Azure resources** — the manifest simply points a `staticTab` at the ACA URL
 the web app already serves.
@@ -53,8 +52,7 @@ flowchart LR
         direction LR
         A["<b>A</b> · Web<br/>admin: <b>none</b>"]
         B["<b>B</b> · Teams personal tab<br/>admin: upload a package<br/><i>zero new Azure resources</i>"]
-        C["<b>C</b> · Teams chat bot<br/>admin: Entra consent"]
-        A --> B --> C
+        A --> B
     end
 
     subgraph Rivals["Live in-call presence — pick ONE, then retire the other"]
@@ -63,11 +61,11 @@ flowchart LR
         E["<b>E</b> · Headless browser<br/><i>placeholder</i><br/>admin: TBD"]
     end
 
-    A -- "in-call needs A deployed<br/><i>(but not B or C)</i>" --> Rivals
+    A -- "in-call needs A deployed<br/><i>(but not B)</i>" --> Rivals
 ```
 
-Note what the arrow into the rivals box starts from: **A**, not C. In-call presence
-needs the backend, not the chat bot — you can deploy D without ever installing C.
+Note what the arrow into the rivals box starts from: **A**, not B. In-call presence
+needs the backend, not the Teams tab — you can deploy D without ever installing B.
 
 ---
 
@@ -77,7 +75,6 @@ needs the backend, not the chat bot — you can deploy D without ever installing
 | --- | --- | --- |
 | Demo the avatar to anyone with a browser | **A** | No Teams, no admin, no manifest |
 | Put it in front of Teams users with least friction | **A + B** | Zero extra infra; sideload if you lack admin rights |
-| Let people `@mention` it in a Teams chat | **A + B + C** | Needs an Entra app + one-time admin consent |
 | Have it **join a meeting, hear the room, and answer aloud** | **A + D** | The only path with true in-call presence |
 | Evaluate a cheaper in-call option | **A + E** | Then run the comparison and drop the loser |
 
@@ -108,19 +105,18 @@ capability, so environments created before profiles existed are unaffected.
 
 | Flag | Set by profile | Effect |
 | --- | --- | --- |
-| `DEPLOY_PROFILE` | — | `web` · `teams-tab` · `teams-chat` · `in-call`. Drives everything below. |
+| `DEPLOY_PROFILE` | — | `web` · `teams-tab` · `in-call`. Drives everything below. |
 | *(none)* | `web`, `teams-tab` | Channel **A**. Container app, Foundry agent, AI Search, ACR, identity, roles. |
-| `BOT_APP_ID` | you supply | Provisions `modules/botService.bicep` (Azure Bot + Teams channel) for **C**. |
 | `MEETING_BOT_ENABLED` | `in-call` | Serves the media-bot bridge (`/ws/acs/audio`) for **D**. |
 | `DEPLOY_MEETING_BOT_HOST` | `in-call` | Provisions the Windows media host + calling bot registration. |
 | `MEETING_BOT_APP_ID` / `_DNS_LABEL` / `_ADMIN_PASSWORD` | you supply | Required for **D**; the host is skipped if any is missing. |
 | `ENABLE_ACS` | `false` | Provisions `modules/communicationServices.bicep`. **No channel above needs this.** It serves the separate browser joiner (`/acs-join.html`), where a browser tab joins a meeting as an anonymous guest. Channel D joins via Graph calling — the `acs` in `/ws/acs/audio` is the bridge protocol's name, not an ACS dependency. |
 | `DEPLOY_BING_GROUNDING` | `true` | Provisions `modules/bingGrounding.bicep` (Bing account + site allow-list) and the Foundry connection to it, enabling the agent's web/news tool. On by default; set `false` to skip. Independent of the above; applies to every channel. |
 
-> **C and D each need an Azure Bot registration, and they cannot share one.** An
-> Entra app can back only *one* Azure Bot resource, so the chat bot (`BOT_APP_ID`)
-> and the calling bot (`MEETING_BOT_APP_ID`) must be different app registrations.
-> Reusing one fails with `MsaAppId is already in use`. Preflight catches this.
+> **Channel D needs its own Azure Bot registration.** An Entra app can back only
+> *one* Azure Bot resource, so `MEETING_BOT_APP_ID` must be an app registration
+> dedicated to the calling bot. Pointing it at an app that already backs another
+> bot fails with `MsaAppId is already in use`.
 
 Full variable reference: [`../configuration.md`](../configuration.md).
 Deployment mechanics: [`../deployment.md`](../deployment.md).
@@ -132,17 +128,16 @@ Deployment mechanics: [`../deployment.md`](../deployment.md).
 There is **no one-folder-per-channel rule**, and trying to read the tree that way
 will mislead you. Two things break the pattern:
 
-- **`teams/` is shared by B, C and D.** It holds one manifest template and one
+- **`teams/` is shared by B and D.** It holds one manifest template and one
   builder; flags decide which channel's package comes out. It is *Teams packaging*,
   not "the tab channel".
-- **C has no folder of its own.** Its runtime is a module inside the existing
-  backend, which is exactly why it needs no new host.
+- **D's Teams surface and its runtime live apart.** The manifest flags are built
+  here; the media bot itself is a separate .NET service on its own Windows host.
 
 | Channel | Runtime code | Teams package | Infra module |
 | --- | --- | --- | --- |
 | **A** web | `backend/`, `frontend/` | — | base `infra/` |
 | **B** tab | `frontend/teams.js` (same app) | `teams/` → `staticTabs` | *(none — reuses A)* |
-| **C** chat bot | `backend/bot/` — in-process at `POST /api/messages` | `teams/` → `bots` entry | `modules/botService.bicep` |
 | **D** in-call | `meeting-bot/` (.NET, own Windows host) + `backend/acs/` (bridge) + `frontend/acs-join.js`, `companion.js` | `teams/` → `supportsCalling`, `configurableTabs` *(optional)* | `modules/meetingBotHost.bicep` |
 | **E** headless | *(not built)* | — | — |
 
@@ -151,7 +146,6 @@ One manifest, three progressive shapes — the build flags are the difference:
 | `teams/build_package.py` flags | Manifest keys kept | Channel |
 | --- | --- | --- |
 | `--hostname X` | `staticTabs` only | **B** |
-| `+ --bot-id <guid>` | `bots`, `supportsCalling=false` | **C** |
 | `+ --enable-calling` | `bots`, `supportsCalling=true` | **D** invocable in a call |
 | `+ --enable-companion` | `configurableTabs` | **D** meeting control panel |
 
@@ -188,9 +182,9 @@ the split is by *what changes*:
 | **Channel edge** | How does traffic get in and out *for this channel*? | §1 of each channel page | The **delta only** — the core is a single node in the diagram. |
 | **Design record** | *Why* is it this shape, and what was rejected? | `*-design-*.md` | Only where a real decision was made. |
 
-That last row is deliberate: **A, B and C have no design records and should not get
-one.** Nothing was decided — B is the web app in an iframe, C is the Bot Framework
-doing what the Bot Framework does. Writing "design documents" for them would be
+That last row is deliberate: **A and B have no design records and should not get
+one.** Nothing was decided — B is the web app in an iframe. Writing "design
+documents" for them would be
 ceremony, and ceremony is what makes people stop reading documentation. D has two
 records because D had two genuinely hard decisions (the .NET/Windows split, and
 audio/video from one synthesis). E will earn one when it is built.

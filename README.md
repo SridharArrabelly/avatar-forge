@@ -18,7 +18,6 @@ flowchart LR
         direction TB
         A["<b>A</b> · Web browser"]
         B["<b>B</b> · Teams personal tab"]
-        C["<b>C</b> · Teams chat bot"]
         D["<b>D</b> · In-call media bot"]
         E["<b>E</b> · In-call headless"]
     end
@@ -40,7 +39,6 @@ flowchart LR
 
     A --> API
     B --> API
-    C --> API
     D --> API
     E -.-> API
     AG --> S
@@ -63,7 +61,6 @@ administrator access you need**.
 |---|---|---|---|---|---|
 | **A** | **Web** (standalone) | ✅ Shipped | — *(the core)* | **None** | [a-web.md](docs/channels/a-web.md) |
 | **B** | **Teams — personal tab** | ✅ Shipped | **None** | Upload a Teams app package | [b-teams-tab.md](docs/channels/b-teams-tab.md) |
-| **C** | **Teams — conversational bot** | ✅ Shipped *(optional)* | Azure Bot + Teams channel | Entra app + **admin consent** | [c-teams-chat-bot.md](docs/channels/c-teams-chat-bot.md) |
 | **D** | **Teams — in-call avatar** (Graph media bot) | ✅ Working | Azure Bot + **Windows VM** + DNS + TLS | **Highest** — incl. **Teams app access policy** | [d-in-call-media-bot.md](docs/channels/d-in-call-media-bot.md) |
 | **E** | **Teams — in-call avatar** (headless browser) | 🔜 Placeholder | Container/job | TBD | [e-in-call-headless.md](docs/channels/e-in-call-headless.md) |
 
@@ -142,7 +139,7 @@ uv run python scripts/preflight.py --steps-only    # the whole plan
 uv run python scripts/preflight.py --remaining     # only what is left
 ```
 
-Profiles map onto the channel ladder: `web` · `teams-tab` · `teams-chat` · `in-call`.
+Profiles map onto the channel ladder: `web` · `teams-tab` · `in-call`.
 The profile is stored in the azd environment rather than prompted for at deploy time,
 so `azd up` stays non-interactive and re-deploys and CI keep working.
 
@@ -159,6 +156,7 @@ Details: **[docs/deployment.md](docs/deployment.md)** ·
 | **[docs/development.md](docs/development.md)** | Run locally, build the AI Search index, smoke-test the index and agent, dev-only knobs. |
 | **[docs/configuration.md](docs/configuration.md)** | **Every** environment variable, grouped by concern — the single source of truth. |
 | **[docs/architecture.md](docs/architecture.md)** | System design, tool-calling accuracy, meeting-catalogue injection, frontend UX, project structure. |
+| **[docs/voice-binding.md](docs/voice-binding.md)** | Agent mode vs model mode: what binding Voice Live straight to a realtime model gives, what it costs, and the measured numbers. |
 | **[docs/deployment.md](docs/deployment.md)** | Deploy to Azure with `azd`: topology, region preflight, BYO Foundry/Search, cross-RG RBAC, post-deploy. |
 | **[docs/auth.md](docs/auth.md)** | `DefaultAzureCredential`, required roles, startup pre-warm, IMDS skip, token caching. |
 | **[teams/README.md](teams/README.md)** | Building and sideloading the Teams app package (serves channels B and C). |

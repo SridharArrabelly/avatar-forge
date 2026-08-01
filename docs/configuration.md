@@ -35,7 +35,7 @@ Set with `uv run python scripts/set_profile.py` rather than by hand.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `DEPLOY_PROFILE` | *(empty)* | `web` · `teams-tab` · `teams-chat` · `in-call`. Selects which channel deploys, and drives the numbered step plan `scripts/preflight.py` prints. Empty keeps the pre-profile behaviour (explicit flags only). |
+| `DEPLOY_PROFILE` | *(empty)* | `web` · `teams-tab` · `in-call`. Selects which channel deploys, and drives the numbered step plan `scripts/preflight.py` prints. Empty keeps the pre-profile behaviour (explicit flags only). |
 | `PREFLIGHT_SKIP` | `false` | `true` bypasses the preprovision preflight gate. An escape hatch — nobody should be stuck behind their own tooling. |
 
 ---
@@ -127,6 +127,38 @@ matched to `MODEL_NAME` (an invalid pair fails the deployment).
 | `MODEL_CAPACITY` | `50` | TPM (thousands) capacity. |
 
 ---
+
+## Voice Live binding — agent mode / model mode
+
+Voice Live binds either to the Foundry agent (default) or straight to a realtime
+speech-to-speech model. Full design record, trade-offs and measured numbers:
+**[voice-binding.md](voice-binding.md)**.
+
+Leaving all of these unset is exactly today's behaviour.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `VOICE_BINDING` | `agent` | `agent` binds the Foundry agent; `model` binds a realtime model directly and moves the tools in-process. Any unrecognised value falls back to `agent`. |
+| `VOICELIVE_MODEL` | `gpt-realtime-2` | Realtime model bound when `VOICE_BINDING=model`. Voice Live manages it — no model deployment and no quota request. Ignored in agent mode. Verified to bind in swedencentral: `gpt-realtime-2`, `gpt-realtime-1.5`, `gpt-realtime`. |
+
+Model mode takes the agent out of the picture, and its managed `azure_ai_search`
+and `bing_grounding` tools go with it — the tool surface becomes in-process Python
+(`backend/voice/tools.py`). `search_minutes` queries the same `knowledge-index`;
+`search_web` is Web IQ and is advertised to the model **only when a key is set**.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `WEBIQ_API_KEY` | — | Enables the `search_web` tool in model mode. Passed to the container app as a **secret**, never as a plain environment variable. Unset leaves the web tool off entirely and the assistant answers from the minutes corpus alone. |
+| `WEBIQ_BASE_URL` | `https://api.microsoft.ai/v3` | Web IQ endpoint. |
+| `WEBIQ_ALLOWED_DOMAINS` | — | Comma-separated host allow-list applied to results, e.g. `mtn.com,sashares.co.za`. Same security boundary as `bingAllowedDomains`: a hard host allow-list is what makes an open-web tool safe to hand an executive assistant. Empty allows any host the endpoint returns. |
+| `WEBIQ_LANGUAGE` | `en` | Result language hint. |
+| `WEBIQ_REGION` | `ZA` | Result region hint. |
+| `WEBIQ_USE_ENTRA` | — | Set to authenticate to Web IQ with Entra instead of an API key. |
+
+> **Note.** In `DEVELOPER_MODE` a session may override the binding per connection
+> from the settings panel, so agent and model can be compared side by side in two
+> browser tabs. Each websocket opens its own Voice Live connection, so the sessions
+> share no state. Outside `DEVELOPER_MODE` the override is ignored.
 
 ## Runtime tuning
 
@@ -261,29 +293,6 @@ mode. Captions are **off** by default; suggested prompts, the on-stage composer
 
 ---
 
-## Teams conversational bot (channel C, issue #53)
-
-Only needed when hosting the Teams bot. The bot reuses the same Foundry agent
-(`AGENT_NAME` / `PROJECT_ENDPOINT`) for answers. Bot identity comes from the Azure
-Bot registration + its Entra app — see [`teams/README.md`](../teams/README.md) for
-the portal/CLI steps. If `TEAMS_BOT_ID` / `BOT_APP_ID` is unset, the bot infra is
-skipped and the deploy behaves exactly like channel B (tab-only).
-
-| Variable | Default | Purpose |
-|---|---|---|
-| `BOT_APP_ID` | — | **The one you set.** `azd env set BOT_APP_ID <id>` — the chat bot's Entra app (client) id. Provisions `botService.bicep` and populates the `CONNECTIONS__*` values below. Unset ⇒ the bot infra is skipped entirely. |
-| `BOT_APP_PASSWORD` | — | That app's client secret. Stored as an ACA secret by infra, never as a plain env var. |
-| `BOT_APP_TENANT_ID` | *(deployment tenant)* | Tenant of the bot's Entra app. |
-| `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTID` | — | Bot app client id (Microsoft 365 Agents SDK convention). **Set for you by infra** from `BOT_APP_ID`; the backend reads this name first. |
-| `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTSECRET` | — | Bot app client secret (stored as an ACA secret by infra). |
-| `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__TENANTID` | — | Tenant id of the bot's Entra app. |
-| `TEAMS_BOT_ID` | — | The bot's Microsoft App ID (GUID). Also fills `{{BOT_ID}}` in the manifest via [`teams/build_package.py`](../teams/build_package.py). |
-| `TEAMS_APP_ID` | — | The Teams app (manifest) id; used to build deep links from the bot back into the personal tab. Match the id used to build the package. |
-| `TEAMS_TAB_ENTITY_ID` | `avatarForgeHome` | The static-tab entity id the bot deep-links to. |
-| `BOT_RUN_TIMEOUT_S` | `60` | Max seconds a grounded Foundry run executes in the background before a "took too long" reply. Answers are delivered as a proactive message (ack-then-background-run), so this is **not** bound by the Teams ~15s turn window. |
-
----
-
 ## Teams app package *(build only)*
 
 Read by [`teams/build_package.py`](../teams/build_package.py) when it templates
@@ -300,7 +309,7 @@ it — see [`teams/README.md`](../teams/README.md).
 | `TEAMS_APP_VERSION` | `--version` | `1.0.0` | Manifest version. Teams refuses a re-upload unless this increases. |
 | `TEAMS_APP_ID` | `--app-id` | *(uuid5 of the hostname)* | Manifest app id (GUID). Derived deterministically from the hostname when unset, so rebuilds match. |
 | `TEAMS_BOT_ID` | `--bot-id` | — | Bot app id to embed. **Omit to build a tab-only package** — Teams rejects an upload whose bot is not registered in your tenant. |
-| `TEAMS_ENABLE_CALLING` | `--enable-calling` | `false` | Sets `supportsCalling: true`. Pair with the **calling** bot's id (`MEETING_BOT_APP_ID`), not the chat bot's. |
+| `TEAMS_ENABLE_CALLING` | `--enable-calling` | `false` | Sets `supportsCalling: true`. Pair with the **calling** bot's id (`MEETING_BOT_APP_ID`). |
 | `TEAMS_ENABLE_COMPANION` | `--enable-companion` | `false` | Adds the in-meeting side panel / stage tabs. Off keeps the package identical to the tab-only shape. |
 
 ## Teams in-call avatar (channel D, issue #27)

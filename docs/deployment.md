@@ -14,7 +14,6 @@ For local development see [development.md](development.md); for env vars see
 - **Log Analytics + Application Insights** — observability
 - **Azure AI Foundry** (account + project + model deployment) — created or BYO
 - **Azure AI Search** (Basic, AAD auth) — created or BYO
-- **Azure Bot + Teams channel** *(channel C only)* — created only when a chat bot app id is supplied
 - **Windows VM + NSG + public FQDN, and a second Azure Bot with the Teams calling
   channel** *(channel D only)* — the media host; created only when the in-call profile
   is selected and its inputs are set. This is the one costly addition (~$283/month).
@@ -41,7 +40,7 @@ channel** you are deploying — everything else follows from it:
 uv run python scripts/set_profile.py
 ```
 
-That records `DEPLOY_PROFILE` (`web` · `teams-tab` · `teams-chat` · `in-call`), sets
+That records `DEPLOY_PROFILE` (`web` · `teams-tab` · `in-call`), sets
 the flags that profile implies, and prints the full numbered plan marking who
 performs each step. See [`channels/README.md`](channels/README.md) to choose.
 
@@ -346,10 +345,10 @@ uv run python scripts/setup_aisearch_index.py     # rebuild the index
 uv run python scripts/setup_foundry_agent.py      # re-register the agent + tools
 ```
 
-## Teams (tab + bot)
+## Teams (tab + in-call)
 
-The deployed Container App HTTPS URL is both the Teams tab `contentUrl` and the bot's
-messaging endpoint (`/api/messages`). Building the package, the Azure Bot registration,
-sideloading, and the bot identity steps are all in [`teams/README.md`](../teams/README.md).
-The bot infra is **opt-in**: if no bot app id is supplied, the deploy behaves exactly
-like the tab-only channel B.
+The deployed Container App HTTPS URL is the Teams tab `contentUrl` and the bridge
+endpoint channel D's media bot connects back to. Building the package and sideloading
+are in [`teams/README.md`](../teams/README.md); the calling bot's registration and host
+are in [`../meeting-bot/README.md`](../meeting-bot/README.md). Both are **opt-in**: with
+no Teams package built and no in-call flags set, the deploy is the channel A web app.
