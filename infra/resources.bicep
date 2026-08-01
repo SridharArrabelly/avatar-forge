@@ -34,6 +34,9 @@ param bingCustomConfigName string = ''
 param voiceBinding string = 'agent'
 @description('Realtime model used when voiceBinding is "model".')
 param voiceLiveModel string = ''
+
+@description('"true"/"false" string. Developer mode exposes the settings panel and live transcript and allows a per-session voiceBinding override. Default "false" is the production experience.')
+param developerMode string = 'false'
 @description('Web IQ base URL — the web tool in model mode. Empty uses the code default.')
 param webIqBaseUrl string = ''
 @description('Comma-separated host allow-list for Web IQ results.')
@@ -306,6 +309,7 @@ module app 'modules/containerApp.bicep' = {
     bingCustomConfigName: createBing ? bingCustomConfigNameEffective : bingCustomConfigName
     voiceBinding: voiceBinding
     voiceLiveModel: voiceLiveModel
+    developerMode: developerMode
     webIqBaseUrl: webIqBaseUrl
     webIqAllowedDomains: webIqAllowedDomains
     webIqApiKey: webIqApiKey

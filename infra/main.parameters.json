@@ -30,6 +30,7 @@
 
     "voiceBinding":        { "value": "${VOICE_BINDING=agent}" },
     "voiceLiveModel":      { "value": "${VOICELIVE_MODEL=}" },
+    "developerMode":       { "value": "${DEVELOPER_MODE=false}" },
     "webIqBaseUrl":        { "value": "${WEBIQ_BASE_URL=}" },
     "webIqAllowedDomains": { "value": "${WEBIQ_ALLOWED_DOMAINS=}" },
     "webIqApiKey":         { "value": "${WEBIQ_API_KEY=}" },

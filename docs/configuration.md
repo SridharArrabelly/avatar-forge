@@ -150,7 +150,7 @@ and `bing_grounding` tools go with it — the tool surface becomes in-process Py
 |---|---|---|
 | `WEBIQ_API_KEY` | — | Enables the `search_web` tool in model mode. Passed to the container app as a **secret**, never as a plain environment variable. Unset leaves the web tool off entirely and the assistant answers from the minutes corpus alone. |
 | `WEBIQ_BASE_URL` | `https://api.microsoft.ai/v3` | Web IQ endpoint. |
-| `WEBIQ_ALLOWED_DOMAINS` | — | Comma-separated host allow-list applied to results, e.g. `mtn.com,sashares.co.za`. Same security boundary as `bingAllowedDomains`: a hard host allow-list is what makes an open-web tool safe to hand an executive assistant. Empty allows any host the endpoint returns. |
+| `WEBIQ_ALLOWED_DOMAINS` | — | Comma-separated hosts that scope the search, e.g. `mtn.com,sashares.co.za`. Web IQ has no server-side allow-list — its request model exposes no `site` field — so [`build_query()`](../backend/voice/tools.py) compiles these into `site:a OR site:b` operators on the query, which is the mechanism the Web IQ API documents. Same intent as `bingAllowedDomains`: an open-web tool answering to an executive should not be able to cite anywhere at all. Empty searches the open web. |
 | `WEBIQ_LANGUAGE` | `en` | Result language hint. |
 | `WEBIQ_REGION` | `ZA` | Result region hint. |
 | `WEBIQ_USE_ENTRA` | — | Set to authenticate to Web IQ with Entra instead of an API key. |
@@ -164,7 +164,7 @@ and `bing_grounding` tools go with it — the tool surface becomes in-process Py
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `DEVELOPER_MODE` | `false` | `true` exposes the settings panel, live transcript, and per-event debug logging. `false` (production) auto-starts an avatar-only experience. |
+| `DEVELOPER_MODE` | `false` | `true` exposes the settings panel, live transcript, and per-event debug logging, and lets a session override `VOICE_BINDING` per connection. `false` (production) auto-starts an avatar-only experience. Set it on a deployment with `azd env set DEVELOPER_MODE true` — it is a Bicep parameter, so a value set imperatively with `az containerapp update` would be reverted by the next `azd provision`. It changes no pipeline default: the settings panel is pre-populated with the same values production uses. |
 | `MEETING_CATALOG_TTL_S` | `900` | Seconds the backend caches the meeting catalogue it fetches from AI Search and injects at session start ([`backend/voice/catalog.py`](../backend/voice/catalog.py)). |
 | `APPLICATIONINSIGHTS_CONNECTION_STRING` | — | App Insights connection string for telemetry. |
 | `LOG_LEVEL` | `INFO` | Root logging level (`DEBUG`, `INFO`, `WARNING`, …). `DEVELOPER_MODE=true` already raises per-event detail; use this to quieten or deepen logs independently. |

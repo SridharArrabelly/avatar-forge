@@ -68,6 +68,9 @@ param acsRequireWakePhrase string = ''
 @description('"true"/"false" string. When "true", the in-call avatar sends an outgoing video tile so it is a visible participant instead of a faceless audio leg.')
 param acsAvatarVideoEnabled string = ''
 
+@description('"true"/"false" string. When "true" the browser exposes the settings panel, live transcript and per-event logging, and a session may override the voice binding per connection. Production default "false" hides the panel and auto-starts an avatar-only experience.')
+param developerMode string = 'false'
+
 @description('Placeholder image used on first provision; azd replaces it during `azd deploy`.')
 param containerImage string = 'mcr.microsoft.com/k8se/quickstart:latest'
 
@@ -168,7 +171,7 @@ resource app 'Microsoft.App/containerApps@2024-10-02-preview' = {
           env: concat([
             { name: 'PORT', value: '3000' }
             { name: 'AZURE_CLIENT_ID', value: uamiClientId }
-            { name: 'DEVELOPER_MODE', value: 'false' }
+            { name: 'DEVELOPER_MODE', value: developerMode }
             { name: 'AZURE_VOICELIVE_ENDPOINT', value: voiceliveEndpoint }
             { name: 'PROJECT_ENDPOINT', value: projectEndpoint }
             { name: 'AGENT_NAME', value: agentName }

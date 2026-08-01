@@ -72,10 +72,23 @@ param voiceBinding string = 'agent'
 @description('Realtime model to bind when voiceBinding is "model". Voice Live deploys and manages this model itself — no model deployment, no quota request. Ignored in agent mode.')
 param voiceLiveModel string = ''
 
+@description('''
+"true"/"false" string. Developer mode exposes the settings panel and live
+transcript, and lets a session override voiceBinding per connection — which is
+how agent and model mode are compared against a single deployment instead of a
+redeploy apart. It changes no pipeline default: the panel is pre-populated with
+the same values production uses.
+
+Additive: leaving this unset gives exactly the production experience — panel
+hidden, session auto-starts, binding override ignored.
+''')
+@allowed([ 'true', 'false' ])
+param developerMode string = 'false'
+
 @description('Web IQ base URL. This is the web tool in model mode, where the agent (and therefore its managed Bing grounding tool) is out of the picture. Leave empty to use the code default — the tool is switched on by webIqApiKey, not by this.')
 param webIqBaseUrl string = ''
 
-@description('Comma-separated host allow-list applied to Web IQ results, e.g. "mtn.com,sashares.co.za". Same security boundary as bingAllowedDomains — a hard allow-list is what makes an open-web tool safe for an executive assistant. Empty allows any host the endpoint returns.')
+@description('Comma-separated hosts that scope Web IQ searches, e.g. "mtn.com,sashares.co.za". Web IQ has no server-side allow-list, so these are compiled into site: operators on the query. Same intent as bingAllowedDomains — an open-web tool answering to an executive should not be able to cite anywhere at all. Empty searches the open web.')
 param webIqAllowedDomains string = ''
 
 @description('Web IQ API key. Stored as a container-app secret, never as a plain env var. Set it with: azd env set WEBIQ_API_KEY <key>')
@@ -216,6 +229,7 @@ module resources 'resources.bicep' = {
     bingCustomConfigName: bingCustomConfigName
     voiceBinding: voiceBinding
     voiceLiveModel: voiceLiveModel
+    developerMode: developerMode
     webIqBaseUrl: webIqBaseUrl
     webIqAllowedDomains: webIqAllowedDomains
     webIqApiKey: webIqApiKey

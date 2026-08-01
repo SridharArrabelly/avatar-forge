@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.43.8.12551",
-      "templateHash": "18028162398185848575"
+      "templateHash": "12072101802347137071"
     }
   },
   "parameters": {
@@ -139,6 +139,17 @@
         "description": "Realtime model to bind when voiceBinding is \"model\". Voice Live deploys and manages this model itself — no model deployment, no quota request. Ignored in agent mode."
       }
     },
+    "developerMode": {
+      "type": "string",
+      "defaultValue": "false",
+      "allowedValues": [
+        "true",
+        "false"
+      ],
+      "metadata": {
+        "description": "\"true\"/\"false\" string. Developer mode exposes the settings panel and live\ntranscript, and lets a session override voiceBinding per connection — which is\nhow agent and model mode are compared against a single deployment instead of a\nredeploy apart. It changes no pipeline default: the panel is pre-populated with\nthe same values production uses.\n\nAdditive: leaving this unset gives exactly the production experience — panel\nhidden, session auto-starts, binding override ignored.\n"
+      }
+    },
     "webIqBaseUrl": {
       "type": "string",
       "defaultValue": "",
@@ -150,7 +161,7 @@
       "type": "string",
       "defaultValue": "",
       "metadata": {
-        "description": "Comma-separated host allow-list applied to Web IQ results, e.g. \"mtn.com,sashares.co.za\". Same security boundary as bingAllowedDomains — a hard allow-list is what makes an open-web tool safe for an executive assistant. Empty allows any host the endpoint returns."
+        "description": "Comma-separated hosts that scope Web IQ searches, e.g. \"mtn.com,sashares.co.za\". Web IQ has no server-side allow-list, so these are compiled into site: operators on the query. Same intent as bingAllowedDomains — an open-web tool answering to an executive should not be able to cite anywhere at all. Empty searches the open web."
       }
     },
     "webIqApiKey": {
@@ -498,6 +509,9 @@
           "voiceLiveModel": {
             "value": "[parameters('voiceLiveModel')]"
           },
+          "developerMode": {
+            "value": "[parameters('developerMode')]"
+          },
           "webIqBaseUrl": {
             "value": "[parameters('webIqBaseUrl')]"
           },
@@ -591,7 +605,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.43.8.12551",
-              "templateHash": "10927328051091522499"
+              "templateHash": "10719908684830625767"
             }
           },
           "parameters": {
@@ -681,6 +695,13 @@
               "defaultValue": "",
               "metadata": {
                 "description": "Realtime model used when voiceBinding is \"model\"."
+              }
+            },
+            "developerMode": {
+              "type": "string",
+              "defaultValue": "false",
+              "metadata": {
+                "description": "\"true\"/\"false\" string. Developer mode exposes the settings panel and live transcript and allows a per-session voiceBinding override. Default \"false\" is the production experience."
               }
             },
             "webIqBaseUrl": {
@@ -2325,6 +2346,9 @@
                   "voiceLiveModel": {
                     "value": "[parameters('voiceLiveModel')]"
                   },
+                  "developerMode": {
+                    "value": "[parameters('developerMode')]"
+                  },
                   "webIqBaseUrl": {
                     "value": "[parameters('webIqBaseUrl')]"
                   },
@@ -2392,7 +2416,7 @@
                     "_generator": {
                       "name": "bicep",
                       "version": "0.43.8.12551",
-                      "templateHash": "1997850374028556725"
+                      "templateHash": "6244291162192773890"
                     }
                   },
                   "parameters": {
@@ -2592,6 +2616,13 @@
                         "description": "\"true\"/\"false\" string. When \"true\", the in-call avatar sends an outgoing video tile so it is a visible participant instead of a faceless audio leg."
                       }
                     },
+                    "developerMode": {
+                      "type": "string",
+                      "defaultValue": "false",
+                      "metadata": {
+                        "description": "\"true\"/\"false\" string. When \"true\" the browser exposes the settings panel, live transcript and per-event logging, and a session may override the voice binding per connection. Production default \"false\" hides the panel and auto-starts an avatar-only experience."
+                      }
+                    },
                     "containerImage": {
                       "type": "string",
                       "defaultValue": "mcr.microsoft.com/k8se/quickstart:latest",
@@ -2664,7 +2695,7 @@
                                 "cpu": "[json('1.0')]",
                                 "memory": "2.0Gi"
                               },
-                              "env": "[concat(createArray(createObject('name', 'PORT', 'value', '3000'), createObject('name', 'AZURE_CLIENT_ID', 'value', parameters('uamiClientId')), createObject('name', 'DEVELOPER_MODE', 'value', 'false'), createObject('name', 'AZURE_VOICELIVE_ENDPOINT', 'value', parameters('voiceliveEndpoint')), createObject('name', 'PROJECT_ENDPOINT', 'value', parameters('projectEndpoint')), createObject('name', 'AGENT_NAME', 'value', parameters('agentName')), createObject('name', 'AGENT_PROJECT_NAME', 'value', parameters('agentProjectName')), createObject('name', 'AGENT_MODEL', 'value', parameters('agentModel')), createObject('name', 'EMBEDDING_DEPLOYMENT', 'value', parameters('embeddingDeployment')), createObject('name', 'AZURE_SEARCH_ENDPOINT', 'value', parameters('searchEndpoint')), createObject('name', 'SEARCH_CONNECTION_NAME', 'value', parameters('searchConnectionName')), createObject('name', 'SEARCH_INDEX_NAME', 'value', parameters('searchIndexName')), createObject('name', 'VOICELIVE_VOICE', 'value', parameters('voiceLiveVoice')), createObject('name', 'BING_CONNECTION_NAME', 'value', parameters('bingConnectionName')), createObject('name', 'BING_CUSTOM_CONFIG_NAME', 'value', parameters('bingCustomConfigName')), createObject('name', 'AVATAR_NAME', 'value', parameters('avatarName')), createObject('name', 'CUSTOM_AVATAR_NAME', 'value', parameters('customAvatarName')), createObject('name', 'AVATAR_DISPLAY_NAME', 'value', parameters('avatarDisplayName')), createObject('name', 'AVATAR_TAGLINE', 'value', parameters('avatarTagline')), createObject('name', 'PHOTO_AVATAR_NAME', 'value', parameters('photoAvatarName')), createObject('name', 'IS_PHOTO_AVATAR', 'value', parameters('isPhotoAvatar')), createObject('name', 'IS_CUSTOM_AVATAR', 'value', parameters('isCustomAvatar')), createObject('name', 'AVATAR_BACKGROUND_IMAGE_URL', 'value', parameters('avatarBackgroundImageUrl')), createObject('name', 'SR_MODEL', 'value', parameters('srModel')), createObject('name', 'RECOGNITION_LANGUAGE', 'value', parameters('recognitionLanguage')), createObject('name', 'APPLICATIONINSIGHTS_CONNECTION_STRING', 'value', parameters('appInsightsConnectionString'))), concat(variables('acsEnv'), variables('meetingBotEnv'), variables('voiceBindingEnv'), variables('webIqEnv')))]",
+                              "env": "[concat(createArray(createObject('name', 'PORT', 'value', '3000'), createObject('name', 'AZURE_CLIENT_ID', 'value', parameters('uamiClientId')), createObject('name', 'DEVELOPER_MODE', 'value', parameters('developerMode')), createObject('name', 'AZURE_VOICELIVE_ENDPOINT', 'value', parameters('voiceliveEndpoint')), createObject('name', 'PROJECT_ENDPOINT', 'value', parameters('projectEndpoint')), createObject('name', 'AGENT_NAME', 'value', parameters('agentName')), createObject('name', 'AGENT_PROJECT_NAME', 'value', parameters('agentProjectName')), createObject('name', 'AGENT_MODEL', 'value', parameters('agentModel')), createObject('name', 'EMBEDDING_DEPLOYMENT', 'value', parameters('embeddingDeployment')), createObject('name', 'AZURE_SEARCH_ENDPOINT', 'value', parameters('searchEndpoint')), createObject('name', 'SEARCH_CONNECTION_NAME', 'value', parameters('searchConnectionName')), createObject('name', 'SEARCH_INDEX_NAME', 'value', parameters('searchIndexName')), createObject('name', 'VOICELIVE_VOICE', 'value', parameters('voiceLiveVoice')), createObject('name', 'BING_CONNECTION_NAME', 'value', parameters('bingConnectionName')), createObject('name', 'BING_CUSTOM_CONFIG_NAME', 'value', parameters('bingCustomConfigName')), createObject('name', 'AVATAR_NAME', 'value', parameters('avatarName')), createObject('name', 'CUSTOM_AVATAR_NAME', 'value', parameters('customAvatarName')), createObject('name', 'AVATAR_DISPLAY_NAME', 'value', parameters('avatarDisplayName')), createObject('name', 'AVATAR_TAGLINE', 'value', parameters('avatarTagline')), createObject('name', 'PHOTO_AVATAR_NAME', 'value', parameters('photoAvatarName')), createObject('name', 'IS_PHOTO_AVATAR', 'value', parameters('isPhotoAvatar')), createObject('name', 'IS_CUSTOM_AVATAR', 'value', parameters('isCustomAvatar')), createObject('name', 'AVATAR_BACKGROUND_IMAGE_URL', 'value', parameters('avatarBackgroundImageUrl')), createObject('name', 'SR_MODEL', 'value', parameters('srModel')), createObject('name', 'RECOGNITION_LANGUAGE', 'value', parameters('recognitionLanguage')), createObject('name', 'APPLICATIONINSIGHTS_CONNECTION_STRING', 'value', parameters('appInsightsConnectionString'))), concat(variables('acsEnv'), variables('meetingBotEnv'), variables('voiceBindingEnv'), variables('webIqEnv')))]",
                               "probes": [
                                 {
                                   "type": "Liveness",

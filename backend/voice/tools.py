@@ -192,17 +192,42 @@ SEARCH_WEB_TOOL: dict[str, Any] = {
 def build_query(query: str, domains: list[str]) -> str:
     """Append Web IQ `site:` operators for the allow-list.
 
-    Multiple domains are OR-ed, so results may come from any of them. A full URL
-    is reduced to its host because `site:` matches a domain, not a path.
+    Web IQ has no server-side allow-list — its request model carries `query`,
+    `maxResults`, `language`, `region`, `location`, `contentFormat`, `maxLength`
+    and `safeSearch`, and nothing for site scoping. So the scope has to be
+    expressed in the query text, which is what the API documents.
+
+    Includes are OR-ed, so results may come from any of them. A leading `-`
+    excludes a domain and must render as `-site:host`; the naive `site:-host`
+    is accepted as a nonsense hostname and silently matches nothing.
+
+    A full URL is reduced to its host because `site:` matches a domain, not a
+    path.
     """
     if not domains:
         return query
-    hosts = []
-    for d in domains:
-        host = urlsplit(d if "//" in d else f"//{d}").netloc or d
-        hosts.append(host.strip("/"))
-    scope = " OR ".join(f"site:{h}" for h in hosts)
-    return f"{query} ({scope})"
+
+    def host_of(d: str) -> str:
+        return (urlsplit(d if "//" in d else f"//{d}").netloc or d).strip("/")
+
+    include: list[str] = []
+    exclude: list[str] = []
+    for raw in domains:
+        raw = raw.strip()
+        if raw.startswith("-"):
+            host = host_of(raw[1:])
+            if host:
+                exclude.append(f"-site:{host}")
+        else:
+            host = host_of(raw)
+            if host:
+                include.append(f"site:{host}")
+
+    parts: list[str] = []
+    if include:
+        parts.append(f"({' OR '.join(include)})")
+    parts.extend(exclude)
+    return f"{query} {' '.join(parts)}" if parts else query
 
 
 async def _get_web_client() -> httpx.AsyncClient:
