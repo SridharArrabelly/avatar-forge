@@ -49,21 +49,30 @@ Start with the tab walkthrough, then the bot section if you're enabling it.
 
 ## Build the package
 
-You need the **live HTTPS hostname** of the deployed app — the bare host of your
-Azure Container App, e.g. `avatar-forge.<region>.azurecontainerapps.io` (no
-`https://`, no path, no port).
+After a deploy, run it with no arguments:
+
+```powershell
+uv run python teams/build_package.py
+```
+
+The **host** and the **branding** are read from the selected `azd` environment —
+`SERVICE_APP_URI` for the host (the scheme is stripped for you), and the avatar
+model variables for the name — so the package matches the deployment it points
+at. The resolved values are echoed on the last lines of the build output; check
+them if you have more than one environment.
+
+State the host explicitly when you are outside an `azd` context, or targeting a
+different deployment:
 
 ```powershell
 uv run python teams/build_package.py --hostname <your-app>.azurecontainerapps.io
 ```
 
-Get the bare host from the azd env after deploying (`azd env get-values`, key
-`SERVICE_APP_URI`) — it is also printed at the end of `azd up`.
-
-```powershell
-$appHost = (azd env get-value SERVICE_APP_URI) -replace '^https://',''
-uv run python teams/build_package.py --hostname $appHost
-```
+An explicit host must be **bare** — no `https://`, no path, no port. Teams'
+`validDomains` cannot contain any of those, so a value carrying them is rejected
+outright rather than producing a package that fails at install time. That is why
+pasting `SERVICE_APP_URI` verbatim is an error; omit `--hostname` and let the
+builder derive it instead.
 
 > **Rebuild after a redeploy:** the hostname only changes if the Container App is
 > recreated (a fresh `azd up` into a new environment). A normal `azd deploy` /
