@@ -53,6 +53,35 @@ param bingCustomConfigName string = ''
 @description('Deploy Grounding with Bing Custom Search: the Bing account, the curated site allow-list, and the Foundry connection. Opt-in and additive — when false nothing Bing-related is created and the agent runs on AI Search alone.')
 param deployBingGrounding string = 'true'
 
+@description('''
+Voice Live binding.
+
+"agent" (default) routes every turn through the Foundry agent: speech is
+transcribed by a recognizer, the agent reasons and calls its managed AI Search
+and Bing grounding tools, and the reply is synthesised back to speech.
+
+"model" binds Voice Live straight to a realtime speech-to-speech model. The
+recognizer stage disappears from the answer path, and the tools become
+in-process Python functions instead of Foundry-managed ones.
+
+Additive: leaving this unset gives exactly today's behaviour.
+''')
+@allowed([ 'agent', 'model' ])
+param voiceBinding string = 'agent'
+
+@description('Realtime model to bind when voiceBinding is "model". Voice Live deploys and manages this model itself — no model deployment, no quota request. Ignored in agent mode.')
+param voiceLiveModel string = ''
+
+@description('Web IQ base URL. This is the web tool in model mode, where the agent (and therefore its managed Bing grounding tool) is out of the picture. Leave empty to use the code default — the tool is switched on by webIqApiKey, not by this.')
+param webIqBaseUrl string = ''
+
+@description('Comma-separated host allow-list applied to Web IQ results, e.g. "mtn.com,sashares.co.za". Same security boundary as bingAllowedDomains — a hard allow-list is what makes an open-web tool safe for an executive assistant. Empty allows any host the endpoint returns.')
+param webIqAllowedDomains string = ''
+
+@description('Web IQ API key. Stored as a container-app secret, never as a plain env var. Set it with: azd env set WEBIQ_API_KEY <key>')
+@secure()
+param webIqApiKey string = ''
+
 @description('Bing pricing tier. G2 is the tier this project has run on; G1 is the lower tier.')
 @allowed([ 'G1', 'G2' ])
 param bingSkuName string = 'G2'
@@ -185,6 +214,11 @@ module resources 'resources.bicep' = {
     voiceLiveVoice: voiceLiveVoice
     bingConnectionName: bingConnectionName
     bingCustomConfigName: bingCustomConfigName
+    voiceBinding: voiceBinding
+    voiceLiveModel: voiceLiveModel
+    webIqBaseUrl: webIqBaseUrl
+    webIqAllowedDomains: webIqAllowedDomains
+    webIqApiKey: webIqApiKey
     deployBingGrounding: toLower(deployBingGrounding) == 'true'
     bingSkuName: bingSkuName
     bingAllowedDomains: bingAllowedDomains

@@ -89,6 +89,37 @@ VOICE_BINDING = os.getenv("VOICE_BINDING", "agent").strip().lower()
 # and tools) in swedencentral: gpt-realtime-2, gpt-realtime-1.5, gpt-realtime.
 VOICELIVE_MODEL = os.getenv("VOICELIVE_MODEL", "gpt-realtime-2").strip()
 
+# Resolved once so every module agrees on which binding is active.
+MODEL_BINDING = VOICE_BINDING == "model"
+
+# Model-mode response shaping. Both are inert in agent mode, where the Foundry
+# agent owns response behaviour.
+#
+# A realtime model left uncapped answers at length — measured 27-30 seconds of
+# speech against a prompt asking for two or three sentences. The cap is a
+# backstop, not the primary control: the prompt does the shaping, this stops the
+# worst case. Roughly 90 spoken seconds' worth, so it never truncates a
+# reasonable answer.
+REALTIME_MAX_TOKENS = int(os.getenv("REALTIME_MAX_TOKENS", "1200"))
+
+# Spoken while a tool call is in flight, so grounding is not dead air. Voice
+# Live picks one at random per turn — several short options rather than one line
+# repeated, which grates within a couple of turns. Set empty to disable.
+REALTIME_INTERIM_TEXTS = [
+    t.strip()
+    for t in os.getenv(
+        "REALTIME_INTERIM_TEXTS",
+        "Let me check.,One moment.,Checking now.,Let me look that up.",
+    ).split(",")
+    if t.strip()
+]
+
+# How long a tool may run before the acknowledgement is spoken. The SDK default
+# is 2000ms, which never fires here — measured tool latency is 714ms (minutes)
+# and ~280ms warm (web). Set below that floor so the platform covers the gap
+# instead of the model improvising a preamble to fill it.
+REALTIME_INTERIM_THRESHOLD_MS = int(os.getenv("REALTIME_INTERIM_THRESHOLD_MS", "300"))
+
 # ───────── Teams in-call media participant (channel D, issue #27) ─────────
 # Channel D is the live in-call avatar. It is ADDITIVE and OPT-IN: every endpoint
 # and the media bridge are gated on ACS being configured, so a deploy without ACS

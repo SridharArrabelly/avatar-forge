@@ -2,7 +2,13 @@
 
 from fastapi import APIRouter
 
-from ..config import DEFAULT_VOICE, DEVELOPER_MODE, get_ui_defaults
+from ..config import (
+    DEFAULT_VOICE,
+    DEVELOPER_MODE,
+    VOICE_BINDING,
+    VOICELIVE_MODEL,
+    get_ui_defaults,
+)
 
 router = APIRouter()
 
@@ -20,4 +26,10 @@ async def get_config():
         "voice": DEFAULT_VOICE,
         "developerMode": DEVELOPER_MODE,
         "defaults": get_ui_defaults(),
+        # Which brain is answering. Surfaced because the two bindings differ in
+        # capability as well as latency — model mode answers from the minutes
+        # only — so anyone reading a timing number needs to know which one
+        # produced it.
+        "voiceBinding": VOICE_BINDING,
+        "voiceLiveModel": VOICELIVE_MODEL if VOICE_BINDING == "model" else "",
     }

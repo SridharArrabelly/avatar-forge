@@ -14,6 +14,22 @@ param searchIndexName string
 param voiceLiveVoice string
 param bingConnectionName string = ''
 param bingCustomConfigName string = ''
+
+@description('Voice Live binding: "agent" routes through the Foundry agent (default, unchanged behaviour); "model" binds Voice Live straight to a realtime model with in-process tools.')
+param voiceBinding string = 'agent'
+
+@description('Realtime model deployed by Voice Live when voiceBinding is "model". Voice Live manages this model itself — no model deployment or quota is needed.')
+param voiceLiveModel string = ''
+
+@description('Web IQ base URL used as the web tool in model mode. Empty falls back to the code default — the tool is gated on webIqApiKey, not on this.')
+param webIqBaseUrl string = ''
+
+@description('Comma-separated host allow-list applied to Web IQ results. Same security boundary as bingAllowedDomains: it is what makes an open-web tool safe to hand an executive assistant.')
+param webIqAllowedDomains string = ''
+
+@description('Web IQ API key. Passed as a container-app SECRET, never as a plain env var. Empty leaves the web tool switched off.')
+@secure()
+param webIqApiKey string = ''
 param appInsightsConnectionString string
 @description('Search service endpoint (https://<name>.search.windows.net/)')
 param searchEndpoint string = ''
@@ -65,6 +81,39 @@ var acsEnv = !empty(acsEndpoint) ? [
   }
 ] : []
 
+// Model-mode env (additive). VOICE_BINDING defaults to 'agent', so a deploy
+// that sets nothing is byte-identical to today: the Foundry agent stays bound
+// and none of these variables are read. VOICELIVE_MODEL only matters when the
+// binding is 'model' — Voice Live manages that model itself, so there is no
+// model deployment and no quota request behind it.
+var voiceBindingEnv = concat([
+  { name: 'VOICE_BINDING', value: voiceBinding }
+], empty(voiceLiveModel) ? [] : [
+  { name: 'VOICELIVE_MODEL', value: voiceLiveModel }
+])
+
+// Web IQ is the web tool in model mode. Binding Voice Live to a model removes
+// the Foundry agent, and its managed Bing grounding tool goes with it — the
+// tools become ours to implement, so the web source has to be ours too.
+//
+// The key is a container-app SECRET rather than a plain env var, and the
+// allow-list mirrors bingAllowedDomains: a hard host restriction is what makes
+// an open-web tool safe to hand an executive assistant.
+var webIqConfigured = !empty(webIqApiKey)
+var webIqSecrets = webIqConfigured ? [
+  {
+    name: 'webiq-api-key'
+    value: webIqApiKey
+  }
+] : []
+var webIqEnv = webIqConfigured ? concat([
+  { name: 'WEBIQ_API_KEY', secretRef: 'webiq-api-key' }
+], empty(webIqBaseUrl) ? [] : [
+  { name: 'WEBIQ_BASE_URL', value: webIqBaseUrl }
+], empty(webIqAllowedDomains) ? [] : [
+  { name: 'WEBIQ_ALLOWED_DOMAINS', value: webIqAllowedDomains }
+]) : []
+
 // Channel D Teams media-bot env (additive). The .NET media bot connects to the
 // /ws/acs/audio bridge, which only needs Voice Live (no ACS resource). MEETING_BOT_ENABLED
 // flips ACS_ENABLED on so the bridge is served. Empty/false -> behaves as today.
@@ -88,6 +137,7 @@ resource app 'Microsoft.App/containerApps@2024-10-02-preview' = {
     managedEnvironmentId: containerAppsEnvironmentId
     configuration: {
       activeRevisionsMode: 'Single'
+      secrets: webIqSecrets
       ingress: {
         external: true
         targetPort: 3000
@@ -142,7 +192,7 @@ resource app 'Microsoft.App/containerApps@2024-10-02-preview' = {
             { name: 'SR_MODEL', value: srModel }
             { name: 'RECOGNITION_LANGUAGE', value: recognitionLanguage }
             { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: appInsightsConnectionString }
-          ], concat(acsEnv, meetingBotEnv))
+          ], concat(acsEnv, meetingBotEnv, voiceBindingEnv, webIqEnv))
           probes: [
             {
               type: 'Liveness'

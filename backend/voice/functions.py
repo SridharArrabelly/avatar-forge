@@ -1,30 +1,39 @@
-"""Built-in tool/function implementations called by the model."""
+"""Dispatch for tools the model calls by name.
+
+Reached from ``event_handlers.handle_conversation_item`` once the model has
+emitted a function call and its arguments. The return value is JSON-serialised
+straight back into the conversation, so it must always be a plain dict — an
+exception here would strand the turn with the user listening to silence.
+
+Only populated when Voice Live is bound to a model (``VOICE_BINDING=model``).
+In agent mode the Foundry agent runs its own tools inside the agent runtime and
+nothing arrives here.
+"""
 
 import json
 import logging
+
+from .tools import search_minutes, search_web
 
 logger = logging.getLogger(__name__)
 
 
 async def execute_function(name: str, arguments: str) -> dict:
-    """Execute a built-in function and return result."""
+    """Execute a tool by name and return a JSON-serialisable result."""
     try:
         args = json.loads(arguments) if arguments else {}
     except json.JSONDecodeError:
+        logger.warning(f"Tool {name}: arguments were not valid JSON: {arguments!r}")
+        args = {}
+    if not isinstance(args, dict):
         args = {}
 
-    if name == "get_time":
-        from datetime import datetime
-        return {"time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
-    elif name == "get_weather":
-        location = args.get("location", "unknown")
-        return {"location": location, "temperature": "72°F", "condition": "Sunny"}
-    elif name == "calculate":
-        expression = args.get("expression", "")
-        try:
-            result = eval(expression, {"__builtins__": {}})
-            return {"expression": expression, "result": str(result)}
-        except Exception:
-            return {"expression": expression, "error": "Could not evaluate"}
-    else:
-        return {"error": f"Unknown function: {name}"}
+    if name == "search_minutes":
+        return await search_minutes(query=args.get("query", ""))
+    if name == "search_web":
+        return await search_web(
+            query=args.get("query", ""), kind=args.get("kind", "web")
+        )
+
+    logger.warning(f"Model called an unknown tool: {name!r}")
+    return {"error": f"Unknown tool: {name}"}

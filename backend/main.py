@@ -16,6 +16,7 @@ from .acs import build_acs_router
 from .config import DEVELOPER_MODE, HOST, PORT, configure_logging
 from .voice.auth import close_credential, create_credential
 from .voice.catalog import close_search_client, prewarm_catalog
+from .voice.tools import close_web_client
 
 configure_logging()
 logger = logging.getLogger(__name__)
@@ -80,9 +81,10 @@ async def lifespan(app: FastAPI):
     yield
     # Order matters: stop session handlers first (they may still use the
     # credential to refresh tokens during teardown), THEN close the
-    # SearchClient (which uses the credential), THEN close the
-    # credential's underlying aiohttp.ClientSession.
+    # Web IQ client and the SearchClient (both of which use the credential),
+    # THEN close the credential's underlying aiohttp.ClientSession.
     await ws.shutdown_all()
+    await close_web_client()
     await close_search_client()
     await close_credential()
     logger.info("Avatar Forge server stopped.")

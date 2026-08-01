@@ -30,6 +30,18 @@ param voiceLiveVoice string
 param bingConnectionName string = ''
 param bingCustomConfigName string = ''
 
+@description('Voice Live binding: "agent" (default) or "model". See modules/containerApp.bicep.')
+param voiceBinding string = 'agent'
+@description('Realtime model used when voiceBinding is "model".')
+param voiceLiveModel string = ''
+@description('Web IQ base URL — the web tool in model mode. Empty uses the code default.')
+param webIqBaseUrl string = ''
+@description('Comma-separated host allow-list for Web IQ results.')
+param webIqAllowedDomains string = ''
+@description('Web IQ API key, passed to the container app as a secret.')
+@secure()
+param webIqApiKey string = ''
+
 @description('Deploy Grounding with Bing Custom Search (account + site allow-list + Foundry connection). Opt-in: when false nothing Bing-related is created and the agent uses AI Search alone.')
 param deployBingGrounding bool = false
 @allowed([ 'G1', 'G2' ])
@@ -292,6 +304,11 @@ module app 'modules/containerApp.bicep' = {
     voiceLiveVoice: voiceLiveVoice
     bingConnectionName: createBing ? bingConnectionNameEffective : bingConnectionName
     bingCustomConfigName: createBing ? bingCustomConfigNameEffective : bingCustomConfigName
+    voiceBinding: voiceBinding
+    voiceLiveModel: voiceLiveModel
+    webIqBaseUrl: webIqBaseUrl
+    webIqAllowedDomains: webIqAllowedDomains
+    webIqApiKey: webIqApiKey
     appInsightsConnectionString: appInsightsConnectionStringEffective
     agentModel: agentModel
     embeddingDeployment: embeddingDeployment

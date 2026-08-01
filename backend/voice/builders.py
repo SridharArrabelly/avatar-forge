@@ -15,10 +15,18 @@ from azure.ai.voicelive.models import (
     AzureSemanticVad,
     AzureStandardVoice,
     Background,
+    InterimResponseTrigger,
     OpenAIVoice,
     ServerVad,
+    StaticInterimResponseConfig,
     VideoCrop,
     VideoParams,
+)
+
+from ..config import (
+    MODEL_BINDING,
+    REALTIME_INTERIM_TEXTS,
+    REALTIME_INTERIM_THRESHOLD_MS,
 )
 
 logger = logging.getLogger(__name__)
@@ -149,7 +157,7 @@ def build_avatar_config(config: dict) -> Optional[AvatarConfig]:
 
     return avatar_cfg
 
-def build_turn_detection(config: dict):
+def build_turn_detection(config: dict, cascaded: bool = True):
     """Build turn detection configuration."""
     td_type = config.get("turnDetectionType", "server_vad")
     eou_type = config.get("eouDetectionType", "none")
@@ -177,9 +185,28 @@ def build_turn_detection(config: dict):
     # Tuned for lower turn-taking latency. EOU timeout dropped from 500ms to
     # 300ms to shave ~200ms off every turn. Raise back to 500 if you start
     # seeing premature cutoffs from users who pause mid-sentence.
+    #
+    # `cascaded=False` is model mode (Voice Live bound to a realtime model).
+    # Semantic end-of-utterance detection is text-based, so it needs the local
+    # speech recognizer that only exists in the cascaded ASR -> model -> TTS
+    # pipeline. Sending it to a realtime model is rejected outright:
+    #
+    #   "Text-based end-of-utterance detection requires a local speech
+    #    recognizer and is only supported on cascaded pipelines."
+    #
+    # It fails the whole session.update, not just the field, so this cannot be
+    # left to the service to ignore. Model mode therefore falls back to plain
+    # silence-duration turn-taking and loses this tuning -- a real trade-off
+    # against removing the ASR stage, and one the benchmark has to account for.
     if td_type == "azure_semantic_vad":
         eou_detection = None
-        if eou_type == "semantic_detection_v1_multilingual":
+        if not cascaded:
+            if eou_type in ("semantic_detection_v1", "semantic_detection_v1_multilingual"):
+                logger.info(
+                    f"Dropping end-of-utterance detection {eou_type!r}: not supported "
+                    "when Voice Live is bound to a realtime model (no local recognizer)."
+                )
+        elif eou_type == "semantic_detection_v1_multilingual":
             eou_detection = AzureSemanticDetectionMultilingual(
                 threshold_level="default",
                 timeout_ms=300,
@@ -212,3 +239,77 @@ def build_turn_detection(config: dict):
             silence_duration_ms=silence_duration_ms,
         )
 
+
+def build_interim_response(
+    voice_config, model_binding: bool = MODEL_BINDING
+) -> Optional[StaticInterimResponseConfig]:
+    """A short spoken acknowledgement while a tool call is in flight.
+
+    Grounding is the single largest item in the answer budget — measured
+    714ms for the minutes index and ~280ms warm (1.2s cold) for the web —
+    and until it returns the room hears nothing at all. Silence is what
+    people read as slowness, so filling it moves perceived latency more than
+    shaving milliseconds off retrieval.
+
+    Deliberately the STATIC variant, not ``LlmInterimResponseConfig``. The
+    LLM one generates a context-aware line, but with a second model
+    (gpt-4.1-mini by default) — another round trip on the exact path we are
+    trying to shorten. A canned line costs nothing and says the same thing.
+
+    Trigger is ``tool`` only. The ``latency`` trigger would also fire on a
+    slow plain answer, where there is nothing to wait for and an
+    acknowledgement just delays the real reply.
+
+    ``latency_threshold_ms`` is lowered from the SDK default of 2000ms —
+    verified applied by reading back SESSION_UPDATED. At the default it never
+    fired at all, because our tools return in 714ms (minutes) and ~280ms warm
+    (web), so every tool call finished well inside the threshold. The model
+    filled that silence itself with an improvised preamble instead, which is
+    the worst of both: it is unbounded in length, it costs a model turn, and
+    it directly contradicts the prompt's instruction not to narrate. Setting
+    the threshold below the tool floor hands the job to the platform, where
+    it is one short canned line.
+
+    ⚠️ Requires an Azure TTS voice. Verified against the live service:
+
+        interim_response_requires_azure_voice — "Interim response in realtime
+        pipeline requires an Azure TTS voice (azure-standard, azure-custom,
+        azure-personal, or avatar-voice-sync). OpenAI native voices stream
+        audio directly and cannot support interim response injection."
+
+    That is a hard 400 which fails the WHOLE session.update, not a warning, so
+    it cannot be left for the service to ignore — the same failure mode as
+    semantic end-of-utterance detection in model mode.
+
+    The error also states the architecture plainly. A realtime model emits its
+    own audio, and bound directly (Azure OpenAI Realtime) that is all you can
+    ever get — the built-in voices, no substitution. What Voice Live adds is a
+    replaceable synthesis stage: choose an Azure voice and the model's text is
+    spoken by Azure TTS instead, which is what makes azure-custom (a trained
+    custom neural voice) and azure-personal reachable at all. Interim
+    injection is a second thing that stage buys, because there is a synthesis
+    step to inject into; with a native voice the audio is already streaming
+    and there is nowhere to put it.
+
+    So this is not "Azure voice costs a TTS stage". For a branded avatar the
+    synthesis stage is the reason to be on Voice Live in the first place, and
+    a native OpenAI voice is the configuration that gives up custom voice,
+    personal voice and interim response together.
+
+    Set ``REALTIME_INTERIM_TEXTS=""`` to disable.
+    """
+    if not model_binding or not REALTIME_INTERIM_TEXTS:
+        return None
+    if isinstance(voice_config, OpenAIVoice):
+        logger.info(
+            "Interim response disabled: an OpenAI native voice streams the "
+            "model's own audio, so there is no synthesis stage to inject "
+            "into. Note this configuration also forgoes custom and personal "
+            "neural voices — switch to an Azure voice to get all three."
+        )
+        return None
+    return StaticInterimResponseConfig(
+        triggers=[InterimResponseTrigger.TOOL],
+        texts=REALTIME_INTERIM_TEXTS,
+        latency_threshold_ms=REALTIME_INTERIM_THRESHOLD_MS,
+    )

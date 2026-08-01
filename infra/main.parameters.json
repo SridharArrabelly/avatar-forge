@@ -28,6 +28,12 @@
     "deployBingGrounding": { "value": "${DEPLOY_BING_GROUNDING=true}" },
     "bingSkuName":         { "value": "${BING_SKU_NAME=G2}" },
 
+    "voiceBinding":        { "value": "${VOICE_BINDING=agent}" },
+    "voiceLiveModel":      { "value": "${VOICELIVE_MODEL=}" },
+    "webIqBaseUrl":        { "value": "${WEBIQ_BASE_URL=}" },
+    "webIqAllowedDomains": { "value": "${WEBIQ_ALLOWED_DOMAINS=}" },
+    "webIqApiKey":         { "value": "${WEBIQ_API_KEY=}" },
+
     "agentModel":             { "value": "${AGENT_MODEL=gpt-5.4}" },
     "embeddingDeployment":    { "value": "${EMBEDDING_DEPLOYMENT=text-embedding-3-small}" },
     "avatarName":             { "value": "${AVATAR_NAME=Lisa-casual-sitting}" },

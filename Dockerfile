@@ -17,6 +17,11 @@ COPY frontend/ frontend/
 # Canonical brand assets (logo/icons) shared by web + Teams + meeting bot, served
 # at /brand/*. Only assets/brand is un-ignored in .dockerignore.
 COPY assets/ assets/
+# The realtime persona prompt is read at session start when VOICE_BINDING=model,
+# so it has to be in the image. The agent-mode prompts are only read by
+# scripts/setup_foundry_agent.py on the deploy machine, but they are small and
+# keeping the tree whole avoids a copy that is right for one binding only.
+COPY prompts/ prompts/
 
 RUN uv sync --frozen --no-dev
 

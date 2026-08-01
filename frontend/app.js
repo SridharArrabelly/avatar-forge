@@ -630,6 +630,17 @@ function gatherConfig() {
         enableProactive: document.getElementById('enableProactive').checked,
     };
 
+    // Voice Live binding override. Server-side this is honoured only in
+    // DEVELOPER_MODE; sending it otherwise is harmless (the handler ignores
+    // it and uses the deployment default). Each websocket opens its own Voice
+    // Live connection, so two browser tabs can run different bindings at once
+    // — which is the whole point: it makes agent-vs-model an A/B you can run
+    // side by side instead of a redeploy.
+    const bindingEl = document.getElementById('voiceBinding');
+    if (bindingEl && bindingEl.value) {
+        config.voiceBinding = bindingEl.value;
+    }
+
     // Photo avatar scene settings
     if (isPhotoAvatar) {
         config.photoScene = {

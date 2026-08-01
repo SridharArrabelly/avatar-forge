@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.43.8.12551",
-      "templateHash": "1419011907645219484"
+      "templateHash": "18028162398185848575"
     }
   },
   "parameters": {
@@ -121,6 +121,45 @@
         "description": "Deploy Grounding with Bing Custom Search: the Bing account, the curated site allow-list, and the Foundry connection. Opt-in and additive — when false nothing Bing-related is created and the agent runs on AI Search alone."
       }
     },
+    "voiceBinding": {
+      "type": "string",
+      "defaultValue": "agent",
+      "allowedValues": [
+        "agent",
+        "model"
+      ],
+      "metadata": {
+        "description": "Voice Live binding.\n\n\"agent\" (default) routes every turn through the Foundry agent: speech is\ntranscribed by a recognizer, the agent reasons and calls its managed AI Search\nand Bing grounding tools, and the reply is synthesised back to speech.\n\n\"model\" binds Voice Live straight to a realtime speech-to-speech model. The\nrecognizer stage disappears from the answer path, and the tools become\nin-process Python functions instead of Foundry-managed ones.\n\nAdditive: leaving this unset gives exactly today's behaviour.\n"
+      }
+    },
+    "voiceLiveModel": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Realtime model to bind when voiceBinding is \"model\". Voice Live deploys and manages this model itself — no model deployment, no quota request. Ignored in agent mode."
+      }
+    },
+    "webIqBaseUrl": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Web IQ base URL. This is the web tool in model mode, where the agent (and therefore its managed Bing grounding tool) is out of the picture. Leave empty to use the code default — the tool is switched on by webIqApiKey, not by this."
+      }
+    },
+    "webIqAllowedDomains": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Comma-separated host allow-list applied to Web IQ results, e.g. \"mtn.com,sashares.co.za\". Same security boundary as bingAllowedDomains — a hard allow-list is what makes an open-web tool safe for an executive assistant. Empty allows any host the endpoint returns."
+      }
+    },
+    "webIqApiKey": {
+      "type": "securestring",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Web IQ API key. Stored as a container-app secret, never as a plain env var. Set it with: azd env set WEBIQ_API_KEY <key>"
+      }
+    },
     "bingSkuName": {
       "type": "string",
       "defaultValue": "G2",
@@ -233,7 +272,7 @@
       "type": "string",
       "defaultValue": "",
       "metadata": {
-        "description": "Deployment profile from `scripts/set_profile.py` — one of \"web\", \"teams-tab\", \"teams-chat\", \"in-call\". Drives which optional channels deploy. Empty keeps the pre-profile behaviour (explicit flags only)."
+        "description": "Deployment profile from `scripts/set_profile.py` — one of \"web\", \"teams-tab\", \"in-call\". Drives which optional channels deploy. Empty keeps the pre-profile behaviour (explicit flags only)."
       }
     },
     "enableAcs": {
@@ -453,6 +492,21 @@
           "bingCustomConfigName": {
             "value": "[parameters('bingCustomConfigName')]"
           },
+          "voiceBinding": {
+            "value": "[parameters('voiceBinding')]"
+          },
+          "voiceLiveModel": {
+            "value": "[parameters('voiceLiveModel')]"
+          },
+          "webIqBaseUrl": {
+            "value": "[parameters('webIqBaseUrl')]"
+          },
+          "webIqAllowedDomains": {
+            "value": "[parameters('webIqAllowedDomains')]"
+          },
+          "webIqApiKey": {
+            "value": "[parameters('webIqApiKey')]"
+          },
           "deployBingGrounding": {
             "value": "[equals(toLower(parameters('deployBingGrounding')), 'true')]"
           },
@@ -537,7 +591,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.43.8.12551",
-              "templateHash": "16999574611024663267"
+              "templateHash": "10927328051091522499"
             }
           },
           "parameters": {
@@ -614,6 +668,41 @@
             "bingCustomConfigName": {
               "type": "string",
               "defaultValue": ""
+            },
+            "voiceBinding": {
+              "type": "string",
+              "defaultValue": "agent",
+              "metadata": {
+                "description": "Voice Live binding: \"agent\" (default) or \"model\". See modules/containerApp.bicep."
+              }
+            },
+            "voiceLiveModel": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Realtime model used when voiceBinding is \"model\"."
+              }
+            },
+            "webIqBaseUrl": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Web IQ base URL — the web tool in model mode. Empty uses the code default."
+              }
+            },
+            "webIqAllowedDomains": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Comma-separated host allow-list for Web IQ results."
+              }
+            },
+            "webIqApiKey": {
+              "type": "securestring",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Web IQ API key, passed to the container app as a secret."
+              }
             },
             "deployBingGrounding": {
               "type": "bool",
@@ -2230,6 +2319,21 @@
                   },
                   "bingConnectionName": "[if(variables('createBing'), createObject('value', variables('bingConnectionNameEffective')), createObject('value', parameters('bingConnectionName')))]",
                   "bingCustomConfigName": "[if(variables('createBing'), createObject('value', variables('bingCustomConfigNameEffective')), createObject('value', parameters('bingCustomConfigName')))]",
+                  "voiceBinding": {
+                    "value": "[parameters('voiceBinding')]"
+                  },
+                  "voiceLiveModel": {
+                    "value": "[parameters('voiceLiveModel')]"
+                  },
+                  "webIqBaseUrl": {
+                    "value": "[parameters('webIqBaseUrl')]"
+                  },
+                  "webIqAllowedDomains": {
+                    "value": "[parameters('webIqAllowedDomains')]"
+                  },
+                  "webIqApiKey": {
+                    "value": "[parameters('webIqApiKey')]"
+                  },
                   "appInsightsConnectionString": "[if(empty(parameters('existingAppInsightsName')), createObject('value', reference(resourceId('Microsoft.Resources/deployments', 'appi'), '2025-04-01').outputs.connectionString.value), createObject('value', reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, if(empty(parameters('existingAppInsightsResourceGroup')), resourceGroup().name, parameters('existingAppInsightsResourceGroup'))), 'Microsoft.Insights/components', parameters('existingAppInsightsName')), '2020-02-02').ConnectionString))]",
                   "agentModel": {
                     "value": "[parameters('agentModel')]"
@@ -2288,7 +2392,7 @@
                     "_generator": {
                       "name": "bicep",
                       "version": "0.43.8.12551",
-                      "templateHash": "9945785726405931866"
+                      "templateHash": "1997850374028556725"
                     }
                   },
                   "parameters": {
@@ -2341,6 +2445,41 @@
                     "bingCustomConfigName": {
                       "type": "string",
                       "defaultValue": ""
+                    },
+                    "voiceBinding": {
+                      "type": "string",
+                      "defaultValue": "agent",
+                      "metadata": {
+                        "description": "Voice Live binding: \"agent\" routes through the Foundry agent (default, unchanged behaviour); \"model\" binds Voice Live straight to a realtime model with in-process tools."
+                      }
+                    },
+                    "voiceLiveModel": {
+                      "type": "string",
+                      "defaultValue": "",
+                      "metadata": {
+                        "description": "Realtime model deployed by Voice Live when voiceBinding is \"model\". Voice Live manages this model itself — no model deployment or quota is needed."
+                      }
+                    },
+                    "webIqBaseUrl": {
+                      "type": "string",
+                      "defaultValue": "",
+                      "metadata": {
+                        "description": "Web IQ base URL used as the web tool in model mode. Empty falls back to the code default — the tool is gated on webIqApiKey, not on this."
+                      }
+                    },
+                    "webIqAllowedDomains": {
+                      "type": "string",
+                      "defaultValue": "",
+                      "metadata": {
+                        "description": "Comma-separated host allow-list applied to Web IQ results. Same security boundary as bingAllowedDomains: it is what makes an open-web tool safe to hand an executive assistant."
+                      }
+                    },
+                    "webIqApiKey": {
+                      "type": "securestring",
+                      "defaultValue": "",
+                      "metadata": {
+                        "description": "Web IQ API key. Passed as a container-app SECRET, never as a plain env var. Empty leaves the web tool switched off."
+                      }
                     },
                     "appInsightsConnectionString": {
                       "type": "string"
@@ -2463,6 +2602,10 @@
                   },
                   "variables": {
                     "acsEnv": "[if(not(empty(parameters('acsEndpoint'))), createArray(createObject('name', 'ACS_ENDPOINT', 'value', parameters('acsEndpoint'))), createArray())]",
+                    "voiceBindingEnv": "[concat(createArray(createObject('name', 'VOICE_BINDING', 'value', parameters('voiceBinding'))), if(empty(parameters('voiceLiveModel')), createArray(), createArray(createObject('name', 'VOICELIVE_MODEL', 'value', parameters('voiceLiveModel')))))]",
+                    "webIqConfigured": "[not(empty(parameters('webIqApiKey')))]",
+                    "webIqSecrets": "[if(variables('webIqConfigured'), createArray(createObject('name', 'webiq-api-key', 'value', parameters('webIqApiKey'))), createArray())]",
+                    "webIqEnv": "[if(variables('webIqConfigured'), concat(createArray(createObject('name', 'WEBIQ_API_KEY', 'secretRef', 'webiq-api-key')), if(empty(parameters('webIqBaseUrl')), createArray(), createArray(createObject('name', 'WEBIQ_BASE_URL', 'value', parameters('webIqBaseUrl')))), if(empty(parameters('webIqAllowedDomains')), createArray(), createArray(createObject('name', 'WEBIQ_ALLOWED_DOMAINS', 'value', parameters('webIqAllowedDomains'))))), createArray())]",
                     "meetingBotOn": "[equals(toLower(parameters('meetingBotEnabled')), 'true')]",
                     "meetingBotEnv": "[concat(if(variables('meetingBotOn'), createArray(createObject('name', 'MEETING_BOT_ENABLED', 'value', 'true')), createArray()), if(not(empty(parameters('acsAudioSampleRate'))), createArray(createObject('name', 'ACS_AUDIO_SAMPLE_RATE', 'value', parameters('acsAudioSampleRate'))), createArray()), if(not(empty(parameters('acsRequireWakePhrase'))), createArray(createObject('name', 'ACS_REQUIRE_WAKE_PHRASE', 'value', parameters('acsRequireWakePhrase'))), createArray()), if(not(empty(parameters('acsAvatarVideoEnabled'))), createArray(createObject('name', 'ACS_AVATAR_VIDEO_ENABLED', 'value', parameters('acsAvatarVideoEnabled'))), createArray()))]"
                   },
@@ -2483,6 +2626,7 @@
                         "managedEnvironmentId": "[parameters('containerAppsEnvironmentId')]",
                         "configuration": {
                           "activeRevisionsMode": "Single",
+                          "secrets": "[variables('webIqSecrets')]",
                           "ingress": {
                             "external": true,
                             "targetPort": 3000,
@@ -2520,7 +2664,7 @@
                                 "cpu": "[json('1.0')]",
                                 "memory": "2.0Gi"
                               },
-                              "env": "[concat(createArray(createObject('name', 'PORT', 'value', '3000'), createObject('name', 'AZURE_CLIENT_ID', 'value', parameters('uamiClientId')), createObject('name', 'DEVELOPER_MODE', 'value', 'false'), createObject('name', 'AZURE_VOICELIVE_ENDPOINT', 'value', parameters('voiceliveEndpoint')), createObject('name', 'PROJECT_ENDPOINT', 'value', parameters('projectEndpoint')), createObject('name', 'AGENT_NAME', 'value', parameters('agentName')), createObject('name', 'AGENT_PROJECT_NAME', 'value', parameters('agentProjectName')), createObject('name', 'AGENT_MODEL', 'value', parameters('agentModel')), createObject('name', 'EMBEDDING_DEPLOYMENT', 'value', parameters('embeddingDeployment')), createObject('name', 'AZURE_SEARCH_ENDPOINT', 'value', parameters('searchEndpoint')), createObject('name', 'SEARCH_CONNECTION_NAME', 'value', parameters('searchConnectionName')), createObject('name', 'SEARCH_INDEX_NAME', 'value', parameters('searchIndexName')), createObject('name', 'VOICELIVE_VOICE', 'value', parameters('voiceLiveVoice')), createObject('name', 'BING_CONNECTION_NAME', 'value', parameters('bingConnectionName')), createObject('name', 'BING_CUSTOM_CONFIG_NAME', 'value', parameters('bingCustomConfigName')), createObject('name', 'AVATAR_NAME', 'value', parameters('avatarName')), createObject('name', 'CUSTOM_AVATAR_NAME', 'value', parameters('customAvatarName')), createObject('name', 'AVATAR_DISPLAY_NAME', 'value', parameters('avatarDisplayName')), createObject('name', 'AVATAR_TAGLINE', 'value', parameters('avatarTagline')), createObject('name', 'PHOTO_AVATAR_NAME', 'value', parameters('photoAvatarName')), createObject('name', 'IS_PHOTO_AVATAR', 'value', parameters('isPhotoAvatar')), createObject('name', 'IS_CUSTOM_AVATAR', 'value', parameters('isCustomAvatar')), createObject('name', 'AVATAR_BACKGROUND_IMAGE_URL', 'value', parameters('avatarBackgroundImageUrl')), createObject('name', 'SR_MODEL', 'value', parameters('srModel')), createObject('name', 'RECOGNITION_LANGUAGE', 'value', parameters('recognitionLanguage')), createObject('name', 'APPLICATIONINSIGHTS_CONNECTION_STRING', 'value', parameters('appInsightsConnectionString'))), concat(variables('acsEnv'), variables('meetingBotEnv')))]",
+                              "env": "[concat(createArray(createObject('name', 'PORT', 'value', '3000'), createObject('name', 'AZURE_CLIENT_ID', 'value', parameters('uamiClientId')), createObject('name', 'DEVELOPER_MODE', 'value', 'false'), createObject('name', 'AZURE_VOICELIVE_ENDPOINT', 'value', parameters('voiceliveEndpoint')), createObject('name', 'PROJECT_ENDPOINT', 'value', parameters('projectEndpoint')), createObject('name', 'AGENT_NAME', 'value', parameters('agentName')), createObject('name', 'AGENT_PROJECT_NAME', 'value', parameters('agentProjectName')), createObject('name', 'AGENT_MODEL', 'value', parameters('agentModel')), createObject('name', 'EMBEDDING_DEPLOYMENT', 'value', parameters('embeddingDeployment')), createObject('name', 'AZURE_SEARCH_ENDPOINT', 'value', parameters('searchEndpoint')), createObject('name', 'SEARCH_CONNECTION_NAME', 'value', parameters('searchConnectionName')), createObject('name', 'SEARCH_INDEX_NAME', 'value', parameters('searchIndexName')), createObject('name', 'VOICELIVE_VOICE', 'value', parameters('voiceLiveVoice')), createObject('name', 'BING_CONNECTION_NAME', 'value', parameters('bingConnectionName')), createObject('name', 'BING_CUSTOM_CONFIG_NAME', 'value', parameters('bingCustomConfigName')), createObject('name', 'AVATAR_NAME', 'value', parameters('avatarName')), createObject('name', 'CUSTOM_AVATAR_NAME', 'value', parameters('customAvatarName')), createObject('name', 'AVATAR_DISPLAY_NAME', 'value', parameters('avatarDisplayName')), createObject('name', 'AVATAR_TAGLINE', 'value', parameters('avatarTagline')), createObject('name', 'PHOTO_AVATAR_NAME', 'value', parameters('photoAvatarName')), createObject('name', 'IS_PHOTO_AVATAR', 'value', parameters('isPhotoAvatar')), createObject('name', 'IS_CUSTOM_AVATAR', 'value', parameters('isCustomAvatar')), createObject('name', 'AVATAR_BACKGROUND_IMAGE_URL', 'value', parameters('avatarBackgroundImageUrl')), createObject('name', 'SR_MODEL', 'value', parameters('srModel')), createObject('name', 'RECOGNITION_LANGUAGE', 'value', parameters('recognitionLanguage')), createObject('name', 'APPLICATIONINSIGHTS_CONNECTION_STRING', 'value', parameters('appInsightsConnectionString'))), concat(variables('acsEnv'), variables('meetingBotEnv'), variables('voiceBindingEnv'), variables('webIqEnv')))]",
                               "probes": [
                                 {
                                   "type": "Liveness",
