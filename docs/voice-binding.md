@@ -194,21 +194,25 @@ roadmap survives model mode intact.
 
 ---
 
-## 5. Running both at once
+## 5. Comparing the two
 
-`VOICE_BINDING` sets the deployment default, and in `DEVELOPER_MODE` a session may
-override it per connection from the sidebar. Two browser tabs can then run
-different bindings simultaneously.
+The binding is **deployment-wide**. There is no per-session override: a client cannot
+ask for a binding, and nothing in `DEVELOPER_MODE` exposes one. To compare, set
+`VOICE_BINDING`, redeploy, and run the same script of questions again.
 
-This is safe because **each websocket opens its own Voice Live connection** and
-shares no state between sessions. It is not a global switch being toggled under a
-live call.
+That is deliberate. A live switch would have bought a side-by-side A/B at the cost of
+a permanent flag on the session path and one more way for a deployment to answer
+differently than production does. It also would not have fixed the thing that actually
+makes the two hard to compare.
 
-The point is comparability. Agent-vs-model is otherwise a redeploy apart, which
-makes an honest A/B hard to run and easy to get wrong.
+> **The real trap is metric definitions, not deploy variance.** The numbers already
+> recorded for the two modes measure *different events* — model mode's figure is time
+> to **first audio**, agent mode's is time to **first token**. Those are not the same
+> quantity, and no amount of running them side by side makes them comparable. Before
+> any A/B, pin both modes to the same marker.
 
-Outside `DEVELOPER_MODE` the field is ignored and the deployment default always
-wins, so the override cannot be reached from a production session.
+Each websocket already opens its own Voice Live connection and shares no state, so the
+constraint is purely which binding the deployment was built with.
 
 ---
 

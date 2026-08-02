@@ -26,7 +26,6 @@ from azure.ai.voicelive.models import (
 from ..config import (
     AGENT_NAME,
     AGENT_PROJECT_NAME,
-    DEVELOPER_MODE,
     MODEL_BINDING,
     PROACTIVE_GREETING,
     REALTIME_MAX_TOKENS,
@@ -114,26 +113,16 @@ class VoiceSessionHandler:
         self.send_binary = send_binary
         self.config = config
 
-        # Which brain this session binds to. Normally the deployment-wide
-        # VOICE_BINDING, but DEVELOPER_MODE lets a single client override it
-        # per session so agent and model mode can be compared side by side in
-        # two browser tabs against one deployment. It is per-connection and
-        # therefore safe: each session opens its own Voice Live connection, so
-        # there is no shared state for the two bindings to collide over.
-        # Gated on DEVELOPER_MODE because the binding decides which brain and
-        # which tools answer, which is not a choice an end user should make.
+        # Which brain this session binds to. This is a deployment decision made
+        # once by VOICE_BINDING (chosen at setup time by scripts/set_profile.py),
+        # not something a client can vary: the binding determines which model and
+        # which tool implementations answer, so letting a session pick would make
+        # behaviour depend on whoever opened the tab.
+        #
+        # Comparing the two is done by setting VOICE_BINDING and redeploying,
+        # which keeps one brain live at a time and leaves no runtime switch to
+        # misconfigure.
         self.model_binding = MODEL_BINDING
-        if DEVELOPER_MODE:
-            requested = str(config.get("voiceBinding") or "").strip().lower()
-            if requested in ("agent", "model"):
-                self.model_binding = requested == "model"
-                if self.model_binding != MODEL_BINDING:
-                    logger.info(
-                        f"[{client_id}] DEVELOPER_MODE binding override: "
-                        f"{'model' if self.model_binding else 'agent'} "
-                        f"(deployment default is "
-                        f"{'model' if MODEL_BINDING else 'agent'})"
-                    )
 
         self.connection = None
         self.is_running = False

@@ -35,7 +35,7 @@ param voiceBinding string = 'agent'
 @description('Realtime model used when voiceBinding is "model".')
 param voiceLiveModel string = ''
 
-@description('"true"/"false" string. Developer mode exposes the settings panel and live transcript and allows a per-session voiceBinding override. Default "false" is the production experience.')
+@description('"true"/"false" string. Developer mode exposes the settings panel and live transcript so settings can be tried live while testing. Default "false" is the production experience, with settings locked.')
 param developerMode string = 'false'
 @description('Web IQ base URL — the web tool in model mode. Empty uses the code default.')
 param webIqBaseUrl string = ''

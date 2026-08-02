@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.43.8.12551",
-      "templateHash": "4095610617111693433"
+      "templateHash": "5504084744551663265"
     }
   },
   "parameters": {
@@ -147,7 +147,7 @@
         "false"
       ],
       "metadata": {
-        "description": "\"true\"/\"false\" string. Developer mode exposes the settings panel and live\ntranscript, and lets a session override voiceBinding per connection — which is\nhow agent and model mode are compared against a single deployment instead of a\nredeploy apart. It changes no pipeline default: the panel is pre-populated with\nthe same values production uses.\n\nAdditive: leaving this unset gives exactly the production experience — panel\nhidden, session auto-starts, binding override ignored.\n"
+        "description": "\"true\"/\"false\" string. Developer mode exposes the settings panel, live transcript\nand per-event logging, so settings can be changed and tried live while testing.\nIt changes no pipeline default: the panel is pre-populated with the same values\nproduction uses.\n\nAdditive: leaving this unset gives exactly the production experience — panel\nhidden, settings locked, session auto-starts.\n\nIt does not expose voiceBinding, which is deployment-wide by design.\n"
       }
     },
     "webIqBaseUrl": {
@@ -605,7 +605,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.43.8.12551",
-              "templateHash": "7542623118798263235"
+              "templateHash": "5604624739316978565"
             }
           },
           "parameters": {
@@ -701,7 +701,7 @@
               "type": "string",
               "defaultValue": "false",
               "metadata": {
-                "description": "\"true\"/\"false\" string. Developer mode exposes the settings panel and live transcript and allows a per-session voiceBinding override. Default \"false\" is the production experience."
+                "description": "\"true\"/\"false\" string. Developer mode exposes the settings panel and live transcript so settings can be tried live while testing. Default \"false\" is the production experience, with settings locked."
               }
             },
             "webIqBaseUrl": {
@@ -2416,7 +2416,7 @@
                     "_generator": {
                       "name": "bicep",
                       "version": "0.43.8.12551",
-                      "templateHash": "15177271399680972358"
+                      "templateHash": "959739143410093191"
                     }
                   },
                   "parameters": {
@@ -2620,7 +2620,7 @@
                       "type": "string",
                       "defaultValue": "false",
                       "metadata": {
-                        "description": "\"true\"/\"false\" string. When \"true\" the browser exposes the settings panel, live transcript and per-event logging, and a session may override the voice binding per connection. Production default \"false\" hides the panel and auto-starts an avatar-only experience."
+                        "description": "\"true\"/\"false\" string. When \"true\" the browser exposes the settings panel, live transcript and per-event logging, so settings can be changed and tried live while testing. Production default \"false\" hides the panel, locks settings and auto-starts an avatar-only experience."
                       }
                     },
                     "containerImage": {

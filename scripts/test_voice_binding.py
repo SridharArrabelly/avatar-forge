@@ -150,8 +150,18 @@ def test_turn_detection_eou():
           type_of(model_td), type_of(agent_td))
 
 
-# ------------------------------------------------- per-session dev override
-def test_developer_mode_override():
+# --------------------------------------- the binding is a deployment decision
+def test_client_cannot_choose_binding():
+    """The brain is chosen once, by VOICE_BINDING, and never by a client.
+
+    There was briefly a per-session override gated on DEVELOPER_MODE. It was
+    removed: which brain answers is not the same question as what the UI
+    exposes, and a session-level switch makes behaviour depend on whoever
+    opened the tab. Comparing the two bindings is done by redeploying.
+
+    These checks exist so that invariant cannot regress quietly — a client can
+    send anything it likes and must never move the binding.
+    """
     from unittest.mock import Mock
 
     def handler_with(env, client_config):
@@ -162,26 +172,30 @@ def test_developer_mode_override():
             send_message=Mock(), config=client_config,
         )
 
-    # Without DEVELOPER_MODE the client cannot choose its own brain.
     h = handler_with({"VOICE_BINDING": "agent"}, {"voiceBinding": "model"})
-    check("client cannot override binding when DEVELOPER_MODE is off",
+    check("client asking for model in an agent deploy is ignored",
           h.model_binding, False)
 
+    h = handler_with({"VOICE_BINDING": "model"}, {"voiceBinding": "agent"})
+    check("client asking for agent in a model deploy is ignored",
+          h.model_binding, True)
+
+    # The load-bearing one: DEVELOPER_MODE used to unlock the override, so this
+    # is what would break first if the gate were ever reintroduced.
     h = handler_with({"VOICE_BINDING": "agent", "DEVELOPER_MODE": "true"},
                      {"voiceBinding": "model"})
-    check("DEVELOPER_MODE allows per-session model override", h.model_binding, True)
+    check("DEVELOPER_MODE does not unlock a per-session override",
+          h.model_binding, False)
 
     h = handler_with({"VOICE_BINDING": "model", "DEVELOPER_MODE": "true"},
                      {"voiceBinding": "agent"})
-    check("DEVELOPER_MODE allows per-session agent override", h.model_binding, False)
+    check("DEVELOPER_MODE does not unlock the reverse override either",
+          h.model_binding, True)
 
-    # Absent or nonsense values fall through to the deployment default rather
-    # than silently picking a brain.
-    h = handler_with({"VOICE_BINDING": "model", "DEVELOPER_MODE": "true"}, {})
+    h = handler_with({"VOICE_BINDING": "model"}, {})
     check("no voiceBinding in config -> deployment default", h.model_binding, True)
 
-    h = handler_with({"VOICE_BINDING": "agent", "DEVELOPER_MODE": "true"},
-                     {"voiceBinding": "banana"})
+    h = handler_with({"VOICE_BINDING": "agent"}, {"voiceBinding": "banana"})
     check("unrecognised per-session value -> deployment default",
           h.model_binding, False)
 
@@ -205,7 +219,7 @@ def test_agent_mode_carries_no_model_keys():
 
 def main() -> int:
     for fn in (test_binding_resolution, test_interim_response_gating,
-               test_turn_detection_eou, test_developer_mode_override,
+               test_turn_detection_eou, test_client_cannot_choose_binding,
                test_agent_mode_carries_no_model_keys):
         try:
             fn()

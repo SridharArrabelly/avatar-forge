@@ -117,6 +117,50 @@ class CostItem:
 
 
 @dataclass(frozen=True)
+class Binding:
+    """One of the two brains a deployment can bind Voice Live to.
+
+    Orthogonal to the channel: every channel works with either brain, so this is
+    a second question rather than a fifth profile. Recorded as VOICE_BINDING.
+    """
+
+    key: str
+    title: str
+    summary: str
+    tradeoff: str
+
+
+BINDING_ORDER = ["agent", "model"]
+
+BINDINGS: dict[str, Binding] = {
+    "agent": Binding(
+        key="agent",
+        title="Agent mode",
+        summary=(
+            "Bind to a Foundry agent. Prompt, model and tool routing live in Foundry; "
+            "speech is transcribed before the agent sees it."
+        ),
+        tradeoff=(
+            "Grounding with Bing works here. Tools and prompt are editable in the "
+            "portal without redeploying. Costs an extra transcription hop."
+        ),
+    ),
+    "model": Binding(
+        key="model",
+        title="Model mode",
+        summary=(
+            "Bind straight to a realtime model. It takes audio natively, so the "
+            "transcription hop disappears; prompt and tools travel in the session."
+        ),
+        tradeoff=(
+            "Lower time-to-first-token, but Grounding with Bing cannot follow — web "
+            "search runs through Web IQ instead, and the prompt ships in the image."
+        ),
+    ),
+}
+
+
+@dataclass(frozen=True)
 class Profile:
     key: str
     title: str

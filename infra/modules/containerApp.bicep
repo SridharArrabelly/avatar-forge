@@ -68,7 +68,7 @@ param acsRequireWakePhrase string = ''
 @description('"true"/"false" string. When "true", the in-call avatar sends an outgoing video tile so it is a visible participant instead of a faceless audio leg.')
 param acsAvatarVideoEnabled string = ''
 
-@description('"true"/"false" string. When "true" the browser exposes the settings panel, live transcript and per-event logging, and a session may override the voice binding per connection. Production default "false" hides the panel and auto-starts an avatar-only experience.')
+@description('"true"/"false" string. When "true" the browser exposes the settings panel, live transcript and per-event logging, so settings can be changed and tried live while testing. Production default "false" hides the panel, locks settings and auto-starts an avatar-only experience.')
 param developerMode string = 'false'
 
 @description('Placeholder image used on first provision; azd replaces it during `azd deploy`.')

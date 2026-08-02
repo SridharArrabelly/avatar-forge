@@ -9,8 +9,23 @@ browser only handles audio I/O and avatar video.
 
 ## Architecture
 
+Two independent choices decide what you deploy:
+
+| Axis | Question | Set by | Options |
+|---|---|---|---|
+| **Front door** | Where do people reach the avatar? | `DEPLOY_PROFILE` | A web · B Teams tab · C in-call bot · D headless |
+| **Brain** | What answers? | `VOICE_BINDING` | agent mode · model mode |
+
+They are orthogonal — **every front door works with either brain**. Both are chosen
+once, together, by `scripts/set_profile.py`.
+
 **One brain, several front doors.** Every channel shares the same backend, Voice Live
-session, Foundry agent and grounding — only the edge differs.
+session and grounding corpus — only the edge differs.
+
+### Agent mode — `VOICE_BINDING=agent` *(default)*
+
+Voice Live binds to a Foundry agent, which owns the prompt, model and tool routing.
+Speech is transcribed before the agent sees it.
 
 ```mermaid
 flowchart LR
@@ -26,15 +41,17 @@ flowchart LR
         direction TB
         API["Session + media bridge"]
         VL["Azure Voice Live<br/>speech in · speech out · avatar"]
-        AG["Foundry agent<br/>prompt · model · tool routing"]
+        STT["Speech-to-text<br/><i>SR_MODEL</i>"]
+        AG["<b>Foundry agent</b><br/>prompt · model · tool routing"]
         API <--> VL
-        VL <--> AG
+        VL <--> STT
+        STT <--> AG
     end
 
     subgraph Ground["Grounding — where the answers come from"]
         direction TB
         S["Azure AI Search<br/>your document corpus"]
-        N["Bing Custom Search<br/>curated news domains"]
+        N["Grounding with Bing<br/>curated news domains"]
     end
 
     A --> API
@@ -45,11 +62,57 @@ flowchart LR
     AG --> N
 ```
 
-The Python backend bridges the edge and Azure Voice Live, binding each session to an
-existing Foundry agent via `agent_config = { agent_name, project_name }`. The agent owns
-the system prompt, model, and tools so RAG + grounding resolve server-side. Internals in
-**[docs/architecture.md](docs/architecture.md)**; each channel's own edge diagram is on
-its [channel page](docs/channels/README.md).
+### Model mode — `VOICE_BINDING=model`
+
+Voice Live binds straight to a realtime model. It accepts audio natively, so the
+transcription hop disappears from the answer path and the prompt and tools travel in
+the session instead. **The front doors are unchanged** — only the middle and the web
+tool differ.
+
+```mermaid
+flowchart LR
+    subgraph Doors2["Front doors — identical to agent mode"]
+        direction TB
+        A2["<b>A</b> · Web browser"]
+        B2["<b>B</b> · Teams personal tab"]
+        C2["<b>C</b> · In-call media bot"]
+        D2["<b>D</b> · In-call headless"]
+    end
+
+    subgraph Brain2["Same host, different middle"]
+        direction TB
+        API2["Session + media bridge"]
+        VL2["Azure Voice Live<br/>speech in · speech out · avatar"]
+        RT["<b>Realtime model</b><br/>takes audio directly — no transcription hop<br/>prompt + tools travel in the session"]
+        API2 <--> VL2
+        VL2 <--> RT
+    end
+
+    subgraph Ground2["Grounding — Bing cannot follow here"]
+        direction TB
+        S2["Azure AI Search<br/>your document corpus"]
+        W2["<b>Web IQ</b><br/>site-scoped web search"]
+    end
+
+    A2 --> API2
+    B2 --> API2
+    C2 --> API2
+    D2 -.-> API2
+    RT --> S2
+    RT --> W2
+```
+
+Why the grounding box changes: Voice Live accepts exactly two tool types in model
+mode, `FUNCTION` and `MCP`, so the managed Grounding-with-Bing tool has nowhere to
+attach. Web search is re-implemented as a function tool over Web IQ. The document
+corpus is identical in both modes.
+
+The Python backend bridges the edge and Azure Voice Live. In agent mode it binds each
+session to an existing Foundry agent via `agent_config = { agent_name, project_name }`,
+so RAG + grounding resolve server-side inside Foundry. Internals in
+**[docs/architecture.md](docs/architecture.md)**; the full comparison, including
+measured latency, is in **[docs/voice-binding.md](docs/voice-binding.md)**; each
+channel's own edge diagram is on its [channel page](docs/channels/README.md).
 
 ## Channel support
 

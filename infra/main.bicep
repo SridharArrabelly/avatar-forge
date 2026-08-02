@@ -73,14 +73,15 @@ param voiceBinding string = 'agent'
 param voiceLiveModel string = ''
 
 @description('''
-"true"/"false" string. Developer mode exposes the settings panel and live
-transcript, and lets a session override voiceBinding per connection — which is
-how agent and model mode are compared against a single deployment instead of a
-redeploy apart. It changes no pipeline default: the panel is pre-populated with
-the same values production uses.
+"true"/"false" string. Developer mode exposes the settings panel, live transcript
+and per-event logging, so settings can be changed and tried live while testing.
+It changes no pipeline default: the panel is pre-populated with the same values
+production uses.
 
 Additive: leaving this unset gives exactly the production experience — panel
-hidden, session auto-starts, binding override ignored.
+hidden, settings locked, session auto-starts.
+
+It does not expose voiceBinding, which is deployment-wide by design.
 ''')
 @allowed([ 'true', 'false' ])
 param developerMode string = 'false'

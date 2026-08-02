@@ -33,6 +33,8 @@ from dataclasses import dataclass
 from channels import (
     ADMIN,
     AFTER,
+    BINDING_ORDER,
+    BINDINGS,
     BOLD,
     CYAN,
     DIM,
@@ -247,6 +249,93 @@ def check_required_inputs(profile, cfg: dict[str, str]) -> list[CheckResult]:
                 warn_only=req.optional,
             )
         )
+    return results
+
+
+def check_voice_binding(cfg: dict[str, str]) -> list[CheckResult]:
+    """Validate the brain choice and the config that choice implies.
+
+    The binding is set by scripts/set_profile.py alongside the channel. It is
+    checked here because each mode has its own hard requirement, and getting it
+    wrong fails at runtime rather than at deploy time — agent mode without an
+    agent name simply never answers, and model mode silently drops web search
+    when Web IQ is unconfigured, because Grounding with Bing cannot follow into
+    model mode.
+    """
+    raw = cfg.get("VOICE_BINDING", "").strip().lower()
+    binding = raw or "agent"
+
+    if binding not in BINDINGS:
+        return [
+            CheckResult(
+                "Voice binding",
+                False,
+                f"{raw!r} is not a valid binding",
+                fix="        Pick one of: " + ", ".join(BINDING_ORDER) + "\n"
+                    "        uv run python scripts/set_profile.py",
+            )
+        ]
+
+    results = [
+        CheckResult(
+            "Voice binding",
+            True,
+            f"{binding} — {BINDINGS[binding].title}"
+            + ("" if raw else " (default; not set explicitly)"),
+        )
+    ]
+
+    if binding == "agent":
+        agent = cfg.get("AGENT_NAME", "").strip()
+        results.append(
+            CheckResult(
+                "Agent mode: AGENT_NAME",
+                bool(agent),
+                agent or "not set",
+                fix="        Agent mode binds to a Foundry agent by name.\n"
+                    "        azd env set AGENT_NAME <agent-name>",
+            )
+        )
+    else:
+        model = cfg.get("VOICELIVE_MODEL", "").strip()
+        results.append(
+            CheckResult(
+                "Model mode: VOICELIVE_MODEL",
+                True,
+                model or "not set — using the built-in default",
+                warn_only=True,
+            )
+        )
+        web_iq = cfg.get("WEBIQ_API_KEY", "").strip()
+        results.append(
+            CheckResult(
+                "Model mode: WEBIQ_API_KEY",
+                bool(web_iq),
+                "set" if web_iq else "not set — the avatar will have no web search",
+                fix="        Grounding with Bing cannot follow into model mode, so web\n"
+                    "        search runs through Web IQ. Without a key the tool is never\n"
+                    "        registered and the avatar answers from AI Search alone.\n"
+                    "        azd env set WEBIQ_API_KEY <key>",
+                warn_only=True,
+            )
+        )
+        # Bing is deployed by default and gated only on its own flag, so model
+        # mode otherwise pays for a billable resource it cannot reach.
+        if cfg.get("DEPLOY_BING_GROUNDING", "true").strip().lower() != "false":
+            results.append(
+                CheckResult(
+                    "Model mode: Bing grounding",
+                    False,
+                    "will be deployed, but model mode cannot use it",
+                    fix="        Voice Live accepts only FUNCTION and MCP tools in model mode,\n"
+                        "        so the managed Grounding-with-Bing tool has nothing to attach\n"
+                        "        to. Deploying it bills a Bing account the avatar can never\n"
+                        "        reach. Web IQ is the web tool in this mode.\n"
+                        "        azd env set DEPLOY_BING_GROUNDING false",
+                    warn_only=True,
+                )
+            )
+
     return results
 
 
@@ -507,6 +596,7 @@ def main() -> int:
             check_avatar(voicelive_loc),
         ]
     checks += check_required_inputs(profile, cfg)
+    checks += check_voice_binding(cfg)
     for extra in (
         check_dns_label(cfg, location),
         check_vm_password(cfg),

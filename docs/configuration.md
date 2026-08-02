@@ -155,16 +155,16 @@ and `bing_grounding` tools go with it — the tool surface becomes in-process Py
 | `WEBIQ_REGION` | `ZA` | Result region hint. |
 | `WEBIQ_USE_ENTRA` | — | Set to authenticate to Web IQ with Entra instead of an API key. |
 
-> **Note.** In `DEVELOPER_MODE` a session may override the binding per connection
-> from the settings panel, so agent and model can be compared side by side in two
-> browser tabs. Each websocket opens its own Voice Live connection, so the sessions
-> share no state. Outside `DEVELOPER_MODE` the override is ignored.
+> **Note.** The binding is a **deployment-wide** setting — a client cannot choose it.
+> To compare the two, set `VOICE_BINDING` and redeploy. That keeps the comparison
+> honest: both modes run the same code path production runs, with nothing switched at
+> the edge. See [voice-binding.md](voice-binding.md) for the measured trade-off.
 
 ## Runtime tuning
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `DEVELOPER_MODE` | `false` | `true` exposes the settings panel, live transcript, and per-event debug logging, and lets a session override `VOICE_BINDING` per connection. `false` (production) auto-starts an avatar-only experience. Set it on a deployment with `azd env set DEVELOPER_MODE true` — it is a Bicep parameter, so a value set imperatively with `az containerapp update` would be reverted by the next `azd provision`. It changes no pipeline default: the settings panel is pre-populated with the same values production uses. |
+| `DEVELOPER_MODE` | `false` | `true` exposes the settings panel, live transcript, and per-event debug logging, so settings can be changed and tried live while testing. `false` (production) auto-starts an avatar-only experience with settings locked. Set it on a deployment with `azd env set DEVELOPER_MODE true` — it is a Bicep parameter, so a value set imperatively with `az containerapp update` would be reverted by the next `azd provision`. It changes no pipeline default: the settings panel is pre-populated with the same values production uses. It does **not** expose `VOICE_BINDING`, which is deployment-wide. |
 | `MEETING_CATALOG_TTL_S` | `900` | Seconds the backend caches the meeting catalogue it fetches from AI Search and injects at session start ([`backend/voice/catalog.py`](../backend/voice/catalog.py)). |
 | `APPLICATIONINSIGHTS_CONNECTION_STRING` | — | App Insights connection string for telemetry. |
 | `LOG_LEVEL` | `INFO` | Root logging level (`DEBUG`, `INFO`, `WARNING`, …). `DEVELOPER_MODE=true` already raises per-event detail; use this to quieten or deepen logs independently. |
