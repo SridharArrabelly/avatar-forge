@@ -35,7 +35,7 @@ Set with `uv run python scripts/set_profile.py` rather than by hand.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `DEPLOY_PROFILE` | *(empty)* | `web` · `teams-tab` · `teams-chat` · `in-call`. Selects which channel deploys, and drives the numbered step plan `scripts/preflight.py` prints. Empty keeps the pre-profile behaviour (explicit flags only). |
+| `DEPLOY_PROFILE` | *(empty)* | `web` · `teams-tab` · `in-call`. Selects which channel deploys, and drives the numbered step plan `scripts/preflight.py` prints. Empty keeps the pre-profile behaviour (explicit flags only). |
 | `PREFLIGHT_SKIP` | `false` | `true` bypasses the preprovision preflight gate. An escape hatch — nobody should be stuck behind their own tooling. |
 
 ---
@@ -61,6 +61,8 @@ auth is rejected on the agent path. See [auth.md](auth.md).
 |---|---|---|
 | `AZURE_TENANT_ID` / `AZURE_CLIENT_ID` / `AZURE_CLIENT_SECRET` | — | Only for the (not recommended) local-Docker service-principal path. Leave unset on host (`az login`) and in Azure (managed identity). |
 | `AUTH_EXCLUDE_MANAGED_IDENTITY` | `false` | Dev-laptop only: skip the ~5s IMDS managed-identity probe to cut startup pre-warm from ~7s to ~1.5s. **Leave UNSET in Azure** — Container Apps / App Service / AKS workload identity all need the IMDS path. See [auth.md](auth.md). |
+| `AZURE_VOICELIVE_API_KEY` | — | Key-based fallback for the Voice Live connection. Unset is the intended posture: the backend then uses `DefaultAzureCredential`, which is what the deployed managed identity relies on. Use it only where a key is genuinely unavoidable. |
+| `RBAC_PROPAGATION_TIMEOUT_S` | `1200` | Seconds [`scripts/rbac_propagation.py`](../scripts/rbac_propagation.py) waits for a freshly assigned role to become effective. Role assignments are eventually consistent, so a greenfield deploy can otherwise fail on a permission that *has* been granted but has not landed yet. |
 
 ---
 
@@ -71,7 +73,7 @@ agent-creation time; the runtime backend never talks to Bing directly.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `DEPLOY_BING_GROUNDING` | `true` | **Infra-only.** `azd up` deploys the whole web tool — the Bing account, the curated site allow-list and the Foundry connection — and sets the two variables below automatically. Set `false` to skip it (it is a billable resource); the agent then answers from AI Search alone. Only takes effect on a greenfield deploy (there must be a Foundry project to attach the connection to). |
+| `DEPLOY_BING_GROUNDING` | `true` | **Infra-only, agent mode only.** `azd up` deploys the whole web tool — the Bing account, the curated site allow-list and the Foundry connection — and sets the two variables below automatically. Set `false` to skip it (it is a billable resource); the agent then answers from AI Search alone. Only takes effect on a greenfield deploy (there must be a Foundry project to attach the connection to). **Ignored under `VOICE_BINDING=model`**, which has no agent to attach a managed tool to and uses Web IQ instead. |
 | `BING_SKU_NAME` | `G2` | **Optional, infra-only.** Bing pricing tier when `DEPLOY_BING_GROUNDING=true`. `G2` is the tier this project has run on; `G1` is the lower tier. |
 | `BING_CONNECTION_NAME` | *(unset — web tool disabled)* | **Optional.** Foundry connection for Grounding with Bing Custom Search (the agent's only external tool). Set for you when `DEPLOY_BING_GROUNDING=true`; otherwise name an existing connection. Leave unset for a search-only agent; naming a connection that doesn't exist skips the tool with a warning rather than failing. |
 | `BING_CUSTOM_CONFIG_NAME` | *(unset — web tool disabled)* | **Optional.** Bing Custom Search configuration name — the curated domain allow-list the web tool is restricted to. Set for you when `DEPLOY_BING_GROUNDING=true`; otherwise required alongside `BING_CONNECTION_NAME`. |
@@ -79,7 +81,6 @@ agent-creation time; the runtime backend never talks to Bing directly.
 | `AGENT_REASONING_EFFORT` | `none` | Reasoning effort. **Model-dependent:** `gpt-4.x`/`gpt-4o` reject it (leave **unset** — they 400, manifesting as a silently non-speaking avatar); `gpt-5.x` accept `none\|low\|medium\|high\|xhigh`; o-series accept `low\|medium\|high`. For voice latency the validated value is `none` (real reasoning adds 4–5s to first token). The script also selects the prompt variant from this. |
 | `AI_SEARCH_TOP_K` | `8` | Chunks pulled from the meeting-minutes index per turn. |
 | `BING_COUNT` | `8` | Snippets returned from the Bing Custom Search allow-list per turn. |
-| `AGENT_ID` | — | Optional explicit agent id; when empty the agent is resolved by `AGENT_NAME`. |
 
 > **The curated site allow-list is not an environment variable.** It is the
 > `bingAllowedDomains` parameter in [`infra/main.bicep`](../infra/main.bicep) — a list of
@@ -108,6 +109,7 @@ Read by [`scripts/setup_aisearch_index.py`](../scripts/setup_aisearch_index.py) 
 | `CHUNK_SIZE` / `CHUNK_OVERLAP` | `1200` / `200` | Chunking window (chars) and overlap. |
 | `RECREATE_INDEX` | `false` | `true` drops and recreates the index. |
 | `SEARCH_VECTOR_PROFILE` / `SEARCH_HNSW_ALGO` / `SEARCH_SEMANTIC_CONFIG` / `SEARCH_VECTORIZER` | `default-*` | Internal structural names; override only to stay compatible with an index built with different names. |
+| `SEARCH_VECTOR_FIELD` | `content_vector` | Name of the vector field queried at **runtime** by `search_minutes` in model mode ([`backend/voice/tools.py`](../backend/voice/tools.py)). Unlike the row above it is read on every query, not only at build time, so it must match the field the index was actually built with. |
 
 ---
 
@@ -115,24 +117,119 @@ Read by [`scripts/setup_aisearch_index.py`](../scripts/setup_aisearch_index.py) 
 
 Read **only** when `azd` creates a new Foundry model deployment
 ([`infra/main.bicep`](../infra/main.bicep)). Unused for a brownfield (BYO Foundry)
-deploy. Keep `MODEL_DEPLOYMENT_NAME` aligned with `AGENT_MODEL`, and `MODEL_VERSION`
-matched to `MODEL_NAME` (an invalid pair fails the deployment).
+deploy. Keep `MODEL_VERSION` matched to `MODEL_NAME` — an invalid pair fails the
+deployment.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `MODEL_NAME` | `gpt-5.4` | OpenAI model to deploy. |
+| `MODEL_NAME` | `gpt-5.4` | **Which** model to pull from the catalogue. |
 | `MODEL_VERSION` | `2026-03-05` | Model version (must match `MODEL_NAME`). |
-| `MODEL_DEPLOYMENT_NAME` | `gpt-5.4` | Deployment name (the agent binds to it). |
+| `MODEL_DEPLOYMENT_NAME` | `gpt-5.4` | What to **call** that deployment. |
 | `MODEL_SKU_NAME` | `GlobalStandard` | Deployment SKU. |
 | `MODEL_CAPACITY` | `50` | TPM (thousands) capacity. |
 
+### Why `MODEL_NAME` and `MODEL_DEPLOYMENT_NAME` are both needed
+
+They look redundant because the defaults are identical, but they are two different
+fields on the Azure resource and neither can be dropped:
+
+```bicep
+resource deployment 'Microsoft.CognitiveServices/accounts/deployments@...' = {
+  name: modelDeploymentName            // what you call it — the alias callers use
+  properties: {
+    model: { name: modelName, version: modelVersion }   // which model it actually is
+  }
+}
+```
+
+So you can deploy `gpt-5.4` under the name `chat-prod`, then swap the model behind
+that name later without changing a single caller. That indirection is the whole point
+of a deployment name, and it is why callers — including the Foundry agent — reference
+`MODEL_DEPLOYMENT_NAME`, never `MODEL_NAME`.
+
+> **`AGENT_MODEL` is a *deployment* name too, despite the variable name.** It is what
+> the agent binds to. On a greenfield deploy you do **not** set it — it follows
+> `MODEL_DEPLOYMENT_NAME` automatically, because the agent has to bind to the
+> deployment the template just created. Set it explicitly only for BYO Foundry, where
+> the deployment already exists and this template did not name it.
+> [`scripts/test_agent_model_binding.py`](../scripts/test_agent_model_binding.py) pins
+> that behaviour.
+
 ---
+
+## Voice Live binding — agent mode / model mode
+
+Voice Live binds either to the Foundry agent (default) or straight to a realtime
+speech-to-speech model. Full design record, trade-offs and measured numbers:
+**[voice-binding.md](voice-binding.md)**.
+
+Leaving all of these unset is exactly today's behaviour.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `VOICE_BINDING` | `agent` | `agent` binds the Foundry agent; `model` binds a realtime model directly and moves the tools in-process. Any unrecognised value falls back to `agent`. |
+| `VOICELIVE_MODEL` | `gpt-realtime-2` | Realtime model bound when `VOICE_BINDING=model`. Voice Live manages it — no model deployment and no quota request. Ignored in agent mode. Verified to bind in swedencentral: `gpt-realtime-2`, `gpt-realtime-1.5`, `gpt-realtime`. |
+
+Model mode takes the agent out of the picture, and its managed `azure_ai_search`
+and `bing_grounding` tools go with it — the tool surface becomes in-process Python
+(`backend/voice/tools.py`). `search_minutes` queries the same `knowledge-index`;
+`search_web` is Web IQ and is advertised to the model **only when a key is set**.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `WEBIQ_API_KEY` | — | Enables the `search_web` tool in model mode. Passed to the container app as a **secret**, never as a plain environment variable. Unset leaves the web tool off entirely and the assistant answers from the minutes corpus alone. |
+| `WEBIQ_BASE_URL` | `https://api.microsoft.ai/v3` | Web IQ endpoint. |
+| `WEBIQ_ALLOWED_DOMAINS` | — | Comma-separated hosts that scope the search, e.g. `jse.co.za,mtn.com`. Web IQ has no server-side allow-list — its request model exposes no `site` field — so [`build_query()`](../backend/voice/tools.py) compiles these into `site:a OR site:b` operators on the query, which is the mechanism the Web IQ API documents. Same intent as `bingAllowedDomains`: an open-web tool answering to an executive should not be able to cite anywhere at all. Empty searches the open web. **Write bare hosts, not URLs and not `www.`** — see the two notes below. |
+| `WEBIQ_LANGUAGE` | `en` | Result language hint. |
+| `WEBIQ_REGION` | `ZA` | Result region hint. |
+| `WEBIQ_USE_ENTRA` | — | Set to authenticate to Web IQ with Entra instead of an API key. |
+
+> **`site:` matches a domain and every subdomain under it — it is not a hostname
+> filter.** Two consequences, both measured against the live API:
+>
+> - **Do not prefix with `www.`.** `site:www.jse.co.za` excludes `senspdf.jse.co.za`,
+>   which is where the JSE's SENS filings live — 9 of 10 results for a SENS query.
+>   The bare host keeps them.
+> - **Staging mirrors come in for free.** `site:sashares.co.za` returns hits on
+>   `dev.sashares.co.za`, and Web IQ once ranked that mirror *first* for a share-price
+>   question, quoting a two-month-old figure. `search_web` drops results whose host is
+>   a strict subdomain of an allowed domain when the extra labels are all
+>   non-production markers (`dev`, `staging`, `uat`, …).
+>
+> This is also where model mode is structurally weaker than agent mode: entries in
+> `bingAllowedDomains` are **path-scoped and boosted** (`/investors`, `/mtn-shares`),
+> and `site:` cannot express either. Model mode reads whole hosts where agent mode
+> reads curated sections, so web-grounded answers are not strictly comparable between
+> bindings.
+
+Model mode also owns its own answer-shaping knobs, because there is no agent to
+carry them:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `REALTIME_MAX_TOKENS` | `1200` | Ceiling on a single spoken response. A voice answer that runs long is worse than one that stops early — the listener has already got the point. |
+| `REALTIME_INTERIM_TEXTS` | — *(empty: off)* | Comma-separated canned lines the **platform** speaks while a tool call is in flight, e.g. `Let me check.,One moment.`. Empty disables the spoken filler. Model mode only. |
+| `REALTIME_INTERIM_THRESHOLD_MS` | `300` | How long a tool call must run before an interim line is spoken. Deliberately below the tool floor (~280 ms web, ~714 ms minutes); at the SDK default of 2000 ms it never fired at all. Irrelevant while `REALTIME_INTERIM_TEXTS` is empty. |
+
+> **The two fillers are independent.** The on-screen "thinking" indicator is a
+> frontend affordance driven by `response_created` and is unaffected by these
+> settings. `REALTIME_INTERIM_TEXTS` controls only the **spoken** cue.
+>
+> Turning the spoken cue off does not guarantee silence: with no platform line to
+> fill the gap the model tends to improvise its own preamble, which is unbounded
+> where the canned line was four words. See
+> [voice-binding.md](voice-binding.md) and issue #77.
+
+> **Note.** The binding is a **deployment-wide** setting — a client cannot choose it.
+> To compare the two, set `VOICE_BINDING` and redeploy. That keeps the comparison
+> honest: both modes run the same code path production runs, with nothing switched at
+> the edge. See [voice-binding.md](voice-binding.md) for the measured trade-off.
 
 ## Runtime tuning
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `DEVELOPER_MODE` | `false` | `true` exposes the settings panel, live transcript, and per-event debug logging. `false` (production) auto-starts an avatar-only experience. |
+| `DEVELOPER_MODE` | `false` | `true` exposes the settings panel, live transcript, and per-event debug logging, so settings can be changed and tried live while testing. `false` (production) auto-starts an avatar-only experience with settings locked. Set it on a deployment with `azd env set DEVELOPER_MODE true` — it is a Bicep parameter, so a value set imperatively with `az containerapp update` would be reverted by the next `azd provision`. It changes no pipeline default: the settings panel is pre-populated with the same values production uses. It does **not** expose `VOICE_BINDING`, which is deployment-wide. |
 | `MEETING_CATALOG_TTL_S` | `900` | Seconds the backend caches the meeting catalogue it fetches from AI Search and injects at session start ([`backend/voice/catalog.py`](../backend/voice/catalog.py)). |
 | `APPLICATIONINSIGHTS_CONNECTION_STRING` | — | App Insights connection string for telemetry. |
 | `LOG_LEVEL` | `INFO` | Root logging level (`DEBUG`, `INFO`, `WARNING`, …). `DEVELOPER_MODE=true` already raises per-event detail; use this to quieten or deepen logs independently. |
@@ -261,29 +358,6 @@ mode. Captions are **off** by default; suggested prompts, the on-stage composer
 
 ---
 
-## Teams conversational bot (channel C, issue #53)
-
-Only needed when hosting the Teams bot. The bot reuses the same Foundry agent
-(`AGENT_NAME` / `PROJECT_ENDPOINT`) for answers. Bot identity comes from the Azure
-Bot registration + its Entra app — see [`teams/README.md`](../teams/README.md) for
-the portal/CLI steps. If `TEAMS_BOT_ID` / `BOT_APP_ID` is unset, the bot infra is
-skipped and the deploy behaves exactly like channel B (tab-only).
-
-| Variable | Default | Purpose |
-|---|---|---|
-| `BOT_APP_ID` | — | **The one you set.** `azd env set BOT_APP_ID <id>` — the chat bot's Entra app (client) id. Provisions `botService.bicep` and populates the `CONNECTIONS__*` values below. Unset ⇒ the bot infra is skipped entirely. |
-| `BOT_APP_PASSWORD` | — | That app's client secret. Stored as an ACA secret by infra, never as a plain env var. |
-| `BOT_APP_TENANT_ID` | *(deployment tenant)* | Tenant of the bot's Entra app. |
-| `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTID` | — | Bot app client id (Microsoft 365 Agents SDK convention). **Set for you by infra** from `BOT_APP_ID`; the backend reads this name first. |
-| `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTSECRET` | — | Bot app client secret (stored as an ACA secret by infra). |
-| `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__TENANTID` | — | Tenant id of the bot's Entra app. |
-| `TEAMS_BOT_ID` | — | The bot's Microsoft App ID (GUID). Also fills `{{BOT_ID}}` in the manifest via [`teams/build_package.py`](../teams/build_package.py). |
-| `TEAMS_APP_ID` | — | The Teams app (manifest) id; used to build deep links from the bot back into the personal tab. Match the id used to build the package. |
-| `TEAMS_TAB_ENTITY_ID` | `avatarForgeHome` | The static-tab entity id the bot deep-links to. |
-| `BOT_RUN_TIMEOUT_S` | `60` | Max seconds a grounded Foundry run executes in the background before a "took too long" reply. Answers are delivered as a proactive message (ack-then-background-run), so this is **not** bound by the Teams ~15s turn window. |
-
----
-
 ## Teams app package *(build only)*
 
 Read by [`teams/build_package.py`](../teams/build_package.py) when it templates
@@ -300,10 +374,10 @@ it — see [`teams/README.md`](../teams/README.md).
 | `TEAMS_APP_VERSION` | `--version` | `1.0.0` | Manifest version. Teams refuses a re-upload unless this increases. |
 | `TEAMS_APP_ID` | `--app-id` | *(uuid5 of the hostname)* | Manifest app id (GUID). Derived deterministically from the hostname when unset, so rebuilds match. |
 | `TEAMS_BOT_ID` | `--bot-id` | — | Bot app id to embed. **Omit to build a tab-only package** — Teams rejects an upload whose bot is not registered in your tenant. |
-| `TEAMS_ENABLE_CALLING` | `--enable-calling` | `false` | Sets `supportsCalling: true`. Pair with the **calling** bot's id (`MEETING_BOT_APP_ID`), not the chat bot's. |
+| `TEAMS_ENABLE_CALLING` | `--enable-calling` | `false` | Sets `supportsCalling: true`. Pair with the **calling** bot's id (`MEETING_BOT_APP_ID`). |
 | `TEAMS_ENABLE_COMPANION` | `--enable-companion` | `false` | Adds the in-meeting side panel / stage tabs. Off keeps the package identical to the tab-only shape. |
 
-## Teams in-call avatar (channel D, issue #27)
+## Teams in-call avatar (channel C, issue #27)
 
 Opt-in. The avatar joins a Teams **meeting**, hears every participant, and answers
 spoken questions aloud with a lip-synced camera tile, using the same Voice Live +
@@ -314,7 +388,7 @@ The `ACS_*` prefix is historical: these settings govern the in-call media bridge
 regardless of which transport feeds it (the Graph media bot on `/ws/acs/audio`, or the
 browser joiner on `/ws/acs/browser`). `MEETING_BOT_ENABLED=true` is enough on its own —
 it serves the media bot **without** provisioning an ACS resource. See
-[`docs/channels/d-in-call-media-bot.md`](channels/d-in-call-media-bot.md).
+[`docs/channels/c-in-call-media-bot.md`](channels/c-in-call-media-bot.md).
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -339,11 +413,11 @@ it serves the media bot **without** provisioning an ACS resource. See
 >   unless you are specifically using that page.
 > - **The audio *bridge*** — `ACS_AUDIO_SAMPLE_RATE`, `ACS_WAKE_PHRASES`,
 >   `ACS_REQUIRE_WAKE_PHRASE`, `ACS_IDLE_TIMEOUT_S`, `ACS_FOLLOWUP_WINDOW_S`. These
->   are read by `backend/acs/bridge.py` and **do apply to channel D**, which speaks
+>   are read by `backend/acs/bridge.py` and **do apply to channel C**, which speaks
 >   the same wire protocol over `/ws/acs/audio`. The turn-taking ones are the knobs
 >   you will actually tune in a live meeting.
 >
-> Channel D joins through Graph calling on the Windows host and never touches the ACS
+> Channel C joins through Graph calling on the Windows host and never touches the ACS
 > resource; the `acs` in the paths is the protocol's name, not a dependency.
 
 ### The avatar's face in the meeting

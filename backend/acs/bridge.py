@@ -1,6 +1,6 @@
 """AcsVoiceBridge — bridges an ACS media WebSocket to a Voice Live session.
 
-This is the heart of channel D. It is an **adapter**, not a transport swap: it
+This is the heart of channel C. It is an **adapter**, not a transport swap: it
 reuses the existing ``VoiceSessionHandler`` unchanged by feeding it the two
 callbacks it already expects (``send_message`` for control JSON, ``send_binary``
 for PCM16 output) and driving its input via ``send_audio_bytes``.

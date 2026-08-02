@@ -14,6 +14,22 @@ param searchIndexName string
 param voiceLiveVoice string
 param bingConnectionName string = ''
 param bingCustomConfigName string = ''
+
+@description('Voice Live binding: "agent" routes through the Foundry agent (default, unchanged behaviour); "model" binds Voice Live straight to a realtime model with in-process tools.')
+param voiceBinding string = 'agent'
+
+@description('Realtime model deployed by Voice Live when voiceBinding is "model". Voice Live manages this model itself — no model deployment or quota is needed.')
+param voiceLiveModel string = ''
+
+@description('Web IQ base URL used as the web tool in model mode. Empty falls back to the code default — the tool is gated on webIqApiKey, not on this.')
+param webIqBaseUrl string = ''
+
+@description('Comma-separated host allow-list applied to Web IQ results. Same security boundary as bingAllowedDomains: it is what makes an open-web tool safe to hand an executive assistant.')
+param webIqAllowedDomains string = ''
+
+@description('Web IQ API key. Passed as a container-app SECRET, never as a plain env var. Empty leaves the web tool switched off.')
+@secure()
+param webIqApiKey string = ''
 param appInsightsConnectionString string
 @description('Search service endpoint (https://<name>.search.windows.net/)')
 param searchEndpoint string = ''
@@ -36,21 +52,8 @@ param srModel string = 'mai-transcribe-1'
 @description('Recognition language locale (BCP-47, e.g. en-ZA). Use "auto" to let the SR model auto-detect.')
 param recognitionLanguage string = 'auto'
 
-// ───────── Teams bot (issue #53) ─────────
-@description('Bot Entra app client id. Surfaces as the SERVICE_CONNECTION client id + TEAMS_BOT_ID. Empty disables bot env wiring.')
-param botAppId string = ''
-@description('Bot app tenant id (single-tenant). Defaults handled by caller.')
-param botAppTenantId string = ''
-@description('Bot app client secret. Stored as a Container App secret and referenced by the SERVICE_CONNECTION client secret env var.')
-@secure()
-param botAppPassword string = ''
-@description('Teams app (manifest) id used to build deep links from the bot to the personal tab.')
-param teamsAppId string = ''
-@description('Foundry agent id override. Empty means resolve the agent by AGENT_NAME.')
-param agentId string = ''
-
-// ───────── channel D in-call media (#27) ─────────
-@description('ACS endpoint for the Call Automation media participant. Empty disables channel D in the container.')
+// ───────── channel C in-call media (#27) ─────────
+@description('ACS endpoint for the Call Automation media participant. Empty disables channel C in the container.')
 param acsEndpoint string = ''
 
 @description('"true"/"false" string. When "true", the .NET Teams media bot bridge (/ws/acs/audio) is served WITHOUT an ACS resource — sets MEETING_BOT_ENABLED so ACS_ENABLED is true on the Voice Live path alone.')
@@ -65,12 +68,15 @@ param acsRequireWakePhrase string = ''
 @description('"true"/"false" string. When "true", the in-call avatar sends an outgoing video tile so it is a visible participant instead of a faceless audio leg.')
 param acsAvatarVideoEnabled string = ''
 
+@description('"true"/"false" string. When "true" the browser exposes the settings panel, live transcript and per-event logging, so settings can be changed and tried live while testing. Production default "false" hides the panel, locks settings and auto-starts an avatar-only experience.')
+param developerMode string = 'false'
+
 @description('Placeholder image used on first provision; azd replaces it during `azd deploy`.')
 param containerImage string = 'mcr.microsoft.com/k8se/quickstart:latest'
 
-// Channel D ACS env (additive). Surfaces ACS_ENDPOINT only when enabled; the app
+// Channel C ACS env (additive). Surfaces ACS_ENDPOINT only when enabled; the app
 // reads it to construct the Call Automation client (managed identity via
-// AZURE_CLIENT_ID). Empty -> channel D stays off and the container behaves as today.
+// AZURE_CLIENT_ID). Empty -> channel C stays off and the container behaves as today.
 var acsEnv = !empty(acsEndpoint) ? [
   {
     name: 'ACS_ENDPOINT'
@@ -78,7 +84,40 @@ var acsEnv = !empty(acsEndpoint) ? [
   }
 ] : []
 
-// Channel D Teams media-bot env (additive). The .NET media bot connects to the
+// Model-mode env (additive). VOICE_BINDING defaults to 'agent', so a deploy
+// that sets nothing is byte-identical to today: the Foundry agent stays bound
+// and none of these variables are read. VOICELIVE_MODEL only matters when the
+// binding is 'model' — Voice Live manages that model itself, so there is no
+// model deployment and no quota request behind it.
+var voiceBindingEnv = concat([
+  { name: 'VOICE_BINDING', value: voiceBinding }
+], empty(voiceLiveModel) ? [] : [
+  { name: 'VOICELIVE_MODEL', value: voiceLiveModel }
+])
+
+// Web IQ is the web tool in model mode. Binding Voice Live to a model removes
+// the Foundry agent, and its managed Bing grounding tool goes with it — the
+// tools become ours to implement, so the web source has to be ours too.
+//
+// The key is a container-app SECRET rather than a plain env var, and the
+// allow-list mirrors bingAllowedDomains: a hard host restriction is what makes
+// an open-web tool safe to hand an executive assistant.
+var webIqConfigured = !empty(webIqApiKey)
+var webIqSecrets = webIqConfigured ? [
+  {
+    name: 'webiq-api-key'
+    value: webIqApiKey
+  }
+] : []
+var webIqEnv = webIqConfigured ? concat([
+  { name: 'WEBIQ_API_KEY', secretRef: 'webiq-api-key' }
+], empty(webIqBaseUrl) ? [] : [
+  { name: 'WEBIQ_BASE_URL', value: webIqBaseUrl }
+], empty(webIqAllowedDomains) ? [] : [
+  { name: 'WEBIQ_ALLOWED_DOMAINS', value: webIqAllowedDomains }
+]) : []
+
+// Channel C Teams media-bot env (additive). The .NET media bot connects to the
 // /ws/acs/audio bridge, which only needs Voice Live (no ACS resource). MEETING_BOT_ENABLED
 // flips ACS_ENABLED on so the bridge is served. Empty/false -> behaves as today.
 var meetingBotOn = toLower(meetingBotEnabled) == 'true'
@@ -88,43 +127,6 @@ var meetingBotEnv = concat(
   !empty(acsRequireWakePhrase) ? [ { name: 'ACS_REQUIRE_WAKE_PHRASE', value: acsRequireWakePhrase } ] : [],
   !empty(acsAvatarVideoEnabled) ? [ { name: 'ACS_AVATAR_VIDEO_ENABLED', value: acsAvatarVideoEnabled } ] : []
 )
-
-var botEnabled = !empty(botAppId)
-var botSecrets = !empty(botAppPassword) ? [
-  {
-    name: 'bot-app-password'
-    value: botAppPassword
-  }
-] : []
-// Bot env vars. The CONNECTIONS__SERVICE_CONNECTION__SETTINGS__* names are the
-// Microsoft 365 Agents SDK's configuration convention for the bot's identity.
-var botEnv = botEnabled ? concat([
-  {
-    name: 'TEAMS_BOT_ID'
-    value: botAppId
-  }
-  {
-    name: 'TEAMS_APP_ID'
-    value: teamsAppId
-  }
-  {
-    name: 'AGENT_ID'
-    value: agentId
-  }
-  {
-    name: 'CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTID'
-    value: botAppId
-  }
-  {
-    name: 'CONNECTIONS__SERVICE_CONNECTION__SETTINGS__TENANTID'
-    value: botAppTenantId
-  }
-], !empty(botAppPassword) ? [
-  {
-    name: 'CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTSECRET'
-    secretRef: 'bot-app-password'
-  }
-] : []) : []
 
 resource app 'Microsoft.App/containerApps@2024-10-02-preview' = {
   name: name
@@ -138,7 +140,7 @@ resource app 'Microsoft.App/containerApps@2024-10-02-preview' = {
     managedEnvironmentId: containerAppsEnvironmentId
     configuration: {
       activeRevisionsMode: 'Single'
-      secrets: botSecrets
+      secrets: webIqSecrets
       ingress: {
         external: true
         targetPort: 3000
@@ -169,7 +171,7 @@ resource app 'Microsoft.App/containerApps@2024-10-02-preview' = {
           env: concat([
             { name: 'PORT', value: '3000' }
             { name: 'AZURE_CLIENT_ID', value: uamiClientId }
-            { name: 'DEVELOPER_MODE', value: 'false' }
+            { name: 'DEVELOPER_MODE', value: developerMode }
             { name: 'AZURE_VOICELIVE_ENDPOINT', value: voiceliveEndpoint }
             { name: 'PROJECT_ENDPOINT', value: projectEndpoint }
             { name: 'AGENT_NAME', value: agentName }
@@ -193,7 +195,7 @@ resource app 'Microsoft.App/containerApps@2024-10-02-preview' = {
             { name: 'SR_MODEL', value: srModel }
             { name: 'RECOGNITION_LANGUAGE', value: recognitionLanguage }
             { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: appInsightsConnectionString }
-          ], concat(botEnv, acsEnv, meetingBotEnv))
+          ], concat(acsEnv, meetingBotEnv, voiceBindingEnv, webIqEnv))
           probes: [
             {
               type: 'Liveness'

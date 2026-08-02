@@ -1,4 +1,4 @@
-# Channel D — In-call avatar (Graph media bot)
+# Channel C — In-call avatar (Graph media bot)
 
 The avatar **joins a Teams meeting as a participant**, hears the whole room, and
 answers aloud with a lip-synced camera tile.
@@ -10,10 +10,10 @@ without a Teams app access policy that only a Teams administrator can create.
 
 Requires: [channel A](a-web.md) deployed.
 
-**Why this shape:** [d-design-media-bot.md](d-design-media-bot.md) (the three
+**Why this shape:** [c-design-media-bot.md](c-design-media-bot.md) (the three
 options evaluated, and why a .NET/Windows media relay is bridged to the Python
 brain rather than rewriting either) and
-[d-design-avatar-video.md](d-design-avatar-video.md) (why the face and the voice
+[c-design-avatar-video.md](c-design-avatar-video.md) (why the face and the voice
 must come from one synthesis).
 
 ---
@@ -65,8 +65,8 @@ flowchart LR
 The two paths differ **only at the edge** — both end at the same
 `VoiceSessionHandler`, so turn-taking, barge-in and grounding behave identically.
 The design records explain the decisions:
-[d-design-media-bot.md](d-design-media-bot.md) and
-[d-design-avatar-video.md](d-design-avatar-video.md).
+[c-design-media-bot.md](c-design-media-bot.md) and
+[c-design-avatar-video.md](c-design-avatar-video.md).
 
 ## 2. What you get
 
@@ -123,7 +123,8 @@ failure modes of each stage are in [`meeting-bot/README.md`](../../meeting-bot/R
 > is anything but a test host.
 
 > **The calling bot needs its OWN Entra app.** An Entra app can back only one Azure
-> Bot resource, so `MEETING_BOT_APP_ID` must differ from the chat bot's `BOT_APP_ID`.
+> Bot resource, so `MEETING_BOT_APP_ID` must not be reused from any other Azure Bot
+> registration.
 > Reusing it fails deployment with `MsaAppId is already in use` — an error that reads
 > like a transient Azure problem and is not. Preflight checks for this collision.
 

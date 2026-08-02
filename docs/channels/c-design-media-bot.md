@@ -1,4 +1,4 @@
-# Teams Meeting Bot — design & architecture (channel D, issue #27)
+# Teams Meeting Bot — design & architecture (channel C, issue #27)
 
 > **Goal in one sentence:** let the avatar (Nuru) **join a Teams meeting, hear every
 > participant — including remote callers — and answer their spoken questions aloud**,
@@ -26,7 +26,7 @@ Python service and a .NET service on purpose, and that decision needs to be defe
 ## 1. The problem, precisely
 
 The avatar already answers spoken questions beautifully **on the web** (mic → Azure Voice
-Live → Foundry agent with AI Search RAG + Bing news → spoken answer). Channel D is **not**
+Live → Foundry agent with AI Search RAG + Bing news → spoken answer). Channel C is **not**
 about answering — that pipeline is reused untouched. The hard, new problem is **meeting
 media transport**: getting *the room's* audio into that pipeline and the avatar's voice
 back into *the room*.
@@ -73,7 +73,7 @@ preference.
 ### Why mix languages instead of going all-.NET
 
 - **Only one component is .NET/Windows-locked** — the media ingestion. Everything else
-  (Voice Live, the Foundry agent, RAG, the channel C bot, the web app, infra) is fully
+  (Voice Live, the Foundry agent, RAG, the web app, infra) is fully
   supported in Python and already deployed and working.
 - **The .NET bot carries no business logic.** It is a *media pump*: join → grab PCM →
   forward → play back. All intelligence (STT, retrieval, answer, TTS, turn-taking) stays
@@ -175,7 +175,7 @@ needed. (`ACS_AUDIO_SAMPLE_RATE` already governs this on the Python side.)
 
 ## 6. Identity, permissions & admission
 
-The bot needs its **own** Entra app registration — separate from the chat bot's,
+The bot needs its **own** Entra app registration — dedicated to it,
 because an Entra app can back only one Azure Bot resource (reusing one fails with
 `MsaAppId is already in use`).
 
@@ -192,7 +192,7 @@ because an Entra app can back only one Azure Bot resource (reusing one fails wit
    (`az ad app credential reset`).
 2. **An Azure Bot registration with a *calling* webhook** — Graph delivers call
    signaling (incoming/established/participants) to this HTTPS endpoint. Follows the
-   `infra/modules/botService.bicep` pattern plus the calling webhook URL; codified in
+   the repo's additive-module pattern plus the calling webhook URL; codified in
    `infra/modules/meetingBotHost.bicep`.
 3. **Teams app manifest** with `supportsCalling: true`, and a **tenant policy** that
    allows bots in meetings.
@@ -235,8 +235,8 @@ The .NET bot does **not** implement any of this — it just carries audio and ho
 | Azure Bot registration | global | Calling webhook → the bot's signaling URL. |
 | ACS resource | optional | Only if a fallback ACS path is kept; not required for option (b). |
 
-All new infra is **additive and conditional** (mirrors `botService.bicep` /
-`communicationServices.bicep`): a deploy **without** channel D enabled behaves exactly as
+All new infra is **additive and conditional** (mirrors
+`communicationServices.bicep`): a deploy **without** channel C enabled behaves exactly as
 today. The Windows host is the one piece that is materially new and carries ongoing cost.
 
 **Recommended first host:** a single **Windows Server VM** (simplest to stand up and debug
@@ -289,7 +289,7 @@ re-confirmed before any production use.
 > and deploy with `azd up`; the .NET bot lives under `meeting-bot/`; the Python↔.NET
 > bridge contract (`VoiceLiveBridgeClient`) is unit-tested. The bot joins real
 > meetings, hears every participant, and answers aloud. Operating instructions:
-> [`d-in-call-media-bot.md`](./d-in-call-media-bot.md); code-local detail and the
+> [`c-in-call-media-bot.md`](./c-in-call-media-bot.md); code-local detail and the
 > traps that cost debugging time: [`meeting-bot/README.md`](../../meeting-bot/README.md).
 
 ### Step 2 — **Face**: Nuru is visible in the meeting
@@ -310,7 +310,7 @@ Same bot foundation; a second slice. The route is **decided**:
 
 **The full Route A design — architecture, data flow, why audio and video must share one
 synthesis, component changes, the aiortc↔Voice Live feasibility risk, and the phased
-increments — is in [`d-design-avatar-video.md`](./d-design-avatar-video.md).**
+increments — is in [`c-design-avatar-video.md`](./c-design-avatar-video.md).**
 
 **Build order (as executed):** audio leg → video scaffold (flag-gated
 `VideoSocket` + placeholder NV12 tile) → the hard increment (server-side avatar WebRTC
@@ -321,7 +321,7 @@ work, and `Bot:EnableVideo=false` still yields the byte-for-byte audio-only sess
 > adds the outbound NV12 `VideoSocket`; `CallHandler` runs the playout loop; the bridge
 > carries `VideoData` frames decoded from Voice Live's avatar stream in Python. Lip-sync
 > is driven by both streams coming from one synthesis, as designed. Implementation
-> detail: [`d-design-avatar-video.md`](./d-design-avatar-video.md).
+> detail: [`c-design-avatar-video.md`](./c-design-avatar-video.md).
 ---
 
 ## 11. Risks, costs & open questions
@@ -361,5 +361,5 @@ existed.
 ---
 
 *See also: [`architecture.md`](../architecture.md) for the overall system, and
-[`d-in-call-media-bot.md`](./d-in-call-media-bot.md) for the operator steps and admin
+[`c-in-call-media-bot.md`](./c-in-call-media-bot.md) for the operator steps and admin
 requests.*

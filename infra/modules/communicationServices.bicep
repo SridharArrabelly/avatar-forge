@@ -1,7 +1,7 @@
-// Azure Communication Services resource for the channel D in-call media participant (#27).
+// Azure Communication Services resource for the channel C in-call media participant (#27).
 //
-// Conditional + additive (mirrors botService.bicep): only deployed when channel D is
-// explicitly enabled (enableAcs=true). A deploy WITHOUT channel D never creates this
+// Conditional + additive (mirrors botService.bicep): only deployed when channel C is
+// explicitly enabled (enableAcs=true). A deploy WITHOUT channel C never creates this
 // resource, so existing (media-less) deployments behave exactly as today.
 //
 // SCOPE OF THIS MODULE: it provisions ONLY the ACS resource itself. It does NOT:

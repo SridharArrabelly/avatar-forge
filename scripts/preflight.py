@@ -33,6 +33,8 @@ from dataclasses import dataclass
 from channels import (
     ADMIN,
     AFTER,
+    BINDING_ORDER,
+    BINDINGS,
     BOLD,
     CYAN,
     DIM,
@@ -250,27 +252,91 @@ def check_required_inputs(profile, cfg: dict[str, str]) -> list[CheckResult]:
     return results
 
 
-def check_distinct_bot_apps(cfg: dict[str, str]) -> CheckResult | None:
-    """An Entra app can back only ONE Azure Bot resource.
+def check_voice_binding(cfg: dict[str, str]) -> list[CheckResult]:
+    """Validate the brain choice and the config that choice implies.
 
-    Reusing the chat bot's app id for the calling bot fails deployment with
-    'MsaAppId is already in use' — an error that reads like a transient Azure
-    problem and is not.
+    The binding is set by scripts/set_profile.py alongside the channel. It is
+    checked here because each mode has its own hard requirement, and getting it
+    wrong fails at runtime rather than at deploy time — agent mode without an
+    agent name simply never answers, and model mode silently drops web search
+    when Web IQ is unconfigured, because Grounding with Bing cannot follow into
+    model mode.
     """
-    chat = cfg.get("BOT_APP_ID", "").strip().lower()
-    calling = cfg.get("MEETING_BOT_APP_ID", "").strip().lower()
-    if not chat or not calling:
-        return None
-    ok = chat != calling
-    return CheckResult(
-        "Chat bot and calling bot use different Entra apps",
-        ok,
-        "distinct" if ok else f"both are {chat}",
-        fix=(
-            "        Register a SECOND Entra app for the calling bot. One app cannot back\n"
-            "        two Azure Bot resources; deployment fails with 'MsaAppId is already in use'."
-        ),
-    )
+    raw = cfg.get("VOICE_BINDING", "").strip().lower()
+    binding = raw or "agent"
+
+    if binding not in BINDINGS:
+        return [
+            CheckResult(
+                "Voice binding",
+                False,
+                f"{raw!r} is not a valid binding",
+                fix="        Pick one of: " + ", ".join(BINDING_ORDER) + "\n"
+                    "        uv run python scripts/set_profile.py",
+            )
+        ]
+
+    results = [
+        CheckResult(
+            "Voice binding",
+            True,
+            f"{binding} — {BINDINGS[binding].title}"
+            + ("" if raw else " (default; not set explicitly)"),
+        )
+    ]
+
+    if binding == "agent":
+        agent = cfg.get("AGENT_NAME", "").strip()
+        results.append(
+            CheckResult(
+                "Agent mode: AGENT_NAME",
+                bool(agent),
+                agent or "not set",
+                fix="        Agent mode binds to a Foundry agent by name.\n"
+                    "        azd env set AGENT_NAME <agent-name>",
+            )
+        )
+    else:
+        model = cfg.get("VOICELIVE_MODEL", "").strip()
+        results.append(
+            CheckResult(
+                "Model mode: VOICELIVE_MODEL",
+                True,
+                model or "not set — using the built-in default",
+                warn_only=True,
+            )
+        )
+        web_iq = cfg.get("WEBIQ_API_KEY", "").strip()
+        results.append(
+            CheckResult(
+                "Model mode: WEBIQ_API_KEY",
+                bool(web_iq),
+                "set" if web_iq else "not set — the avatar will have no web search",
+                fix="        Grounding with Bing cannot follow into model mode, so web\n"
+                    "        search runs through Web IQ. Without a key the tool is never\n"
+                    "        registered and the avatar answers from AI Search alone.\n"
+                    "        azd env set WEBIQ_API_KEY <key>",
+                warn_only=True,
+            )
+        )
+        # Bing is now gated on the binding in resources.bicep, so model mode no
+        # longer provisions it whatever DEPLOY_BING_GROUNDING says. Report that
+        # as a fact rather than a warning — there is nothing for the user to fix.
+        if cfg.get("DEPLOY_BING_GROUNDING", "true").strip().lower() != "false":
+            results.append(
+                CheckResult(
+                    "Model mode: Bing grounding",
+                    True,
+                    "not deployed — model mode cannot attach it",
+                    fix="        Voice Live accepts only FUNCTION and MCP tools in model mode,\n"
+                        "        so the managed Grounding-with-Bing tool has nothing to attach\n"
+                        "        to. Bicep skips it under this binding even though\n"
+                        "        DEPLOY_BING_GROUNDING is set. Web IQ is the web tool here.",
+                    warn_only=True,
+                )
+            )
+
+    return results
 
 
 def check_dns_label(cfg: dict[str, str], location: str) -> CheckResult | None:
@@ -530,8 +596,8 @@ def main() -> int:
             check_avatar(voicelive_loc),
         ]
     checks += check_required_inputs(profile, cfg)
+    checks += check_voice_binding(cfg)
     for extra in (
-        check_distinct_bot_apps(cfg),
         check_dns_label(cfg, location),
         check_vm_password(cfg),
     ):

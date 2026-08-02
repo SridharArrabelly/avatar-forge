@@ -58,26 +58,7 @@
       "isNotificationOnly": false,
       "supportsFiles": false,
       "supportsCalling": false,
-      "supportsVideo": false,
-      "commandLists": [
-        {
-          "scopes": [
-            "personal",
-            "team",
-            "groupchat"
-          ],
-          "commands": [
-            {
-              "title": "Ask a question",
-              "description": "Ask the knowledge base anything; I answer with sources."
-            },
-            {
-              "title": "Open the live avatar",
-              "description": "Get a link to the rich, real-time avatar tab."
-            }
-          ]
-        }
-      ]
+      "supportsVideo": false
     }
   ],
   "devicePermissions": [

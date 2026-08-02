@@ -9,14 +9,16 @@ or `azd` for local development — just `uv` and `az login`. For env vars see
 
 - **Python 3.10+**
 - An active Azure account ([free account](https://azure.microsoft.com/free/ai-services))
-- A **Microsoft Foundry** resource in a [Voice Live region](https://learn.microsoft.com/azure/ai-services/speech-service/voice-live)
+- A **Microsoft Foundry** resource in a region that supports both Voice Live and the
+  avatar — `eastus2`, `southeastasia`, `swedencentral`, `westus2`
 - A base chat model deployed in Foundry (e.g. `gpt-4.1` or `gpt-5`+) — the agent binds to it
 - An [Azure AI Search](https://learn.microsoft.com/azure/search/search-create-service-portal)
   service, added as a [connected resource](https://learn.microsoft.com/azure/ai-foundry/how-to/connections-add)
   in the Foundry project (its connection name → `SEARCH_CONNECTION_NAME`)
 
-> **Avatar regions.** The avatar feature is available in: Southeast Asia, North Europe,
-> West Europe, Sweden Central, South Central US, East US 2, West US 2.
+> Those four regions are the intersection of the Voice Live and avatar region sets;
+> `scripts/preflight.py` holds the authoritative lists and checks them for you.
+> [deployment.md](deployment.md#regions) explains what happens if you pick another.
 
 ## 1. Install uv (one-time)
 
@@ -30,7 +32,7 @@ the app.
 ## 2. Configure your environment
 
 ```powershell
-cp .env.example .env
+Copy-Item .env.example .env
 ```
 
 Fill in at least the required runtime vars (`AZURE_VOICELIVE_ENDPOINT`, `AGENT_NAME`,
@@ -43,6 +45,20 @@ Authenticate (the Voice Live agent path requires Entra ID — no API key):
 ```powershell
 az login
 ```
+
+### Which brain? (`VOICE_BINDING`)
+
+The app binds Voice Live to one of two things, and the default is `agent`:
+
+| | `VOICE_BINDING=agent` (default) | `VOICE_BINDING=model` |
+| --- | --- | --- |
+| Answers come from | a **Foundry agent** that owns its own tools | the **realtime model**, with tools executed by this backend |
+| Web grounding | Grounding-with-Bing-Custom-Search (a native Foundry tool) | Web IQ, which needs `WEBIQ_API_KEY` in your `.env` |
+| Extra local setup | none beyond the above | that key |
+
+Switch by setting `VOICE_BINDING` in `.env` — nothing else changes, and the same
+`az login` covers both. What each costs and how they compare on measured latency is in
+**[voice-binding.md](voice-binding.md)**.
 
 ## 3. Run the server
 
@@ -124,17 +140,37 @@ test checklist + model-shootout results live in
 
 ## Automated tests
 
-Everything above is a *smoke test* — it needs live Azure resources. Two checks run
-fully offline:
+Everything above is a *smoke test* — it needs live Azure resources. Most of the suite
+does not: **nine checks run fully offline**, with no Azure, no credentials and no
+network. They are the fastest way to know you have not broken anything.
 
 ```powershell
+uv run python scripts/test_docs.py             # links, mermaid, and region drift vs preflight.py
+uv run python scripts/test_preflight.py        # the helpers that settle the deploy target
+uv run python scripts/test_voice_binding.py    # the agent/model binding switch
+uv run python scripts/test_build_query.py      # site scoping renders the operators Web IQ documents
+uv run python scripts/test_avatar_identity.py  # every surface calls the assistant the same name
+uv run python scripts/test_build_package.py    # the Teams package builder's manifest
+uv run python scripts/test_agent_model_binding.py  # the agent binds to a deployment that exists
 uv run python scripts/test_agent_tool_wiring.py
+uv run python scripts/test_rbac_propagation.py # the RBAC-propagation wait used by postprovision
 ```
 
-Proves the agent's **required vs optional** tools degrade correctly: a missing AI Search
-connection is fatal (it is the corpus), while a missing — or wrongly named — Bing
-connection only disables the web tool. Needs no Azure and no credentials. Run it after
-touching `setup_foundry_agent.py`.
+There is no single runner — each is a standalone script, so run the one that covers what
+you touched. Only [`test_aisearch_query.py`](../scripts/test_aisearch_query.py) and
+[`test_foundry_agent.py`](../scripts/test_foundry_agent.py) need live Azure; those are
+the smoke tests above.
+
+Two are worth knowing in more detail.
+
+**`test_agent_tool_wiring.py`** proves the agent's **required vs optional** tools degrade
+correctly: a missing AI Search connection is fatal (it is the corpus), while a missing —
+or wrongly named — Bing connection only disables the web tool. Run it after touching
+`setup_foundry_agent.py`.
+
+**`test_build_package.py`** must run in a *clean* shell. It asserts the builder's
+behaviour when variables are unset, so a hydrated environment (one where you have
+`azd env get-values`'d into your session) makes it fail for the wrong reason.
 
 ```powershell
 cd meeting-bot\tests\BridgeContract.Tests
@@ -187,7 +223,7 @@ tenant allows service-principal secrets (`AZURE_TENANT_ID` / `AZURE_CLIENT_ID` /
 
 ## Run inside Microsoft Teams
 
-To run the same UI as a Teams personal tab (and the channel C conversational bot),
+To run the same UI as a Teams personal tab (channel B),
 follow [`teams/README.md`](../teams/README.md) — it covers building the package against
 your deployed hostname, the admin-free sideload routes, the bot's Azure Bot / Entra
 setup, and the validation checklist. The Teams integration is fully additive: the

@@ -73,31 +73,68 @@ PROACTIVE_GREETING = os.getenv(
 
 PROJECT_ENDPOINT = os.getenv("PROJECT_ENDPOINT", "")
 
-# ───────── Teams bot (channel C, issue #53) ─────────
-# The Foundry agent is resolved by ID when available (durable identifier), with
-# AGENT_NAME as a dev-only fallback (fails fast on zero/multiple matches).
-AGENT_ID = os.getenv("AGENT_ID", "")
-# Teams app id used to build deep links back to the channel B static tab (#28).
-# Defaults to TEAMS_APP_ID if that is what the package was built with.
-TEAMS_APP_ID = os.getenv("TEAMS_APP_ID", "")
-# entityId of the personal static tab in teams/manifest.template.json.
-TEAMS_TAB_ENTITY_ID = os.getenv("TEAMS_TAB_ENTITY_ID", "avatarForgeHome")
-# The bot's Entra app (client) id, used to send proactive messages back to a
-# conversation. Read from the same env var the Agents SDK uses for the service
-# connection so there is a single source of truth (set by infra/containerApp).
-BOT_APP_ID = os.getenv(
-    "CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTID",
-    os.getenv("BOT_APP_ID", ""),
-)
-# Max seconds to let a Foundry run execute in the background before giving up and
-# posting a "took too long" reply. Because answers are delivered proactively
-# (ack-then-background-run), this is NOT bound by the Teams ~15s turn window.
-BOT_RUN_TIMEOUT_S = float(os.getenv("BOT_RUN_TIMEOUT_S", "60"))
+# ───────── Voice Live binding: Foundry agent vs. realtime model ─────────
+# Two ways to give the avatar a brain, both over the same Voice Live session:
+#
+#   agent  — bind to a Foundry agent. Instructions, tools and temperature live
+#            in Foundry. Audio is transcribed by a separate speech-to-text model
+#            (SR_MODEL) before the agent ever sees it.
+#   model  — bind straight to a realtime model. It accepts audio natively, so
+#            the transcription stage disappears from the answer path, and the
+#            instructions and tools travel in the session instead.
+#
+# Defaults to `agent`, so an unconfigured deploy behaves exactly as before.
+VOICE_BINDING = os.getenv("VOICE_BINDING", "agent").strip().lower()
+# Realtime model used when VOICE_BINDING=model. Verified to bind (with avatar
+# and tools) in swedencentral: gpt-realtime-2, gpt-realtime-1.5, gpt-realtime.
+VOICELIVE_MODEL = os.getenv("VOICELIVE_MODEL", "gpt-realtime-2").strip()
 
-# ───────── Teams in-call media participant (channel D, issue #27) ─────────
-# Channel D is the live in-call avatar. It is ADDITIVE and OPT-IN: every endpoint
+# Resolved once so every module agrees on which binding is active.
+MODEL_BINDING = VOICE_BINDING == "model"
+
+# Model-mode response shaping. Both are inert in agent mode, where the Foundry
+# agent owns response behaviour.
+#
+# A realtime model left uncapped answers at length — measured 27-30 seconds of
+# speech against a prompt asking for two or three sentences. The cap is a
+# backstop, not the primary control: the prompt does the shaping, this stops the
+# worst case. Roughly 90 spoken seconds' worth, so it never truncates a
+# reasonable answer.
+REALTIME_MAX_TOKENS = int(os.getenv("REALTIME_MAX_TOKENS", "1200"))
+
+# Spoken while a tool call is in flight, so grounding is not dead air. Voice
+# Live picks one at random per turn — several short options rather than one line
+# repeated, which grates within a couple of turns.
+#
+# DEFAULT OFF, deliberately. Live testing found the spoken filler fires on every
+# tool-backed turn, which is almost every turn, and "One moment." ahead of each
+# answer reads as a tic rather than as reassurance. The on-screen "thinking"
+# indicator in the frontend already covers the same gap silently and is the
+# mechanism both bindings share, so nothing regresses by muting the voice.
+#
+# Note what this costs, because it is the whole of model mode's apparent speed:
+# the filler is what made model mode start speaking at ~1.0s against agent
+# mode's ~2.4s. Time to the *substantive answer* was 2.42s vs 2.45s — identical.
+# Muting the filler therefore removes a perceived-latency win without changing
+# any real one. Channel C (in-call audio) has no screen to put an indicator on
+# and will need a spoken cue, so this is expected to come back — as a tuned set
+# of triggers and phrasings rather than a blanket preamble.
+#
+# Set REALTIME_INTERIM_TEXTS="Let me check.,One moment." to re-enable.
+REALTIME_INTERIM_TEXTS = [
+    t.strip() for t in os.getenv("REALTIME_INTERIM_TEXTS", "").split(",") if t.strip()
+]
+
+# How long a tool may run before the acknowledgement is spoken. The SDK default
+# is 2000ms, which never fires here — measured tool latency is 714ms (minutes)
+# and ~280ms warm (web). Set below that floor so the platform covers the gap
+# instead of the model improvising a preamble to fill it.
+REALTIME_INTERIM_THRESHOLD_MS = int(os.getenv("REALTIME_INTERIM_THRESHOLD_MS", "300"))
+
+# ───────── Teams in-call media participant (channel C, issue #27) ─────────
+# Channel C is the live in-call avatar. It is ADDITIVE and OPT-IN: every endpoint
 # and the media bridge are gated on ACS being configured, so a deploy without ACS
-# behaves exactly as channel C. Two legs share the same Voice Live pipeline:
+# behaves exactly as the web app alone. Two legs share the same Voice Live pipeline:
 #   1. the .NET Graph media bot on a Windows VM  -> wss://.../ws/acs/audio
 #      (hears every participant; this is the real one)
 #   2. the browser joiner /acs-join.html         -> wss://.../ws/acs/browser
@@ -196,7 +233,7 @@ MEETING_BOT_VIDEO_FPS = int(os.getenv("MEETING_BOT_VIDEO_FPS", "15"))
 BROWSER_JOIN_VIDEO_ENABLED = os.getenv(
     "BROWSER_JOIN_VIDEO_ENABLED", "false"
 ).strip().lower() in ("1", "true", "yes", "on")
-# True when channel D in-call media is configured: either an ACS resource is set,
+# True when channel C in-call media is configured: either an ACS resource is set,
 # or the Graph media bot bridge is explicitly enabled.
 ACS_ENABLED = bool(ACS_ENDPOINT or ACS_CONNECTION_STRING or MEETING_BOT_ENABLED)
 

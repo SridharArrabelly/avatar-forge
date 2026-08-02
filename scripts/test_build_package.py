@@ -51,6 +51,7 @@ _ENV_KEYS = (
     "TEAMS_APP_VERSION",
     "TEAMS_APP_ID",
     "TEAMS_BOT_ID",
+    "MEETING_BOT_APP_ID",
     "AVATAR_DISPLAY_NAME",
     "AVATAR_NAME",
     "CUSTOM_AVATAR_NAME",
@@ -121,12 +122,24 @@ def main() -> int:
     print("1. Flag matrix -> which channel's surfaces the package carries")
     cases = [
         ("B  tab only", HOST, {}, (True, False, None, False)),
-        ("C  + chat bot", HOST + ["--bot-id", BOT], {}, (True, True, False, False)),
+        ("   + bot, no calling", HOST + ["--bot-id", BOT], {}, (True, True, False, False)),
         ("D  + calling", HOST + ["--bot-id", BOT, "--enable-calling"], {}, (True, True, True, False)),
         ("D  + companion", HOST + ["--bot-id", BOT, "--enable-companion"], {}, (True, True, False, True)),
     ]
     for label, argv, env, want in cases:
         check(label, surfaces(build(argv, env)[0]), want)
+
+    print("\n   bot id falls back to the azd env (channel C's calling bot)")
+    # The bicep TEAMS_BOT_ID output is gone, so MEETING_BOT_APP_ID is the value a
+    # channel C deploy actually leaves in the azd env. Without this fallback the
+    # documented `build_package.py --enable-calling` produces a tab-only package
+    # and silently drops the bot the operator just registered.
+    m, _ = build(HOST, {"MEETING_BOT_APP_ID": BOT})
+    check("MEETING_BOT_APP_ID -> bots entry", surfaces(m)[1], True)
+    m, _ = build(HOST, {"TEAMS_BOT_ID": BOT})
+    check("TEAMS_BOT_ID still honoured", surfaces(m)[1], True)
+    m, _ = build(HOST + ["--bot-id", BOT], {"MEETING_BOT_APP_ID": "not-a-guid"})
+    check("explicit --bot-id wins over env", m["bots"][0]["botId"], BOT)
 
     print("\n   env flags are equivalent to the CLI flags")
     m, _ = build(HOST + ["--bot-id", BOT], {"TEAMS_ENABLE_CALLING": "true"})

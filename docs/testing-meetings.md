@@ -67,7 +67,7 @@ curl.exe "$appUrl/api/acs/status"
 
 ---
 
-## Path A — browser joiner
+## Browser joiner
 
 1. Start (or join) the Teams meeting yourself, in the Teams client.
 2. Open the joiner in a **separate browser tab**: `$appUrl/acs-join.html`
@@ -119,7 +119,7 @@ az containerapp update -n $appName -g $rg `
 
 ---
 
-## Path B — media bot (the one that hears the room)
+## Media bot (the one that hears the room)
 
 This is the milestone that closes #27, and it is **working end to end**: the avatar
 joins, hears every participant, and answers aloud with a lip-synced camera tile.

@@ -4,24 +4,20 @@ version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
     "aiofiles>=25.1.0",
-    "aiohttp>=3.13.5",
-    "azure-ai-projects>=2.1.0",
-    "azure-ai-voicelive[aiohttp]>=1.0.0",
-    "microsoft-agents-activity>=1.0.0",
-    "microsoft-agents-hosting-core>=1.0.0",
-    "microsoft-agents-hosting-fastapi>=1.0.0",
-    "microsoft-agents-hosting-teams>=1.0.0",
-    "microsoft-agents-authentication-msal>=1.0.0",
+    "aiohttp>=3.14.3",
+    "azure-ai-projects>=2.4.0",
+    "azure-ai-voicelive[aiohttp]>=1.2.0",
     "azure-core>=1.41.0",
     "azure-identity>=1.26.0b2",
     "azure-search-documents>=12.0.0",
-    "fastapi>=0.104.0",
-    "openai>=2.36.0",
-    "pypdf>=6.11.0",
+    "fastapi>=0.141.1",
+    "httpx>=0.28.1",
+    "openai>=2.52.0",
+    "pypdf>=6.14.2",
     "python-docx>=1.2.0",
     "python-dotenv>=1.2.2",
-    "uvicorn[standard]>=0.24.0",
-    "azure-communication-callautomation>=1.6.0b1",
+    "uvicorn[standard]>=0.52.0",
+    "azure-communication-callautomation>=1.6.0",
     "azure-communication-identity>=1.5.0",
     # Decodes the Voice Live avatar stream (fragmented MP4: H.264 + AAC) into the
     # NV12 frames the Teams meeting bot's VideoSocket needs and PCM16 for the
@@ -42,4 +38,4 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-packages = ["backend", "backend.api", "backend.voice", "backend.bot", "backend.acs"]
+packages = ["backend", "backend.api", "backend.voice", "backend.acs"]

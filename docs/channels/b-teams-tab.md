@@ -11,7 +11,7 @@ Requires: [channel A](a-web.md) deployed.
 > **Already running channel A? You do not need to redeploy.** The `web` and
 > `teams-tab` profiles provision **identical** infrastructure — `DEPLOY_PROFILE`
 > reaches exactly one decision in `infra/main.bicep`, and that decision only gates
-> channel D's meeting-bot resources. Adding B is therefore two local commands
+> channel C's meeting-bot resources. Adding B is therefore two local commands
 > (build the package, upload it); `azd up` is not one of them. Setting the profile
 > is optional and only changes which steps `scripts/preflight.py --remaining`
 > prints:

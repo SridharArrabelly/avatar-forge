@@ -180,15 +180,85 @@ def main() -> int:
             pf._settle_subscription({}) == "sub-from-az",
         )
 
-    # --- the bot-app collision check --------------------------------------
+    # --- meeting-bot input checks -----------------------------------------
     check(
-        "bot apps: silent when only one is configured",
-        pf.check_distinct_bot_apps({"BOT_APP_ID": "a"}) is None,
+        "dns label: silent when unset",
+        pf.check_dns_label({}, "swedencentral") is None,
     )
-    same = pf.check_distinct_bot_apps({"BOT_APP_ID": "A-1", "MEETING_BOT_APP_ID": "a-1"})
-    check("bot apps: same id caught case-insensitively", same is not None and not same.ok)
-    diff = pf.check_distinct_bot_apps({"BOT_APP_ID": "a", "MEETING_BOT_APP_ID": "b"})
-    check("bot apps: distinct ids pass", diff is not None and diff.ok)
+    bad = pf.check_dns_label({"MEETING_BOT_DNS_LABEL": "Bad_Label"}, "swedencentral")
+    check("dns label: invalid label caught", bad is not None and not bad.ok)
+    good = pf.check_dns_label({"MEETING_BOT_DNS_LABEL": "avatar-bot-contoso"}, "swedencentral")
+    check("dns label: valid label passes", good is not None and good.ok)
+
+    # --- voice binding ----------------------------------------------------
+    # The binding is deployment-wide and each mode has a different hard
+    # requirement, so a wrong value fails at runtime rather than at deploy time.
+    def binding(cfg):
+        return {r.name: r for r in pf.check_voice_binding(cfg)}
+
+    r = binding({"VOICE_BINDING": "banana"})
+    check(
+        "binding: an invalid value fails and is the only result",
+        len(r) == 1 and not r["Voice binding"].ok,
+    )
+
+    r = binding({"AGENT_NAME": "a"})
+    check(
+        "binding: unset defaults to agent and says so",
+        r["Voice binding"].ok and "default" in r["Voice binding"].detail,
+    )
+
+    r = binding({"VOICE_BINDING": "AGENT", "AGENT_NAME": "a"})
+    check("binding: value is case-insensitive", r["Voice binding"].ok)
+
+    r = binding({"VOICE_BINDING": "agent"})
+    check(
+        "binding: agent mode without AGENT_NAME hard-fails",
+        not r["Agent mode: AGENT_NAME"].ok
+        and not r["Agent mode: AGENT_NAME"].warn_only,
+    )
+
+    r = binding({"VOICE_BINDING": "agent", "AGENT_NAME": "a"})
+    check("binding: agent mode with AGENT_NAME passes", r["Agent mode: AGENT_NAME"].ok)
+    check(
+        "binding: agent mode does not check model-mode inputs",
+        not any(k.startswith("Model mode") for k in r),
+    )
+
+    r = binding({"VOICE_BINDING": "model"})
+    check(
+        "binding: model mode without Web IQ warns, never blocks",
+        not r["Model mode: WEBIQ_API_KEY"].ok
+        and r["Model mode: WEBIQ_API_KEY"].warn_only,
+    )
+    check(
+        "binding: model mode does not demand AGENT_NAME",
+        not any(k.startswith("Agent mode") for k in r),
+    )
+    # Bicep gates Bing on the binding, so model mode never provisions it whatever
+    # DEPLOY_BING_GROUNDING says. Preflight must therefore REPORT that (so the
+    # user is not surprised by a missing resource) without asking them to fix
+    # anything. Asserting `ok` is what pins the difference: the previous version
+    # reported the same line as a defect with an `azd env set` remedy.
+    check(
+        "binding: model mode reports Bing as skipped, not as a problem",
+        "Model mode: Bing grounding" in r
+        and r["Model mode: Bing grounding"].ok
+        and r["Model mode: Bing grounding"].warn_only
+        and "azd env set DEPLOY_BING_GROUNDING" not in (r["Model mode: Bing grounding"].fix or ""),
+    )
+
+    r = binding({"VOICE_BINDING": "model", "DEPLOY_BING_GROUNDING": "false"})
+    check(
+        "binding: no Bing warning once it is switched off",
+        "Model mode: Bing grounding" not in r,
+    )
+
+    r = binding({"VOICE_BINDING": "model", "WEBIQ_API_KEY": "k"})
+    check(
+        "binding: model mode with a Web IQ key passes",
+        r["Model mode: WEBIQ_API_KEY"].ok,
+    )
 
     print()
     if _failures:

@@ -30,6 +30,21 @@ param voiceLiveVoice string
 param bingConnectionName string = ''
 param bingCustomConfigName string = ''
 
+@description('Voice Live binding: "agent" (default) or "model". See modules/containerApp.bicep.')
+param voiceBinding string = 'agent'
+@description('Realtime model used when voiceBinding is "model".')
+param voiceLiveModel string = ''
+
+@description('"true"/"false" string. Developer mode exposes the settings panel and live transcript so settings can be tried live while testing. Default "false" is the production experience, with settings locked.')
+param developerMode string = 'false'
+@description('Web IQ base URL — the web tool in model mode. Empty uses the code default.')
+param webIqBaseUrl string = ''
+@description('Comma-separated host allow-list for Web IQ results.')
+param webIqAllowedDomains string = ''
+@description('Web IQ API key, passed to the container app as a secret.')
+@secure()
+param webIqApiKey string = ''
+
 @description('Deploy Grounding with Bing Custom Search (account + site allow-list + Foundry connection). Opt-in: when false nothing Bing-related is created and the agent uses AI Search alone.')
 param deployBingGrounding bool = false
 @allowed([ 'G1', 'G2' ])
@@ -40,7 +55,15 @@ param bingAllowedDomains array = []
 // Bing is only created when it is asked for AND there is a Foundry project to
 // attach the connection to. Without the project the account would be an orphan
 // the agent could never use.
-var createBing = deployBingGrounding && createFoundry
+//
+// It is also agent-mode only. Grounding with Bing is a *managed Foundry tool*:
+// it attaches to an agent, and model mode has no agent — the Voice Live session
+// schema accepts only FUNCTION and MCP tools, so there is nowhere for it to
+// bind. In model mode the web tool is Web IQ, called in-process. Creating the
+// Bing account under `voiceBinding=model` bills a G2 SKU for a resource nothing
+// can reach.
+var agentBinding = toLower(voiceBinding) != 'model'
+var createBing = deployBingGrounding && createFoundry && agentBinding
 // Deployed names are generated when not pinned, so a first-time deploy needs no
 // prior knowledge of them — they come back as outputs and land in the azd env.
 var bingConnectionNameEffective = empty(bingConnectionName) ? 'bing-grounding-connection' : bingConnectionName
@@ -71,17 +94,8 @@ param avatarBackgroundImageUrl string = ''
 param srModel string = 'mai-transcribe-1'
 param recognitionLanguage string = 'auto'
 
-// ───────── Teams bot (issue #53) ─────────
-param botAppId string = ''
-param botAppTenantId string = ''
-@secure()
-param botAppPassword string = ''
-param botDisplayName string = 'Avatar Forge'
-param teamsAppId string = ''
-param agentId string = ''
-
-// ───────── channel D in-call media (#27) ─────────
-@description('Enable channel D ACS Call Automation media participant ("true"/"false"). When not "true" (default), no ACS resource is created and the container behaves as today.')
+// ───────── channel C in-call media (#27) ─────────
+@description('Enable channel C ACS Call Automation media participant ("true"/"false"). When not "true" (default), no ACS resource is created and the container behaves as today.')
 param enableAcs string = 'false'
 @description('ACS data residency geography (NOT an Azure region), e.g. "United States", "Europe", "Africa".')
 param acsDataLocation string = 'United States'
@@ -174,6 +188,7 @@ module foundry 'modules/foundry.bicep' = if (createFoundry) {
     modelName: modelName
     modelVersion: modelVersion
     modelDeploymentName: modelDeploymentName
+    deployAgentModel: agentBinding
     modelSkuName: modelSkuName
     modelCapacity: modelCapacity
     searchServiceName: createSearch ? search!.outputs.name : ''
@@ -246,8 +261,8 @@ module foundryRoleForSearch 'modules/foundryRoleForSearch.bicep' = if (createSea
   }
 }
 
-// ───────── channel D in-call media (#27) ─────────
-// Only provisioned when channel D is explicitly enabled. Additive + conditional,
+// ───────── channel C in-call media (#27) ─────────
+// Only provisioned when channel C is explicitly enabled. Additive + conditional,
 // mirroring the botService opt-in: a deploy with enableAcs=false never creates ACS.
 module acs 'modules/communicationServices.bicep' = if (acsEnabled) {
   name: 'acs'
@@ -301,6 +316,12 @@ module app 'modules/containerApp.bicep' = {
     voiceLiveVoice: voiceLiveVoice
     bingConnectionName: createBing ? bingConnectionNameEffective : bingConnectionName
     bingCustomConfigName: createBing ? bingCustomConfigNameEffective : bingCustomConfigName
+    voiceBinding: voiceBinding
+    voiceLiveModel: voiceLiveModel
+    developerMode: developerMode
+    webIqBaseUrl: webIqBaseUrl
+    webIqAllowedDomains: webIqAllowedDomains
+    webIqApiKey: webIqApiKey
     appInsightsConnectionString: appInsightsConnectionStringEffective
     agentModel: agentModel
     embeddingDeployment: embeddingDeployment
@@ -314,31 +335,11 @@ module app 'modules/containerApp.bicep' = {
     avatarBackgroundImageUrl: avatarBackgroundImageUrl
     srModel: srModel
     recognitionLanguage: recognitionLanguage
-    botAppId: botAppId
-    botAppTenantId: empty(botAppTenantId) ? tenant().tenantId : botAppTenantId
-    botAppPassword: botAppPassword
-    teamsAppId: teamsAppId
-    agentId: agentId
     acsEndpoint: acsEnabled ? acs!.outputs.endpoint : ''
     meetingBotEnabled: meetingBotEnabled
     acsAudioSampleRate: acsAudioSampleRate
     acsRequireWakePhrase: acsRequireWakePhrase
     acsAvatarVideoEnabled: acsAvatarVideoEnabled
-  }
-}
-
-// ───────── Teams bot (channel C, issue #53) ─────────
-// Only provisioned when a bot app id is supplied. The messaging endpoint is the
-// Container App HTTPS URL + /api/messages.
-module botService 'modules/botService.bicep' = if (!empty(botAppId)) {
-  name: 'bot'
-  params: {
-    name: '${abbrs.botService}-${environmentName}-${resourceToken}'
-    botDisplayName: botDisplayName
-    tags: tags
-    msaAppId: botAppId
-    msaAppTenantId: empty(botAppTenantId) ? tenant().tenantId : botAppTenantId
-    endpoint: '${app.outputs.uri}/api/messages'
   }
 }
 
@@ -354,7 +355,6 @@ output foundryProjectEndpoint string = foundryProjectEndpointEffective
 output searchEndpoint string = searchEndpointEffective
 output appInsightsConnectionString string = appInsightsConnectionStringEffective
 output effectiveAgentProjectName string = createFoundry ? 'proj-${environmentName}' : agentProjectName
-output botMessagingEndpoint string = !empty(botAppId) ? '${app.outputs.uri}/api/messages' : ''
 output acsEndpoint string = acsEnabled ? acs!.outputs.endpoint : ''
 
 // The two values the agent setup script needs to wire the web tool. When Bing is

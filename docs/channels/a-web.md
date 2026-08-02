@@ -56,7 +56,7 @@ The default `azd up`, with **no flags set**:
 | Managed identity + role assignments | Keyless access to Foundry and Search |
 | Log Analytics + Application Insights | Diagnostics |
 
-Nothing Teams-related is provisioned. `botService.bicep` and
+Nothing Teams-related is provisioned. `meetingBotHost.bicep` and
 `communicationServices.bicep` are both skipped.
 
 The web/news tool is deployed by default: `bingGrounding.bicep` adds

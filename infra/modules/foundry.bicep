@@ -12,6 +12,19 @@ param modelVersion string
 param modelDeploymentName string
 param modelSkuName string
 param modelCapacity int
+@description('''
+Deploy the agent's chat model. Agent mode only.
+
+The chat model backs the Foundry *agent*. Model mode binds Voice Live straight
+to a realtime speech-to-speech model, which Voice Live deploys and manages
+itself — it never appears as a deployment here, and nothing in the backend
+reads this one. Deploying it anyway ties up quota (50K TPM) for a model that is
+never called.
+
+The embedding deployment below is NOT gated: both bindings answer from the
+AI Search index, and building that index needs embeddings.
+''')
+param deployAgentModel bool = true
 @description('Embedding model deployment (used by setup_aisearch_index.py to vectorize data/*.docx).')
 param embeddingModelName string = 'text-embedding-3-small'
 param embeddingModelVersion string = '1'
@@ -63,7 +76,7 @@ resource project 'Microsoft.CognitiveServices/accounts/projects@2025-04-01-previ
   }
 }
 
-resource deployment 'Microsoft.CognitiveServices/accounts/deployments@2025-04-01-preview' = {
+resource deployment 'Microsoft.CognitiveServices/accounts/deployments@2025-04-01-preview' = if (deployAgentModel) {
   parent: account
   name: modelDeploymentName
   sku: {
@@ -85,6 +98,12 @@ resource deployment 'Microsoft.CognitiveServices/accounts/deployments@2025-04-01
 // `dependsOn: [deployment]` serializes the two creates — CS accounts return 409
 // when multiple `accounts/deployments` are submitted in parallel against the
 // same parent account.
+//
+// This stays unconditional on purpose. Writing `deployAgentModel ? [deployment] : []`
+// changes nothing: Bicep resolves dependsOn to symbolic resourceIds and emits the
+// same static array either way (verified in the compiled main.json). ARM ignores a
+// dependency on a resource whose condition is false, so in model mode the embedding
+// simply deploys without waiting.
 resource embeddingDeployment 'Microsoft.CognitiveServices/accounts/deployments@2025-04-01-preview' = {
   parent: account
   name: embeddingDeploymentName
@@ -154,7 +173,7 @@ output accountName string = account.name
 output accountEndpoint string = 'https://${account.name}.services.ai.azure.com/'
 output projectName string = project.name
 output projectEndpoint string = 'https://${account.name}.services.ai.azure.com/api/projects/${project.name}'
-output modelDeploymentName string = deployment.name
+output modelDeploymentName string = deployAgentModel ? deployment!.name : ''
 output embeddingDeploymentName string = embeddingDeployment.name
 
 // Foundry project connection to AI Search (greenfield wiring; setup_foundry_agent.py looks this up by name)

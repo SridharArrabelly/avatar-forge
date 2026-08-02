@@ -49,11 +49,12 @@ def _format_date(iso_date: str) -> str:
 # Single process-wide SearchClient + credential. azure-identity caches AAD
 # tokens internally per-scope, and SearchClient holds a long-lived aiohttp
 # session, so reusing one instance saves ~200-500ms per refresh (no new TLS
-# handshake, no fresh token chain walk).
+# handshake, no fresh token chain walk). Shared with backend/voice/tools.py so
+# a grounding call on the answer path never pays that cost either.
 _search_client: Optional[SearchClient] = None
 
 
-def _get_search_client() -> Optional[SearchClient]:
+def get_search_client() -> Optional[SearchClient]:
     global _search_client
     if _search_client is not None:
         return _search_client
@@ -82,7 +83,7 @@ async def _fetch_catalog() -> Optional[str]:
     ~100+ chunks. This is dramatically cheaper than ``search_text='*'``
     with ``top=1000`` followed by client-side dedup.
     """
-    client = _get_search_client()
+    client = get_search_client()
     if client is None:
         return None
     started = time.monotonic()

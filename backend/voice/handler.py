@@ -26,12 +26,22 @@ from azure.ai.voicelive.models import (
 from ..config import (
     AGENT_NAME,
     AGENT_PROJECT_NAME,
+    MODEL_BINDING,
     PROACTIVE_GREETING,
+    REALTIME_MAX_TOKENS,
     VOICELIVE_API_VERSION,
+    VOICELIVE_MODEL,
 )
-from .builders import build_avatar_config, build_turn_detection, build_voice_config
+from .builders import (
+    build_avatar_config,
+    build_interim_response,
+    build_turn_detection,
+    build_voice_config,
+)
 from .catalog import get_meeting_catalog
 from .event_handlers import handle_event
+from .instructions import load_realtime_instructions
+from .tools import build_realtime_tools
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +113,17 @@ class VoiceSessionHandler:
         self.send_binary = send_binary
         self.config = config
 
+        # Which brain this session binds to. This is a deployment decision made
+        # once by VOICE_BINDING (chosen at setup time by scripts/set_profile.py),
+        # not something a client can vary: the binding determines which model and
+        # which tool implementations answer, so letting a session pick would make
+        # behaviour depend on whoever opened the tab.
+        #
+        # Comparing the two is done by setting VOICE_BINDING and redeploying,
+        # which keeps one brain live at a time and leaves no runtime switch to
+        # misconfigure.
+        self.model_binding = MODEL_BINDING
+
         self.connection = None
         self.is_running = False
         self._event_task: Optional[asyncio.Task] = None
@@ -111,28 +132,51 @@ class VoiceSessionHandler:
         self._audio_chunk_count = 0
         self._video_chunk_count = 0
 
+    def _build_connect_kwargs(self) -> dict:
+        """Assemble the arguments handed to ``voicelive.connect()``.
+
+        Extracted from :meth:`start` so the binding shape can be asserted
+        without opening a socket. ``scripts/test_voice_binding.py`` checks every
+        key here against the installed SDK's real ``connect()`` signature,
+        because an unrecognised key does not raise — it is swallowed by
+        ``**kwargs`` and the session silently binds to nothing.
+        """
+        connect_kwargs = {
+            "endpoint": self.endpoint,
+            "credential": self.credential,
+            "api_version": VOICELIVE_API_VERSION,
+        }
+        if self.model_binding:
+            if not VOICELIVE_MODEL:
+                raise ValueError("VOICELIVE_MODEL must be set when VOICE_BINDING=model")
+            connect_kwargs["model"] = VOICELIVE_MODEL
+            logger.info(
+                f"Connecting to Voice Live with model: {VOICELIVE_MODEL} "
+                f"(api_version={VOICELIVE_API_VERSION})"
+            )
+        else:
+            if not AGENT_NAME or not AGENT_PROJECT_NAME:
+                raise ValueError("AGENT_NAME and AGENT_PROJECT_NAME must be set in the environment")
+            # Top-level arguments, NOT an ``agent_config`` dict. The SDK removed
+            # that parameter and now builds the structure itself from these two.
+            # A dict lands in **kwargs and is discarded, leaving the session
+            # bound to neither an agent nor a model; the service then rejects it
+            # with "Missing required parameter: model", which surfaces
+            # confusingly as a closing-transport error on the next write.
+            connect_kwargs["agent_name"] = AGENT_NAME
+            connect_kwargs["project_name"] = AGENT_PROJECT_NAME
+            logger.info(
+                f"Connecting to Voice Live with agent: {AGENT_NAME} "
+                f"(project={AGENT_PROJECT_NAME}, api_version={VOICELIVE_API_VERSION})"
+            )
+        return connect_kwargs
+
     async def start(self):
         """Start the Voice Live session."""
         try:
             self.is_running = True
-            agent_name = AGENT_NAME
-            project_name = AGENT_PROJECT_NAME
-            if not agent_name or not project_name:
-                raise ValueError("AGENT_NAME and AGENT_PROJECT_NAME must be set in the environment")
 
-            connect_kwargs = {
-                "endpoint": self.endpoint,
-                "credential": self.credential,
-                "api_version": VOICELIVE_API_VERSION,
-                "agent_config": {
-                    "agent_name": agent_name,
-                    "project_name": project_name,
-                },
-            }
-            logger.info(
-                f"Connecting to Voice Live with agent: {agent_name} "
-                f"(project={project_name}, api_version={VOICELIVE_API_VERSION})"
-            )
+            connect_kwargs = self._build_connect_kwargs()
 
             async with connect(**connect_kwargs) as connection:
                 self.connection = connection
@@ -171,7 +215,7 @@ class VoiceSessionHandler:
         avatar_config = build_avatar_config(config)
 
         # Build turn detection
-        turn_detection = build_turn_detection(config)
+        turn_detection = build_turn_detection(config, cascaded=not self.model_binding)
 
         # Build modalities (avatar is NOT a modality - it's configured via the avatar field)
         modalities = [Modality.TEXT, Modality.AUDIO]
@@ -207,7 +251,10 @@ class VoiceSessionHandler:
         if config.get("useEC", False):
             echo_cancellation = {"type": "server_echo_cancellation"}
 
-        # Instructions, tools, and temperature are owned by the Foundry agent.
+        # Ownership of instructions and tools flips with the binding. In agent
+        # mode the Foundry agent owns both, and sending them here would be
+        # ignored at best. In model mode there is no agent, so the session is
+        # the only place they can live.
         session_config = RequestSession(
             modalities=modalities,
             voice=voice_config,
@@ -219,6 +266,28 @@ class VoiceSessionHandler:
             input_audio_noise_reduction=noise_reduction,
             input_audio_echo_cancellation=echo_cancellation,
             tool_choice="auto",
+            **(
+                {
+                    "instructions": load_realtime_instructions(),
+                    "tools": build_realtime_tools(),
+                    # One tool per question. The prompt asks for this, but the
+                    # model is free to ignore prose; this makes it structural.
+                    # Two parallel retrievals would double the silence before
+                    # she speaks for a question that only ever needed one.
+                    "parallel_tool_calls": False,
+                    # A realtime model left uncapped answers at length: measured
+                    # 27-30s of speech against a prompt asking for two or three
+                    # sentences. Nobody in a meeting wants a half-minute
+                    # monologue, and it delays the next question. This is the
+                    # backstop for when the prompt alone does not hold.
+                    "max_response_output_tokens": REALTIME_MAX_TOKENS,
+                    "interim_response": build_interim_response(
+                        voice_config, model_binding=self.model_binding
+                    ),
+                }
+                if self.model_binding
+                else {}
+            ),
         )
 
         logger.debug("[SEND] session.update")

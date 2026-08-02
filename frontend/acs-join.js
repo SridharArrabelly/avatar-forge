@@ -1,5 +1,5 @@
 /*
- * Browser joiner for the in-call avatar (channel D, issue #27).
+ * Browser joiner for the in-call avatar (channel C, issue #27).
  *
  * This is the one piece that cannot run server-side, for two separate reasons.
  * ACS Call Automation has no "join Teams meeting by URL" API, so a client-side ACS

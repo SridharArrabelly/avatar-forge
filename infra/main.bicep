@@ -53,6 +53,49 @@ param bingCustomConfigName string = ''
 @description('Deploy Grounding with Bing Custom Search: the Bing account, the curated site allow-list, and the Foundry connection. Opt-in and additive — when false nothing Bing-related is created and the agent runs on AI Search alone.')
 param deployBingGrounding string = 'true'
 
+@description('''
+Voice Live binding.
+
+"agent" (default) routes every turn through the Foundry agent: speech is
+transcribed by a recognizer, the agent reasons and calls its managed AI Search
+and Bing grounding tools, and the reply is synthesised back to speech.
+
+"model" binds Voice Live straight to a realtime speech-to-speech model. The
+recognizer stage disappears from the answer path, and the tools become
+in-process Python functions instead of Foundry-managed ones.
+
+Additive: leaving this unset gives exactly today's behaviour.
+''')
+@allowed([ 'agent', 'model' ])
+param voiceBinding string = 'agent'
+
+@description('Realtime model to bind when voiceBinding is "model". Voice Live deploys and manages this model itself — no model deployment, no quota request. Ignored in agent mode.')
+param voiceLiveModel string = ''
+
+@description('''
+"true"/"false" string. Developer mode exposes the settings panel, live transcript
+and per-event logging, so settings can be changed and tried live while testing.
+It changes no pipeline default: the panel is pre-populated with the same values
+production uses.
+
+Additive: leaving this unset gives exactly the production experience — panel
+hidden, settings locked, session auto-starts.
+
+It does not expose voiceBinding, which is deployment-wide by design.
+''')
+@allowed([ 'true', 'false' ])
+param developerMode string = 'false'
+
+@description('Web IQ base URL. This is the web tool in model mode, where the agent (and therefore its managed Bing grounding tool) is out of the picture. Leave empty to use the code default — the tool is switched on by webIqApiKey, not by this.')
+param webIqBaseUrl string = ''
+
+@description('Comma-separated hosts that scope Web IQ searches, e.g. "mtn.com,sashares.co.za". Web IQ has no server-side allow-list, so these are compiled into site: operators on the query. Same intent as bingAllowedDomains — an open-web tool answering to an executive should not be able to cite anywhere at all. Empty searches the open web.')
+param webIqAllowedDomains string = ''
+
+@description('Web IQ API key. Stored as a container-app secret, never as a plain env var. Set it with: azd env set WEBIQ_API_KEY <key>')
+@secure()
+param webIqApiKey string = ''
+
 @description('Bing pricing tier. G2 is the tier this project has run on; G1 is the lower tier.')
 @allowed([ 'G1', 'G2' ])
 param bingSkuName string = 'G2'
@@ -73,7 +116,8 @@ param bingAllowedDomains array = [
 ]
 
 // App runtime extras
-param agentModel string = 'gpt-5.4'
+@description('Deployment name the Foundry agent binds to. Empty derives it: on a greenfield deploy the agent must bind to the deployment this template just created, so it follows modelDeploymentName. Set explicitly for BYO Foundry, where the deployment already exists and this template did not name it.')
+param agentModel string = ''
 param embeddingDeployment string = 'text-embedding-3-small'
 param avatarName string = 'Lisa-casual-sitting'
 param customAvatarName string = ''
@@ -88,25 +132,10 @@ param avatarBackgroundImageUrl string = ''
 param srModel string = 'mai-transcribe-1'
 param recognitionLanguage string = 'auto'
 
-// ───────── Teams bot (channel C, issue #53) ─────────
-@description('Bot Entra app client id (Microsoft App ID). Leave empty to skip bot provisioning. Surfaces as TEAMS_BOT_ID.')
-param botAppId string = ''
-@description('Bot app tenant id (single-tenant). Defaults to the deployment tenant when empty.')
-param botAppTenantId string = ''
-@description('Bot app client secret. Stored as a Container App secret. Required when botAppId is set.')
-@secure()
-param botAppPassword string = ''
-@description('Display name for the Azure Bot resource.')
-param botDisplayName string = 'Avatar Forge'
-@description('Teams app (manifest) id used for bot deep links to the personal tab. Surfaces as TEAMS_APP_ID.')
-param teamsAppId string = ''
-@description('Foundry agent id override. Empty resolves the agent by AGENT_NAME.')
-param agentId string = ''
-
-// ───────── channel D in-call media (#27) ─────────
-@description('Deployment profile from `scripts/set_profile.py` — one of "web", "teams-tab", "teams-chat", "in-call". Drives which optional channels deploy. Empty keeps the pre-profile behaviour (explicit flags only).')
+// ───────── channel C in-call media (#27) ─────────
+@description('Deployment profile from `scripts/set_profile.py` — one of "web", "teams-tab", "in-call". Drives which optional channels deploy. Empty keeps the pre-profile behaviour (explicit flags only).')
 param deployProfile string = ''
-@description('Enable channel D ACS Call Automation media participant ("true"/"false"). When not "true" (default), no ACS resource is created and the deployment behaves exactly as today.')
+@description('Enable channel C ACS Call Automation media participant ("true"/"false"). When not "true" (default), no ACS resource is created and the deployment behaves exactly as today.')
 param enableAcs string = 'false'
 @description('ACS data residency geography (NOT an Azure region), e.g. "United States", "Europe", "Africa".')
 param acsDataLocation string = 'United States'
@@ -119,7 +148,7 @@ param acsRequireWakePhrase string = ''
 @description('"true"/"false". In-call avatar sends an outgoing video tile so it is a visible participant.')
 param acsAvatarVideoEnabled string = ''
 
-// ───────── channel D Windows media host (#27) ─────────
+// ───────── channel C Windows media host (#27) ─────────
 // Deployed only for the in-call channel. Requires its own Entra app — an app can
 // back only ONE Azure Bot resource, so this cannot reuse botAppId.
 @description('"true"/"false". Provision the Windows media host + calling bot registration. Implied by deployProfile="in-call".')
@@ -154,6 +183,13 @@ var tags = {
 
 var createFoundry = empty(foundryAccountName) || empty(foundryResourceGroup) || empty(foundryProjectEndpoint)
 var createSearch  = empty(searchServiceName) || empty(searchResourceGroup)
+
+// AGENT_MODEL is a *deployment* name, not a catalogue model name — the agent binds to
+// whatever `modelDeploymentName` called the deployment. Keeping them as two independent
+// literals made customising MODEL_DEPLOYMENT_NAME silently create a deployment the agent
+// could never find, so greenfield derives it. BYO keeps the old default because the
+// deployment lives in an account this template did not create and cannot inspect.
+var resolvedAgentModel = !empty(agentModel) ? agentModel : (createFoundry ? modelDeploymentName : 'gpt-5.4')
 
 // ───────── Profile derivation ─────────
 // The profile RAISES capability; it never lowers it. Explicit flags still work
@@ -200,6 +236,12 @@ module resources 'resources.bicep' = {
     voiceLiveVoice: voiceLiveVoice
     bingConnectionName: bingConnectionName
     bingCustomConfigName: bingCustomConfigName
+    voiceBinding: voiceBinding
+    voiceLiveModel: voiceLiveModel
+    developerMode: developerMode
+    webIqBaseUrl: webIqBaseUrl
+    webIqAllowedDomains: webIqAllowedDomains
+    webIqApiKey: webIqApiKey
     deployBingGrounding: toLower(deployBingGrounding) == 'true'
     bingSkuName: bingSkuName
     bingAllowedDomains: bingAllowedDomains
@@ -208,7 +250,7 @@ module resources 'resources.bicep' = {
     modelDeploymentName: modelDeploymentName
     modelSkuName: modelSkuName
     modelCapacity: modelCapacity
-    agentModel: agentModel
+    agentModel: resolvedAgentModel
     embeddingDeployment: embeddingDeployment
     avatarName: avatarName
     customAvatarName: customAvatarName
@@ -220,12 +262,6 @@ module resources 'resources.bicep' = {
     avatarBackgroundImageUrl: avatarBackgroundImageUrl
     srModel: srModel
     recognitionLanguage: recognitionLanguage
-    botAppId: botAppId
-    botAppTenantId: botAppTenantId
-    botAppPassword: botAppPassword
-    botDisplayName: botDisplayName
-    teamsAppId: teamsAppId
-    agentId: agentId
     enableAcs: enableAcs
     acsDataLocation: acsDataLocation
     meetingBotEnabled: wantMeetingBotBridge ? 'true' : 'false'
@@ -235,7 +271,7 @@ module resources 'resources.bicep' = {
   }
 }
 
-// ───────── channel D: Windows media host + calling bot registration ─────────
+// ───────── channel C: Windows media host + calling bot registration ─────────
 // Conditional and additive. Only instantiated for the in-call channel.
 
 // The name in the Teams meeting roster must match the name on the web stage and
@@ -294,16 +330,10 @@ output BING_CONNECTION_NAME string = resources.outputs.bingConnectionName
 output BING_CUSTOM_CONFIG_NAME string = resources.outputs.bingCustomConfigName
 output APPLICATIONINSIGHTS_CONNECTION_STRING string = resources.outputs.appInsightsConnectionString
 
-// Teams bot (issue #53). Echoed so the operator can configure the manifest and
-// the Azure Bot messaging endpoint without re-deriving them.
-output BOT_MESSAGING_ENDPOINT string = resources.outputs.botMessagingEndpoint
-output TEAMS_BOT_ID string = botAppId
-output TEAMS_APP_ID string = teamsAppId
-
-// Channel D in-call media (#27). Empty unless enableAcs=true.
+// Channel C in-call media (#27). Empty unless enableAcs=true.
 output ACS_ENDPOINT string = resources.outputs.acsEndpoint
 
-// Channel D Windows media host. Empty strings unless the in-call channel deployed.
+// Channel C Windows media host. Empty strings unless the in-call channel deployed.
 output DEPLOY_PROFILE string = deployProfile
 output MEETING_BOT_HOST_DEPLOYED string = deployHost ? 'true' : 'false'
 output MEETING_BOT_FQDN string = deployHost ? meetingBotHost.outputs.publicFqdn : ''
@@ -325,7 +355,7 @@ output APPINSIGHTS_RESOURCE_GROUP string = appInsightsResourceGroup
 // into the container. Otherwise a true greenfield clone (no .env) gets
 // AGENT_MODEL=""/EMBEDDING_DEPLOYMENT="" in the azd env, and the postprovision
 // scripts fail even though the matching Foundry deployments were created.
-output AGENT_MODEL string = agentModel
+output AGENT_MODEL string = resolvedAgentModel
 output EMBEDDING_DEPLOYMENT string = embeddingDeployment
 output VOICELIVE_VOICE string = voiceLiveVoice
 output SR_MODEL string = srModel
@@ -338,4 +368,3 @@ output AVATAR_TAGLINE string = avatarTagline
 output AVATAR_BACKGROUND_IMAGE_URL string = avatarBackgroundImageUrl
 output IS_PHOTO_AVATAR string = isPhotoAvatar
 output IS_CUSTOM_AVATAR string = isCustomAvatar
-output AGENT_ID string = agentId

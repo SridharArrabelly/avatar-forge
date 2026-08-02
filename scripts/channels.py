@@ -10,8 +10,7 @@ Profiles map onto the channel ladder documented in `docs/channels/README.md`:
 
     web         A            the core web app
     teams-tab   A + B        adds a Teams personal tab (no extra Azure resources)
-    teams-chat  A + B + C    adds the @mentionable conversational bot
-    in-call     A + B + D    adds the live in-meeting avatar (media bot)
+    in-call     A + B + C    adds the live in-meeting avatar (media bot)
 
 `teams-tab` provisions exactly the same Azure resources as `web` — the difference
 is entirely in the Teams app package and who has to upload it. That is a feature,
@@ -118,6 +117,51 @@ class CostItem:
 
 
 @dataclass(frozen=True)
+class Binding:
+    """One of the two brains a deployment can bind Voice Live to.
+
+    Orthogonal to the channel: every channel works with either brain, so this is
+    a second question rather than a fifth profile. Recorded as VOICE_BINDING.
+    """
+
+    key: str
+    title: str
+    summary: str
+    tradeoff: str
+
+
+BINDING_ORDER = ["agent", "model"]
+
+BINDINGS: dict[str, Binding] = {
+    "agent": Binding(
+        key="agent",
+        title="Agent mode",
+        summary=(
+            "Bind to a Foundry agent. Prompt, model and tool routing live in Foundry; "
+            "speech is transcribed before the agent sees it."
+        ),
+        tradeoff=(
+            "Grounding with Bing works here. Tools and prompt are editable in the "
+            "portal without redeploying. The answer waits on transcription."
+        ),
+    ),
+    "model": Binding(
+        key="model",
+        title="Model mode",
+        summary=(
+            "Bind straight to a realtime model. It works from the audio itself, so "
+            "the answer no longer waits on the transcript; prompt and tools travel "
+            "in the session."
+        ),
+        tradeoff=(
+            "Lower time-to-first-token, but Grounding with Bing cannot follow — web "
+            "search runs through Web IQ instead, and the prompt ships in the image."
+        ),
+    ),
+}
+
+
+@dataclass(frozen=True)
 class Profile:
     key: str
     title: str
@@ -145,7 +189,7 @@ def _core_costs() -> list[CostItem]:
         CostItem("Log Analytics + App Insights", HOURLY, "ingestion, 30-day retention"),
         CostItem("Voice Live minutes", PER_USE, "higher with avatar video; dominates a live session"),
         CostItem("Model tokens", PER_USE, "`GlobalStandard` chat + embeddings, billed per token"),
-        CostItem("Bing searches", PER_USE, "`DEPLOY_BING_GROUNDING=false` to skip the tool"),
+        CostItem("Web searches", PER_USE, "Bing (agent mode) or Web IQ (model mode); either can be left off"),
     ]
 
 
@@ -170,16 +214,16 @@ def _core_steps() -> list[Step]:
             "uv run python scripts/preflight.py",
         ),
         Step(
-            "Point the web/news tool at your own sources",
+            "Point the web tool at your own sources",
             YOU,
             BEFORE,
-            "azd deploys the web tool by default — the Bing account, the curated site "
-            "allow-list and the Foundry connection — and fills in the two BING_* names "
-            "for you. Edit bingAllowedDomains in infra/main.bicep so it searches your "
-            "sources rather than the sample ones. To skip the tool entirely (it is a "
-            "billable resource), set the flag below to false; the avatar then answers "
-            "from your indexed documents alone, which is a supported end state.",
-            "azd env set DEPLOY_BING_GROUNDING false   # only if you do NOT want it",
+            "The two bindings use different search engines. Agent mode: azd deploys "
+            "Grounding with Bing Custom Search for you — edit bingAllowedDomains in "
+            "infra/main.bicep, or set the flag below to false to skip it. Model mode: "
+            "Bing is never deployed (no agent to attach it to); set WEBIQ_API_KEY and "
+            "WEBIQ_ALLOWED_DOMAINS as bare hosts instead. Either way, skipping web "
+            "search is supported — the avatar then answers from your documents alone.",
+            "azd env set DEPLOY_BING_GROUNDING false   # agent mode only",
         ),
         Step(
             "Provision + deploy Azure resources",
@@ -244,76 +288,10 @@ PROFILES: dict[str, Profile] = {
         steps=_core_steps() + _teams_package_steps(),
         costs=_core_costs() + [CostItem("Teams personal tab", FREE, "adds no Azure resources at all")],
     ),
-    "teams-chat": Profile(
-        key="teams-chat",
-        title="Web + tab + conversational bot",
-        channels="A + B + C",
-        summary="Adds an @mentionable bot that answers in Teams chat via the same Foundry agent.",
-        flags={},
-        requires=[
-            RequiredInput(
-                "BOT_APP_ID",
-                "Entra app registration (single tenant) for the chat bot. "
-                "Create it in Entra > App registrations, then copy the Application (client) ID.",
-            ),
-            RequiredInput(
-                "BOT_APP_PASSWORD",
-                "A client secret on that same app registration: Entra > App registrations > "
-                "your app > Certificates & secrets > New client secret. Copy the VALUE "
-                "(not the Secret ID) — it is shown only once.",
-                secret=True,
-            ),
-            RequiredInput(
-                "BOT_APP_TENANT_ID",
-                "Only if the app registration lives in a DIFFERENT tenant than the "
-                "subscription. Left unset, infra uses the deployment tenant, which is "
-                "correct for a single-tenant app (`az account show --query tenantId -o tsv`).",
-                optional=True,
-            ),
-        ],
-        providers=["Microsoft.BotService"],
-        steps=(
-            _core_steps()[:2]
-            + [
-                Step(
-                    "Create the bot's Entra app registration + secret",
-                    YOU,
-                    BEFORE,
-                    "Single-tenant. Copy the client id and a client secret into the azd env. "
-                    "Bicep cannot create app registrations — they live in the directory, not the subscription.",
-                    'azd env set BOT_APP_ID <id>; azd env set BOT_APP_PASSWORD "<secret>"',
-                ),
-            ]
-            + _core_steps()[2:]
-            + [
-                Step(
-                    "Grant admin consent for the bot app",
-                    ADMIN,
-                    AFTER,
-                    "One-time, by someone with Privileged Role Administrator or Global Administrator. "
-                    "Without it the bot installs but never receives messages.",
-                ),
-            ]
-            + _teams_package_steps()
-            + [
-                Step(
-                    "@mention the bot in a chat",
-                    YOU,
-                    AFTER,
-                    "It should answer from the same agent as the web app and deep-link to the tab.",
-                ),
-            ]
-        ),
-        costs=_core_costs()
-        + [
-            CostItem("Teams personal tab", FREE, "adds no Azure resources at all"),
-            CostItem("Azure Bot registration", FREE, "F0, free on the Teams channel"),
-        ],
-    ),
     "in-call": Profile(
         key="in-call",
         title="Web + tab + in-call meeting avatar",
-        channels="A + B + D",
+        channels="A + B + C",
         summary=(
             "The avatar joins a Teams meeting, hears the room and answers aloud with a lip-synced "
             "camera tile. Highest capability and highest administrator burden."
@@ -322,8 +300,8 @@ PROFILES: dict[str, Profile] = {
         requires=[
             RequiredInput(
                 "MEETING_BOT_APP_ID",
-                "A SEPARATE Entra app registration for the calling bot. It must not be the same "
-                "app as BOT_APP_ID — an Entra app can back only one Azure Bot resource.",
+                "An Entra app registration for the calling bot. It must be dedicated to this "
+                "bot — an Entra app can back only one Azure Bot resource.",
             ),
             RequiredInput(
                 "MEETING_BOT_APP_TENANT_ID",
@@ -350,7 +328,7 @@ PROFILES: dict[str, Profile] = {
                     "Create the CALLING bot's Entra app registration + secret",
                     YOU,
                     BEFORE,
-                    "Separate from the chat bot. Add the application permissions "
+                    "Dedicated to this bot. Add the application permissions "
                     "Calls.JoinGroupCall.All, Calls.JoinGroupCallAsGuest.All, Calls.AccessMedia.All "
                     "and OnlineMeetings.Read.All.",
                     "azd env set MEETING_BOT_APP_ID <id>",
@@ -406,7 +384,7 @@ PROFILES: dict[str, Profile] = {
                     "Build and upload the Teams app package (optional for D)",
                     YOU,
                     AFTER,
-                    "The calling bot joins through Graph application permissions, so channel D "
+                    "The calling bot joins through Graph application permissions, so channel C "
                     "works WITHOUT installing anything in Teams. Build the package only if you "
                     "also want the app's in-meeting presence; --enable-calling sets "
                     "supportsCalling=true in the manifest.",
@@ -446,7 +424,7 @@ PROFILES: dict[str, Profile] = {
 }
 
 DEFAULT_PROFILE = "web"
-PROFILE_ORDER = ["web", "teams-tab", "teams-chat", "in-call"]
+PROFILE_ORDER = ["web", "teams-tab", "in-call"]
 
 
 def get_profile(key: str | None) -> Profile:

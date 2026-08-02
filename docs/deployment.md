@@ -14,9 +14,8 @@ For local development see [development.md](development.md); for env vars see
 - **Log Analytics + Application Insights** — observability
 - **Azure AI Foundry** (account + project + model deployment) — created or BYO
 - **Azure AI Search** (Basic, AAD auth) — created or BYO
-- **Azure Bot + Teams channel** *(channel C only)* — created only when a chat bot app id is supplied
 - **Windows VM + NSG + public FQDN, and a second Azure Bot with the Teams calling
-  channel** *(channel D only)* — the media host; created only when the in-call profile
+  channel** *(channel C only)* — the media host; created only when the in-call profile
   is selected and its inputs are set. This is the one costly addition (~$283/month).
 
 Everything after the first six lines is additive and conditional: a `web` profile
@@ -31,49 +30,29 @@ deploys exactly the first six and nothing else.
 - Docker Desktop **running** (the `Dockerfile` is built during `azd up`/`azd deploy`;
   you don't call `docker build`/`run` yourself — remote ACR build is also supported)
 
-## Pre-deployment checks (run this first)
+## Regions
 
-Deploying is a *sequence*, not one command: some steps Bicep performs and some only
-an administrator can, and they interleave. Step 0 is therefore choosing **which
-channel** you are deploying — everything else follows from it:
+Voice Live and the avatar are each limited to a handful of regions, and you need the
+**intersection** — four regions support both:
 
-```powershell
-uv run python scripts/set_profile.py
-```
+`eastus2` · `southeastasia` · `swedencentral` · `westus2`
 
-That records `DEPLOY_PROFILE` (`web` · `teams-tab` · `teams-chat` · `in-call`), sets
-the flags that profile implies, and prints the full numbered plan marking who
-performs each step. See [`channels/README.md`](channels/README.md) to choose.
+| Feature | Supported regions |
+| --- | --- |
+| Voice Live | `eastus2` `swedencentral` `southeastasia` `centralindia` `westus2` |
+| TTS Avatar | `eastus2` `westus2` `northeurope` `westeurope` `swedencentral` `southeastasia` |
 
-Two things have caused silent failures in past deployments:
+`scripts/preflight.py` holds both lists — it is the authoritative copy, and it checks
+your region before anything deploys.
 
-1. **Voice Live is only available in a small set of regions** — `eastus2`,
-   `swedencentral`, `southeastasia`, `centralindia`, `westus2`. Deploying the Foundry
-   account elsewhere lets the WebSocket connect and the MI token succeed, then the
-   server closes the socket within ~2s with no error event (surfaced as
-   `SESSION_UPDATED event not received`).
-2. **TTS Avatar is only available in** `eastus2`, `westus2`, `northeurope`,
-   `westeurope`, `swedencentral`, `southeastasia`.
+> **Why this is worth checking rather than discovering.** Deploying the Foundry
+> account outside the Voice Live set fails *silently*: the WebSocket connects and the
+> managed-identity token succeeds, then the server closes the socket within ~2s with
+> no error event. It surfaces only as `SESSION_UPDATED event not received`.
 
-Preflight checks both, plus providers, tooling and every input your profile needs:
-
-```powershell
-uv run python scripts/preflight.py
-
-# override the regions it checks (otherwise taken from the azd env)
-uv run python scripts/preflight.py --location southafricanorth --voicelive-location eastus2
-
-uv run python scripts/preflight.py --steps-only    # just print the plan
-uv run python scripts/preflight.py --remaining     # only the steps left after deploying
-```
-
-It also runs automatically as the `preprovision` hook, so a doomed `azd up` stops in
-seconds instead of failing twenty minutes in. Bypass with
-`azd env set PREFLIGHT_SKIP true` if you ever need to.
-
-If your primary `AZURE_LOCATION` is **not** a Voice Live region, set
-`FOUNDRY_LOCATION` to one that is — the Foundry account+project (and the avatar voice
-path) are created there while the rest of the stack stays in `AZURE_LOCATION`:
+If your primary `AZURE_LOCATION` must be somewhere else, split the deployment — the
+Foundry account, project and avatar voice path are created in a supported region
+while the rest of the stack stays put:
 
 ```powershell
 azd env set AZURE_LOCATION   southafricanorth
@@ -87,6 +66,10 @@ azd env set FOUNDRY_LOCATION eastus2
 > [`data/`](../data/) **before** `azd up`; otherwise the index is empty and you must
 > rerun `scripts/setup_aisearch_index.py` manually. BYO Search skips this.
 
+Steps 4 and 5 are what make the rest predictable — they are not optional extras. Some
+steps Bicep performs and some only an administrator can, and they interleave, so the
+plan is printed before anything is created.
+
 ```powershell
 # 1. Authenticate
 az login
@@ -95,25 +78,39 @@ azd auth login
 # 2. Create an azd environment
 azd env new <environment-name>
 
-# 3. Pick the region. Only these four support both Voice Live and the avatar:
-#    eastus2 · southeastasia · swedencentral · westus2
+# 3. Pick a region that supports both Voice Live and the avatar (see above).
 #    Skip it and preflight asks; either way it is validated before azd runs.
 azd env set AZURE_LOCATION swedencentral
 
-# 4. Choose the channel (step 0 above) — records DEPLOY_PROFILE and prints the plan
+# 4. Choose the channel AND the brain. Records DEPLOY_PROFILE (web · teams-tab ·
+#    in-call) and VOICE_BINDING (agent · model), sets the flags those imply, and
+#    prints the full numbered plan marking who performs each step.
+#    channels/README.md to choose the channel; voice-binding.md to choose the brain.
 uv run python scripts/set_profile.py
 
-# 5. Verify you can actually finish that plan. Also settles the deploy target —
-#    subscription, region, resource group — so step 6 never stops to ask.
+# 5. Verify you can actually finish that plan — regions, providers, tooling and every
+#    input your profile needs. Also settles the deploy target (subscription, region,
+#    resource group) so step 6 never stops to ask.
 uv run python scripts/preflight.py
 
 # 6. Provision infra + build + deploy app
 azd up
 ```
 
-Steps 4 and 5 are not optional extras — they are what makes the rest predictable.
-Preflight also re-runs automatically as the `preprovision` hook, so skipping step 5
-only means you find out at `azd up` instead of before it.
+Preflight also runs automatically as the `preprovision` hook, so a doomed `azd up`
+stops in seconds instead of failing twenty minutes in — skipping step 5 only means you
+find out at `azd up` instead of before it. Bypass with
+`azd env set PREFLIGHT_SKIP true` if you ever need to.
+
+Useful variants:
+
+```powershell
+uv run python scripts/preflight.py --steps-only    # just print the plan
+uv run python scripts/preflight.py --remaining     # only the steps left after deploying
+
+# override the regions it checks (otherwise taken from the azd env)
+uv run python scripts/preflight.py --location southafricanorth --voicelive-location eastus2
+```
 
 > [!IMPORTANT]
 > `azd` only asks for an environment name when none exists yet. After that it
@@ -175,17 +172,12 @@ azd env set APPINSIGHTS_RESOURCE_GROUP rg-shared-observability
 azd env set AGENT_NAME              MtnAvatarAgent
 azd env set SEARCH_CONNECTION_NAME  aisearch-connection
 
-# The web/news tool is ON by default: azd deploys the Bing account, the curated site
+# The web tool is ON by default: azd deploys the Bing account, the curated site
 # allow-list and the Foundry connection, and feeds the two names back automatically.
 # Edit the allow-list in infra/main.bicep (bingAllowedDomains) so it points at YOUR
-# sources rather than the sample ones. To skip the tool (it is billable):
+# sources. To skip it (it is billable), or to reuse a connection you already have,
+# see "The web tool is optional" below.
 # azd env set DEPLOY_BING_GROUNDING false
-
-# ...or, to point at a Grounding-with-Bing-Custom-Search connection you already have,
-# set DEPLOY_BING_GROUNDING=false and name it instead. Naming one that does not exist
-# skips the tool with a warning; add it later and re-run `azd hooks run postprovision`.
-# azd env set BING_CONNECTION_NAME    <your-bing-grounding-connection>
-# azd env set BING_CUSTOM_CONFIG_NAME <your-bing-custom-config>
 
 # 6. Provision + deploy
 azd up
@@ -264,23 +256,16 @@ uv run python scripts/setup_aisearch_index.py
 
 ## Runtime config / model deployment overrides
 
-The Bicep template accepts overrides via azd env vars — set before `azd provision`:
+The Bicep template accepts overrides via azd env vars — set them before
+`azd provision`. [configuration.md](configuration.md) is the single source of truth
+for every variable; the sections that apply at provisioning time are:
 
-| Variable | Default | Purpose |
-|---|---|---|
-| `AGENT_NAME` | `AvatarAgent` | Foundry agent name the app calls |
-| `AGENT_PROJECT_NAME` | `avatar-forge` | Foundry project name |
-| `SEARCH_CONNECTION_NAME` | `aisearch-connection` | Foundry AI Search connection name |
-| `SEARCH_INDEX_NAME` | `knowledge-index` | AI Search index name |
-| `VOICELIVE_VOICE` | `en-US-AvaMultilingualNeural` | Default avatar voice |
-| `MODEL_NAME` | `gpt-5.4` | OpenAI model to deploy in Foundry |
-| `MODEL_VERSION` | `2026-03-05` | Model version (must match `MODEL_NAME`) |
-| `MODEL_DEPLOYMENT_NAME` | `gpt-5.4` | Deployment name (used by the agent) |
-| `MODEL_SKU_NAME` | `GlobalStandard` | Deployment SKU |
-| `MODEL_CAPACITY` | `50` | TPM (thousands) capacity |
-
-See [configuration.md](configuration.md) for the complete list, including the avatar,
-UX, and Teams-bot variables.
+| Section | Covers |
+| --- | --- |
+| [Foundry agent provisioning](configuration.md#foundry-agent-provisioning-provisioning-only) | `AGENT_NAME`, `AGENT_PROJECT_NAME`, the Bing grounding flags |
+| [AI Search & index build](configuration.md#ai-search--index-build-provisioning-only) | `SEARCH_CONNECTION_NAME`, `SEARCH_INDEX_NAME`, chunking |
+| [Greenfield model deployment](configuration.md#greenfield-model-deployment-azd-provision-only) | `MODEL_NAME`, `MODEL_VERSION`, `MODEL_DEPLOYMENT_NAME`, `MODEL_SKU_NAME`, `MODEL_CAPACITY` |
+| [Voice](configuration.md#voice) · [Avatar](configuration.md#avatar--model--identity) | `VOICELIVE_VOICE`, avatar model and identity |
 
 ## Post-deploy steps
 
@@ -300,7 +285,7 @@ The agent needs two things, and they fail differently on purpose:
 | | Missing means | Result |
 |---|---|---|
 | **AI Search connection** | the agent has no corpus | **Fatal.** Nothing usable is created. |
-| **Bing connection** | no open-web/news grounding | **Degraded.** The agent is created and answers from your indexed documents. |
+| **Bing connection** | no site-scoped web grounding | **Degraded.** The agent is created and answers from your indexed documents. |
 
 The Bing tool is skipped — with a warning, not an error — both when
 `BING_CONNECTION_NAME` / `BING_CUSTOM_CONFIG_NAME` are unset *and* when they name a
@@ -346,10 +331,10 @@ uv run python scripts/setup_aisearch_index.py     # rebuild the index
 uv run python scripts/setup_foundry_agent.py      # re-register the agent + tools
 ```
 
-## Teams (tab + bot)
+## Teams (tab + in-call)
 
-The deployed Container App HTTPS URL is both the Teams tab `contentUrl` and the bot's
-messaging endpoint (`/api/messages`). Building the package, the Azure Bot registration,
-sideloading, and the bot identity steps are all in [`teams/README.md`](../teams/README.md).
-The bot infra is **opt-in**: if no bot app id is supplied, the deploy behaves exactly
-like the tab-only channel B.
+The deployed Container App HTTPS URL is the Teams tab `contentUrl` and the bridge
+endpoint channel C's media bot connects back to. Building the package and sideloading
+are in [`teams/README.md`](../teams/README.md); the calling bot's registration and host
+are in [`../meeting-bot/README.md`](../meeting-bot/README.md). Both are **opt-in**: with
+no Teams package built and no in-call flags set, the deploy is the channel A web app.

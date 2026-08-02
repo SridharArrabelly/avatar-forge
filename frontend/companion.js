@@ -1,5 +1,5 @@
 /*
- * Nuru meeting control panel (channel D, issue #27 — optional Companion surface).
+ * Nuru meeting control panel (channel C, issue #27 — optional Companion surface).
  *
  * This is the DURABLE companion surface: a "meeting control panel", NOT a
  * decorative avatar face. It is the in-meeting front door to the proven ACS

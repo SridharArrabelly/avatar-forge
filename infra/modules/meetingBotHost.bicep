@@ -1,7 +1,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Avatar-Forge Teams meeting media bot — Windows host + calling registration.
 //
-// Channel D, issue #27. Deployed by `azd up` ONLY when the in-call channel is
+// Channel C, issue #27. Deployed by `azd up` ONLY when the in-call channel is
 // selected — either `DEPLOY_PROFILE=in-call` or `DEPLOY_MEETING_BOT_HOST=true`,
 // and only once the required inputs (app id, DNS label, admin password) are
 // present. A deploy that does not opt in never instantiates this module, so it
@@ -16,11 +16,11 @@
 //      pointing at this host's signaling endpoint.
 //
 // NOTE: this registration needs its OWN Entra app — an app can back only one
-// Azure Bot resource, so it cannot be the same app as the channel C chat bot.
+// Azure Bot resource, so it cannot be shared with any other bot registration.
 // `scripts/preflight.py` checks for that collision before you deploy.
 //
-// Operational docs: docs/channels/d-in-call-media-bot.md
-// Design record:    docs/channels/d-design-media-bot.md
+// Operational docs: docs/channels/c-in-call-media-bot.md
+// Design record:    docs/channels/c-design-media-bot.md
 // ─────────────────────────────────────────────────────────────────────────────
 targetScope = 'resourceGroup'
 
@@ -211,8 +211,8 @@ resource vm 'Microsoft.Compute/virtualMachines@2023-09-01' = {
 }
 
 // ───────── Azure Bot registration with CALLING webhook ─────────
-// The calling webhook is what makes this a Teams *calling* bot (vs the channel C
-// chat bot). It must point at the media bot's HTTPS signaling endpoint.
+// The calling webhook is what makes this a Teams *calling* bot rather than a
+// message-only one. It must point at the media bot's HTTPS signaling endpoint.
 resource bot 'Microsoft.BotService/botServices@2022-09-15' = {
   name: '${prefix}-registration'
   location: 'global'
