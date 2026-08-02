@@ -40,7 +40,11 @@ model; audio comes back.
 
 ---
 
-## 2. The two shapes
+## 2. The three shapes
+
+There are two supported bindings, and a third arrangement that comes up in almost
+every discussion of realtime avatars. It is worth drawing all three, because the
+performance claims you will read about realtime models belong to the third one.
 
 ```mermaid
 flowchart LR
@@ -65,10 +69,54 @@ flowchart LR
     end
 ```
 
+```mermaid
+flowchart LR
+    subgraph raw["Not used — realtime model bound directly, no Voice Live"]
+        direction LR
+        C1[microphone] <--> C2[gpt-realtime]
+        C2 <--> C3[in-process tools]
+        C2 --> C4[native OpenAI audio]
+        C4 -.->|no avatar,<br/>no custom voice| C5[browser]
+    end
+```
+
 The recognizer leaves the **answer path** — transcription is still configured in both
-modes (it is one field on the Voice Live session, not a component), but the model
-works from the audio and no longer waits for the text. The tools also moved from
+supported modes (it is one field on the Voice Live session, not a component), but the
+model works from the audio and no longer waits for the text. The tools also moved from
 *inside Foundry* to *inside this application*.
+
+### Pros and cons
+
+Everything below is either measured on this deployment or verified against the live
+service. Where the widely-repeated claim differs from what we measured, both are given.
+
+| Option | Pros | Cons |
+| --- | --- | --- |
+| **1. Voice Live + Foundry agent + tools**<br/>`VOICE_BINDING=agent`<br/>*current default* | • **Native RAG.** AI Search and Grounding-with-Bing-Custom-Search are managed Foundry tools — no glue code, no retrieval to maintain<br/>• **Path-scoped web sources.** 7 entries with boost levels, e.g. `mtn.com/investors` (SuperBoost). A path can be targeted<br/>• Foundry owns threads, history and the tool-calling loop<br/>• **Semantic end-of-utterance** available — worth ~200 ms/turn over silence timing<br/>• Prompt and tools live in the agent: change them without redeploying the app<br/>• Built-in governance surface | • Managed tool round trip is slower: **1.3–1.9 s** vs 0.27–1.63 s<br/>• More Azure surface: model deployment **plus quota**, agent registration, Bing account (G2 SKU)<br/>• Less control over the raw session and token-level behaviour |
+| **2. Voice Live + realtime model + tools**<br/>`VOICE_BINDING=model` | • **Tools run in-process: 0.27–1.63 s** round trip<br/>• **No model deployment and no quota request** — Voice Live manages the model itself<br/>• Fewest resources of the two supported modes: no agent, no Bing account<br/>• Direct control of session, prompt and function loop<br/>• Spoken interim cue is available, because Voice Live gives a synthesis stage to inject into | • **Semantic EOU is unavailable** — the service rejects it outright, so turn-taking falls back to a silence timer and hands back ~200 ms/turn<br/>• **We own retrieval.** Quality is ours to get right — currently weaker than agent mode (#78)<br/>• **Web scoping degrades to 5 bare hosts.** `site:` cannot match a path, so `mtn.com/investors` becomes `mtn.com`<br/>• Prompt/tool changes need an app redeploy<br/>• **No measured latency win here** — see below |
+| **3. Realtime model + tools, no Voice Live**<br/>**not used** | • Lowest *theoretical* speech-to-speech latency — this is where the "absolute lowest latency" claim actually comes from<br/>• Fewest moving parts; native audio straight off the model socket | • **No avatar.** Voice Live drives the TTS Avatar video and lip-sync off the synthesis stage; bound directly there is no such stage<br/>• **No custom neural voice.** A realtime model emits its own audio and bound directly the built-in voices are all you can ever get — `azure-custom` / `azure-personal` are reachable *only* because Voice Live inserts a replaceable synthesis stage<br/>• **No interim response injection** — the service returns a hard 400; with native audio there is nowhere to inject<br/>• VAD, barge-in and audio orchestration would all have to be rebuilt |
+
+**On the latency claim.** Option 3 is what "realtime models are dramatically faster"
+refers to, and the claim is fair *for that shape*. It does not transfer to option 2,
+and our own A/B says so: pinned to the same marker and interleaved, time-to-**answer**
+was **2.42 s (model) vs 2.45 s (agent)** — indistinguishable, with model mode's range
+the wider of the two. The entire apparent gap was time-to-first-*sound*, which is the
+spoken filler, a feature flag we had only built on one side. Details in
+[section 5](#5-comparing-the-two).
+
+The reason the gap closes is that this workload is **retrieval-bound, not
+conversation-bound**. Removing the recognizer and synthesis stages from the critical
+path saves real milliseconds, but a grounded answer still waits on a search and then on
+the model reading what came back. That cost is identical in both bindings, and it
+dominates.
+
+**Why option 3 is off the table.** Its cons are not inconveniences — they delete the
+product. This is an *avatar* with a branded voice, and Voice Live is precisely the
+component that makes both reachable from a realtime model. It is not a convenience
+layer wrapped around the model socket; it is the bridge to the Azure Speech and avatar
+infrastructure. Verified first-hand rather than taken on trust — the service rejects
+interim injection on native voices with a 400 that fails the whole `session.update`
+([`backend/voice/builders.py`](../backend/voice/builders.py)).
 
 ---
 
@@ -91,7 +139,7 @@ every response boundary, not from reasoning about the architecture.
 | | agent mode | model mode |
 | --- | --- | --- |
 | after the speaker stops | 3.1–4.4 s to first **token** | **1.7–2.4 s** to first **audio** |
-| tool round trip | 1.3–1.9 s (managed) | **0.27–0.71 s** (in-process) |
+| tool round trip | 1.3–1.9 s (managed) | **0.27–1.63 s** (in-process) |
 | new Azure resources | — | **none** |
 
 The second and third rows are sound: tool round trip is the same event measured the
