@@ -61,6 +61,8 @@ auth is rejected on the agent path. See [auth.md](auth.md).
 |---|---|---|
 | `AZURE_TENANT_ID` / `AZURE_CLIENT_ID` / `AZURE_CLIENT_SECRET` | — | Only for the (not recommended) local-Docker service-principal path. Leave unset on host (`az login`) and in Azure (managed identity). |
 | `AUTH_EXCLUDE_MANAGED_IDENTITY` | `false` | Dev-laptop only: skip the ~5s IMDS managed-identity probe to cut startup pre-warm from ~7s to ~1.5s. **Leave UNSET in Azure** — Container Apps / App Service / AKS workload identity all need the IMDS path. See [auth.md](auth.md). |
+| `AZURE_VOICELIVE_API_KEY` | — | Key-based fallback for the Voice Live connection. Unset is the intended posture: the backend then uses `DefaultAzureCredential`, which is what the deployed managed identity relies on. Use it only where a key is genuinely unavoidable. |
+| `RBAC_PROPAGATION_TIMEOUT_S` | `1200` | Seconds [`scripts/rbac_propagation.py`](../scripts/rbac_propagation.py) waits for a freshly assigned role to become effective. Role assignments are eventually consistent, so a greenfield deploy can otherwise fail on a permission that *has* been granted but has not landed yet. |
 
 ---
 
@@ -79,7 +81,6 @@ agent-creation time; the runtime backend never talks to Bing directly.
 | `AGENT_REASONING_EFFORT` | `none` | Reasoning effort. **Model-dependent:** `gpt-4.x`/`gpt-4o` reject it (leave **unset** — they 400, manifesting as a silently non-speaking avatar); `gpt-5.x` accept `none\|low\|medium\|high\|xhigh`; o-series accept `low\|medium\|high`. For voice latency the validated value is `none` (real reasoning adds 4–5s to first token). The script also selects the prompt variant from this. |
 | `AI_SEARCH_TOP_K` | `8` | Chunks pulled from the meeting-minutes index per turn. |
 | `BING_COUNT` | `8` | Snippets returned from the Bing Custom Search allow-list per turn. |
-| `AGENT_ID` | — | Optional explicit agent id; when empty the agent is resolved by `AGENT_NAME`. |
 
 > **The curated site allow-list is not an environment variable.** It is the
 > `bingAllowedDomains` parameter in [`infra/main.bicep`](../infra/main.bicep) — a list of
@@ -108,6 +109,7 @@ Read by [`scripts/setup_aisearch_index.py`](../scripts/setup_aisearch_index.py) 
 | `CHUNK_SIZE` / `CHUNK_OVERLAP` | `1200` / `200` | Chunking window (chars) and overlap. |
 | `RECREATE_INDEX` | `false` | `true` drops and recreates the index. |
 | `SEARCH_VECTOR_PROFILE` / `SEARCH_HNSW_ALGO` / `SEARCH_SEMANTIC_CONFIG` / `SEARCH_VECTORIZER` | `default-*` | Internal structural names; override only to stay compatible with an index built with different names. |
+| `SEARCH_VECTOR_FIELD` | `content_vector` | Name of the vector field queried at **runtime** by `search_minutes` in model mode ([`backend/voice/tools.py`](../backend/voice/tools.py)). Unlike the row above it is read on every query, not only at build time, so it must match the field the index was actually built with. |
 
 ---
 
@@ -150,10 +152,46 @@ and `bing_grounding` tools go with it — the tool surface becomes in-process Py
 |---|---|---|
 | `WEBIQ_API_KEY` | — | Enables the `search_web` tool in model mode. Passed to the container app as a **secret**, never as a plain environment variable. Unset leaves the web tool off entirely and the assistant answers from the minutes corpus alone. |
 | `WEBIQ_BASE_URL` | `https://api.microsoft.ai/v3` | Web IQ endpoint. |
-| `WEBIQ_ALLOWED_DOMAINS` | — | Comma-separated hosts that scope the search, e.g. `mtn.com,sashares.co.za`. Web IQ has no server-side allow-list — its request model exposes no `site` field — so [`build_query()`](../backend/voice/tools.py) compiles these into `site:a OR site:b` operators on the query, which is the mechanism the Web IQ API documents. Same intent as `bingAllowedDomains`: an open-web tool answering to an executive should not be able to cite anywhere at all. Empty searches the open web. |
+| `WEBIQ_ALLOWED_DOMAINS` | — | Comma-separated hosts that scope the search, e.g. `jse.co.za,mtn.com`. Web IQ has no server-side allow-list — its request model exposes no `site` field — so [`build_query()`](../backend/voice/tools.py) compiles these into `site:a OR site:b` operators on the query, which is the mechanism the Web IQ API documents. Same intent as `bingAllowedDomains`: an open-web tool answering to an executive should not be able to cite anywhere at all. Empty searches the open web. **Write bare hosts, not URLs and not `www.`** — see the two notes below. |
 | `WEBIQ_LANGUAGE` | `en` | Result language hint. |
 | `WEBIQ_REGION` | `ZA` | Result region hint. |
 | `WEBIQ_USE_ENTRA` | — | Set to authenticate to Web IQ with Entra instead of an API key. |
+
+> **`site:` matches a domain and every subdomain under it — it is not a hostname
+> filter.** Two consequences, both measured against the live API:
+>
+> - **Do not prefix with `www.`.** `site:www.jse.co.za` excludes `senspdf.jse.co.za`,
+>   which is where the JSE's SENS filings live — 9 of 10 results for a SENS query.
+>   The bare host keeps them.
+> - **Staging mirrors come in for free.** `site:sashares.co.za` returns hits on
+>   `dev.sashares.co.za`, and Web IQ once ranked that mirror *first* for a share-price
+>   question, quoting a two-month-old figure. `search_web` drops results whose host is
+>   a strict subdomain of an allowed domain when the extra labels are all
+>   non-production markers (`dev`, `staging`, `uat`, …).
+>
+> This is also where model mode is structurally weaker than agent mode: entries in
+> `bingAllowedDomains` are **path-scoped and boosted** (`/investors`, `/mtn-shares`),
+> and `site:` cannot express either. Model mode reads whole hosts where agent mode
+> reads curated sections, so web-grounded answers are not strictly comparable between
+> bindings.
+
+Model mode also owns its own answer-shaping knobs, because there is no agent to
+carry them:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `REALTIME_MAX_TOKENS` | `1200` | Ceiling on a single spoken response. A voice answer that runs long is worse than one that stops early — the listener has already got the point. |
+| `REALTIME_INTERIM_TEXTS` | — *(empty: off)* | Comma-separated canned lines the **platform** speaks while a tool call is in flight, e.g. `Let me check.,One moment.`. Empty disables the spoken filler. Model mode only. |
+| `REALTIME_INTERIM_THRESHOLD_MS` | `300` | How long a tool call must run before an interim line is spoken. Deliberately below the tool floor (~280 ms web, ~714 ms minutes); at the SDK default of 2000 ms it never fired at all. Irrelevant while `REALTIME_INTERIM_TEXTS` is empty. |
+
+> **The two fillers are independent.** The on-screen "thinking" indicator is a
+> frontend affordance driven by `response_created` and is unaffected by these
+> settings. `REALTIME_INTERIM_TEXTS` controls only the **spoken** cue.
+>
+> Turning the spoken cue off does not guarantee silence: with no platform line to
+> fill the gap the model tends to improvise its own preamble, which is unbounded
+> where the canned line was four words. See
+> [voice-binding.md](voice-binding.md) and issue #77.
 
 > **Note.** The binding is a **deployment-wide** setting — a client cannot choose it.
 > To compare the two, set `VOICE_BINDING` and redeploy. That keeps the comparison

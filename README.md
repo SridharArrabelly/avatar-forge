@@ -218,22 +218,48 @@ Details: **[docs/deployment.md](docs/deployment.md)** ·
 
 ## Documentation
 
+**New here?** Read [docs/channels/README.md](docs/channels/README.md) to pick a
+front door, then [docs/admin-checklist.md](docs/admin-checklist.md) to find out
+whether you can actually deploy it.
+
+**Start here**
+
 | Doc | What's in it |
 |---|---|
-| **[docs/channels/README.md](docs/channels/README.md)** | **Start here.** The channel ladder, comparison, and decision guide — which front door to deploy and why. |
+| **[docs/channels/README.md](docs/channels/README.md)** | The channel ladder, comparison, and decision guide — which front door to deploy and why. |
 | **[docs/admin-checklist.md](docs/admin-checklist.md)** | **Every manual step automation cannot do**, per channel, with who must perform it and what to do when you're blocked. |
+
+**Get it running**
+
+| Doc | What's in it |
+|---|---|
 | **[docs/development.md](docs/development.md)** | Run locally, build the AI Search index, smoke-test the index and agent, dev-only knobs. |
+| **[docs/deployment.md](docs/deployment.md)** | Deploy to Azure with `azd`: topology, region preflight, BYO Foundry/Search, cross-RG RBAC, post-deploy. |
 | **[docs/configuration.md](docs/configuration.md)** | **Every** environment variable, grouped by concern — the single source of truth. |
+
+**Understand it**
+
+| Doc | What's in it |
+|---|---|
 | **[docs/architecture.md](docs/architecture.md)** | System design, tool-calling accuracy, meeting-catalogue injection, frontend UX, project structure. |
 | **[docs/voice-binding.md](docs/voice-binding.md)** | Agent mode vs model mode: what binding Voice Live straight to a realtime model gives, what it costs, and the measured numbers. |
-| **[docs/deployment.md](docs/deployment.md)** | Deploy to Azure with `azd`: topology, region preflight, BYO Foundry/Search, cross-RG RBAC, post-deploy. |
 | **[docs/auth.md](docs/auth.md)** | `DefaultAzureCredential`, required roles, startup pre-warm, IMDS skip, token caching. |
+
+**Per component**
+
+| Doc | What's in it |
+|---|---|
 | **[teams/README.md](teams/README.md)** | Building and sideloading the Teams app package (serves channel B). |
-| **[docs/channels/c-design-media-bot.md](docs/channels/c-design-media-bot.md)** | **Design record** — the three in-call options evaluated, why Python + a thin .NET/Windows media bot, and the final architecture. |
-| **[docs/channels/c-design-avatar-video.md](docs/channels/c-design-avatar-video.md)** | **Design record** — the avatar's synced video face as a meeting camera tile, and why audio + video share one synthesis. |
-| **[docs/testing-meetings.md](docs/testing-meetings.md)** | **How to test the two in-meeting paths** — browser joiner vs. media bot: what each can and cannot hear, runbooks, healthy logs, rollback. |
-| **[meeting-bot/README.md](meeting-bot/README.md)** | The .NET/Windows media bot itself: project layout, configuration, operator runbook, and the traps that cost real debugging time. |
+| **[meeting-bot/README.md](meeting-bot/README.md)** | The .NET/Windows media bot itself (channel C): project layout, configuration, operator runbook, and the traps that cost real debugging time. |
 | **[prompts/README.md](prompts/README.md)** | Agent prompt content, the reasoning/non-reasoning variants, and the edit workflow. |
+| **[docs/testing-meetings.md](docs/testing-meetings.md)** | **How to test the two in-meeting paths** — browser joiner vs. media bot: what each can and cannot hear, runbooks, healthy logs, rollback. |
+
+**Design records** *(archive — why the in-call channel is built the way it is; not needed to deploy)*
+
+| Doc | What's in it |
+|---|---|
+| **[docs/channels/c-design-media-bot.md](docs/channels/c-design-media-bot.md)** | The three in-call options evaluated, why Python + a thin .NET/Windows media bot, and the final architecture. |
+| **[docs/channels/c-design-avatar-video.md](docs/channels/c-design-avatar-video.md)** | The avatar's synced video face as a meeting camera tile, and why audio + video share one synthesis. |
 
 ## References & Acknowledgements
 

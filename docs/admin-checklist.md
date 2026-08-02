@@ -52,7 +52,7 @@ Those are deliberate security boundaries, not gaps in our automation.
 **Usually achievable without an administrator.** This is why B is the recommended
 stopping point when admin access is limited.
 
-### D — In-call avatar (Graph media bot)
+### C — In-call avatar (Graph media bot)
 
 This is the demanding one. **Verify the Teams app access policy is achievable
 before you provision the VM** — the VM is the expensive part and it is useless
@@ -60,7 +60,7 @@ without the policy.
 
 | # | Step | Who | Notes |
 | --- | --- | --- | --- |
-| 1 | Entra app registration + client secret | You / Entra admin | **Must be a SECOND app, separate from C.** One Entra app can back only one Azure Bot resource; reusing C's fails with `MsaAppId is already in use` |
+| 1 | Entra app registration + client secret | You / Entra admin | **Must be its own app**, not shared with any other Azure Bot resource. One Entra app can back only one bot; reusing an existing one fails with `MsaAppId is already in use` |
 | 2 | Graph **application** permissions: `Calls.JoinGroupCall.All`, `Calls.JoinGroupCallAsGuest.All`, **`Calls.AccessMedia.All`**, `OnlineMeetings.Read.All` | Entra admin to add | `Calls.AccessMedia.All` is what unlocks the room audio |
 | 3 | **Admin consent** for all of the above | **Entra admin** | One-time. Nothing works without it |
 | 4 | Azure Bot resource with **calling enabled**, calling webhook → the VM's public HTTPS FQDN | You (bicep + portal) | The webhook URL cannot be known until the VM has its DNS label |
@@ -74,7 +74,7 @@ without the policy.
 > are asking, because "one irreversible-looking PowerShell command" lands better
 > than "ongoing access".
 
-### E — In-call avatar (headless browser)
+### D — In-call avatar (headless browser)
 
 Requirements are not yet established — see
 [channels/d-in-call-headless.md](channels/d-in-call-headless.md). The
@@ -101,7 +101,7 @@ reason to evaluate it.
 Ask for all of it **in one request** rather than discovering blockers serially —
 that is the difference between one conversation and four. A complete ask is:
 
-1. Consent to the Graph application permissions listed in D-2, for app `<app id>`
+1. Consent to the Graph application permissions listed in C-2, for app `<app id>`
 2. A Teams application access policy granting that app the right to join meetings
 3. Custom app upload (or org-wide publication of the package)
 

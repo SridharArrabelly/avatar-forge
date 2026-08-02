@@ -174,7 +174,7 @@ azd env set APPINSIGHTS_RESOURCE_GROUP rg-shared-observability
 azd env set AGENT_NAME              MtnAvatarAgent
 azd env set SEARCH_CONNECTION_NAME  aisearch-connection
 
-# The web/news tool is ON by default: azd deploys the Bing account, the curated site
+# The web tool is ON by default: azd deploys the Bing account, the curated site
 # allow-list and the Foundry connection, and feeds the two names back automatically.
 # Edit the allow-list in infra/main.bicep (bingAllowedDomains) so it points at YOUR
 # sources rather than the sample ones. To skip the tool (it is billable):
@@ -299,7 +299,7 @@ The agent needs two things, and they fail differently on purpose:
 | | Missing means | Result |
 |---|---|---|
 | **AI Search connection** | the agent has no corpus | **Fatal.** Nothing usable is created. |
-| **Bing connection** | no open-web/news grounding | **Degraded.** The agent is created and answers from your indexed documents. |
+| **Bing connection** | no site-scoped web grounding | **Degraded.** The agent is created and answers from your indexed documents. |
 
 The Bing tool is skipped — with a warning, not an error — both when
 `BING_CONNECTION_NAME` / `BING_CUSTOM_CONFIG_NAME` are unset *and* when they name a
