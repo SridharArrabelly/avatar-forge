@@ -123,7 +123,8 @@ failure modes of each stage are in [`meeting-bot/README.md`](../../meeting-bot/R
 > is anything but a test host.
 
 > **The calling bot needs its OWN Entra app.** An Entra app can back only one Azure
-> Bot resource, so `MEETING_BOT_APP_ID` must differ from the chat bot's `BOT_APP_ID`.
+> Bot resource, so `MEETING_BOT_APP_ID` must not be reused from any other Azure Bot
+> registration.
 > Reusing it fails deployment with `MsaAppId is already in use` — an error that reads
 > like a transient Azure problem and is not. Preflight checks for this collision.
 

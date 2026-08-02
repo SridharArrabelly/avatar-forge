@@ -6,7 +6,7 @@ thread via ``asyncio.to_thread`` by the callers in ``routes.py``.
 
 All imports of ``azure.communication.*`` are lazy so the module imports cleanly
 (and the app boots) even if the optional ACS SDKs are not installed or ACS is
-disabled — mirroring the additive guardrail used by the channel C bot.
+disabled — the same additive guardrail every optional channel here follows.
 """
 
 from __future__ import annotations

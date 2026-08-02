@@ -269,8 +269,8 @@ avatar-forge/
 │   ├── test_foundry_agent.py      # Smoke-tests the live agent end-to-end
 │   └── grant_byo_rbac.py          # Idempotently grants BYO runtime RBAC (brownfield)
 │
-├── teams/                         # Teams app package for channels B and C
-│   ├── manifest.template.json     # Manifest (schema v1.17): staticTabs + bots, templated placeholders
+├── teams/                         # Teams app package for channel B (and the optional in-call bot)
+│   ├── manifest.template.json     # Manifest (schema v1.17): staticTabs + optional bots, templated placeholders
 │   ├── build_package.py           # Stdlib-only: renders the manifest and zips a sideloadable package
 │   └── README.md                  # Packaging mechanics + sideload walkthrough
 │

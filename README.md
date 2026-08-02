@@ -53,7 +53,7 @@ its [channel page](docs/channels/README.md).
 
 ## Channel support
 
-Five front doors onto that one brain. What differs between them is only how audio and
+Four front doors onto that one brain. What differs between them is only how audio and
 video get in and out — which drives cost and, more importantly, **how much
 administrator access you need**.
 
@@ -64,7 +64,7 @@ administrator access you need**.
 | **D** | **Teams — in-call avatar** (Graph media bot) | ✅ Working | Azure Bot + **Windows VM** + DNS + TLS | **Highest** — incl. **Teams app access policy** | [d-in-call-media-bot.md](docs/channels/d-in-call-media-bot.md) |
 | **E** | **Teams — in-call avatar** (headless browser) | 🔜 Placeholder | Container/job | TBD | [e-in-call-headless.md](docs/channels/e-in-call-headless.md) |
 
-They are not five equal options: **A → B → C is a ladder** (each additive on the one
+They are not four equal options: **A → B is a ladder** (each additive on the one
 before), while **D and E are rivals** — two implementations of the same capability.
 The [channel hub](docs/channels/README.md) explains how to choose.
 
@@ -159,7 +159,7 @@ Details: **[docs/deployment.md](docs/deployment.md)** ·
 | **[docs/voice-binding.md](docs/voice-binding.md)** | Agent mode vs model mode: what binding Voice Live straight to a realtime model gives, what it costs, and the measured numbers. |
 | **[docs/deployment.md](docs/deployment.md)** | Deploy to Azure with `azd`: topology, region preflight, BYO Foundry/Search, cross-RG RBAC, post-deploy. |
 | **[docs/auth.md](docs/auth.md)** | `DefaultAzureCredential`, required roles, startup pre-warm, IMDS skip, token caching. |
-| **[teams/README.md](teams/README.md)** | Building and sideloading the Teams app package (serves channels B and C). |
+| **[teams/README.md](teams/README.md)** | Building and sideloading the Teams app package (serves channel B). |
 | **[docs/channels/d-design-media-bot.md](docs/channels/d-design-media-bot.md)** | **Design record** — the three in-call options evaluated, why Python + a thin .NET/Windows media bot, and the final architecture. |
 | **[docs/channels/d-design-avatar-video.md](docs/channels/d-design-avatar-video.md)** | **Design record** — the avatar's synced video face as a meeting camera tile, and why audio + video share one synthesis. |
 | **[docs/testing-meetings.md](docs/testing-meetings.md)** | **How to test the two in-meeting paths** — browser joiner vs. media bot: what each can and cannot hear, runbooks, healthy logs, rollback. |
