@@ -169,6 +169,14 @@ Voice Live manages the realtime model itself — there is no model deployment an
 quota request behind `VOICELIVE_MODEL`. Model mode provisions **nothing** of its
 own. It is a configuration change, not a deployment.
 
+> **When that stops being true.** Voice Live's managed model is the *base* model on
+> a shared, pay-as-you-go pool. Deploying a realtime model yourself — Bring Your Own
+> Model — is only required to get provisioned throughput (PTU) for guaranteed
+> capacity, to bind a fine-tuned model instead of the base one, or to apply
+> content-safety filters configured at the deployment level. None of those apply
+> here, so `VOICELIVE_MODEL` stays a name in the session payload rather than a
+> resource in the template.
+
 It also *removes* three things. Because the binding decides whether a Foundry agent
 is in the request path at all, `azd up` under `VOICE_BINDING=model` skips:
 
