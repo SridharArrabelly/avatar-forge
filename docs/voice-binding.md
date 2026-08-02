@@ -4,9 +4,9 @@ Voice Live can be bound to two different things, and the choice changes the shap
 of every turn. This page is the design record for that choice: what each binding
 gives you, what it costs, and what was measured rather than assumed.
 
-- **Agent mode** (`VOICE_BINDING=agent`, the default) binds Voice Live to the
-  Foundry agent. This is the original design and the one every channel has shipped
-  on.
+- **Agent mode** (`VOICE_BINDING=agent`, the default **and the recommended choice**)
+  binds Voice Live to the Foundry agent. This is the original design and the one every
+  channel has shipped on.
 - **Model mode** (`VOICE_BINDING=model`) binds Voice Live directly to a realtime
   speech-to-speech model, and moves the tools in-process.
 
@@ -92,7 +92,7 @@ service. Where the widely-repeated claim differs from what we measured, both are
 
 | Option | Pros | Cons |
 | --- | --- | --- |
-| **1. Voice Live + Foundry agent + tools**<br/>`VOICE_BINDING=agent`<br/>*current default* | • **Native RAG.** AI Search and Grounding-with-Bing-Custom-Search are managed Foundry tools — no glue code, no retrieval to maintain<br/>• **Path-scoped web sources.** 7 entries with boost levels, e.g. `mtn.com/investors` (SuperBoost). A path can be targeted<br/>• Foundry owns threads, history and the tool-calling loop<br/>• **Semantic end-of-utterance** available — worth ~200 ms/turn over silence timing<br/>• Prompt and tools live in the agent: change them without redeploying the app<br/>• Built-in governance surface | • Managed tool round trip is slower: **1.3–1.9 s** vs 0.27–1.63 s<br/>• More Azure surface: model deployment **plus quota**, agent registration, Bing account (G2 SKU)<br/>• Less control over the raw session and token-level behaviour |
+| **1. Voice Live + Foundry agent + tools**<br/>`VOICE_BINDING=agent`<br/>*default & recommended* | • **Native RAG.** AI Search and Grounding-with-Bing-Custom-Search are managed Foundry tools — no glue code, no retrieval to maintain<br/>• **Path-scoped web sources.** 7 entries with boost levels, e.g. `mtn.com/investors` (SuperBoost). A path can be targeted<br/>• Foundry owns threads, history and the tool-calling loop<br/>• **Semantic end-of-utterance** available — worth ~200 ms/turn over silence timing<br/>• Prompt and tools live in the agent: change them without redeploying the app<br/>• Built-in governance surface | • Managed tool round trip is slower: **1.3–1.9 s** vs 0.27–1.63 s<br/>• More Azure surface: model deployment **plus quota**, agent registration, Bing account (G2 SKU)<br/>• Less control over the raw session and token-level behaviour |
 | **2. Voice Live + realtime model + tools**<br/>`VOICE_BINDING=model` | • **Tools run in-process: 0.27–1.63 s** round trip<br/>• **No model deployment and no quota request** — Voice Live manages the model itself<br/>• Fewest resources of the two supported modes: no agent, no Bing account<br/>• Direct control of session, prompt and function loop<br/>• Spoken interim cue is available, because Voice Live gives a synthesis stage to inject into | • **Semantic EOU is unavailable** — the service rejects it outright, so turn-taking falls back to a silence timer and hands back ~200 ms/turn<br/>• **We own retrieval.** Quality is ours to get right — currently weaker than agent mode (#78)<br/>• **Web scoping degrades to 5 bare hosts.** `site:` cannot match a path, so `mtn.com/investors` becomes `mtn.com`<br/>• Prompt/tool changes need an app redeploy<br/>• **No measured latency win here** — see below |
 | **3. Realtime model + tools, no Voice Live**<br/>**not used** | • Lowest *theoretical* speech-to-speech latency — this is where the "absolute lowest latency" claim actually comes from<br/>• Fewest moving parts; native audio straight off the model socket | • **No avatar.** Voice Live drives the TTS Avatar video and lip-sync off the synthesis stage; bound directly there is no such stage<br/>• **No custom neural voice.** A realtime model emits its own audio and bound directly the built-in voices are all you can ever get — `azure-custom` / `azure-personal` are reachable *only* because Voice Live inserts a replaceable synthesis stage<br/>• **No interim response injection** — the service returns a hard 400; with native audio there is nowhere to inject<br/>• VAD, barge-in and audio orchestration would all have to be rebuilt |
 
@@ -392,7 +392,8 @@ instructions. Two findings from tuning it are worth keeping:
 | You want the tool round trip under your own control | **model** |
 | Branded custom neural voice | either — keep an Azure voice |
 
-Agent mode remains the default deliberately. Model mode is the one with fewer moving
+Agent mode is both the default and the recommendation, deliberately. Model mode is the
+one with fewer moving
 parts at runtime and it owns its tool round trip (0.27–1.63 s in-process, against
 1.3–1.9 s managed), but it moves tool correctness from Foundry's problem to ours, and
 retrieval quality is the thing to watch: the managed `azure_ai_search` tool does its

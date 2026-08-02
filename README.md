@@ -24,7 +24,7 @@ once, together, by `scripts/set_profile.py`.
 **One brain, several front doors.** Every channel shares the same backend, Voice Live
 session and grounding corpus — only the edge differs.
 
-### Agent mode — `VOICE_BINDING=agent` *(default)*
+### Agent mode — `VOICE_BINDING=agent` *(default & recommended)*
 
 Voice Live binds to a Foundry agent, which owns the prompt, model and tool routing.
 The agent is text-only, so Voice Live's transcription sits on the answer path — the
