@@ -77,11 +77,23 @@ this application*.
 These are from a probe that speaks a real question into a real session and marks
 every response boundary, not from reasoning about the architecture.
 
+> ⚠️ **The first row is not a like-for-like comparison, and the A/B is still
+> outstanding.** The two cells measure **different events** — agent mode's figure is
+> time to first *token*, model mode's is time to first *audio*. They were also taken
+> on **different deployments**; the one the agent numbers came from no longer exists.
+> The direction is plausible, the magnitude is unverified. Treat the row as two
+> separate observations until both modes are re-measured on one deployment, quoting
+> the same marker. The probe already records both markers in every run, so this is a
+> matter of quoting the right field, not of new instrumentation.
+
 | | agent mode | model mode |
 | --- | --- | --- |
-| first sound after the speaker stops | 3.1–4.4 s to first token | **1.7–2.4 s** |
+| after the speaker stops | 3.1–4.4 s to first **token** | **1.7–2.4 s** to first **audio** |
 | tool round trip | 1.3–1.9 s (managed) | **0.27–0.71 s** (in-process) |
 | new Azure resources | — | **none** |
+
+The second and third rows are sound: tool round trip is the same event measured the
+same way in both, and the resource count is structural.
 
 A single turn, instrumented end to end:
 
