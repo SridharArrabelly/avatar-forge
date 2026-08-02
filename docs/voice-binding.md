@@ -272,6 +272,16 @@ instructions. Two findings from tuning it are worth keeping:
   narrate" failed outright. "At most four words" produced a consistent
   *"One moment."* — which usefully covers the ~1.2 s tool gap. Working with the
   behaviour beat fighting it.
+
+  > **Superseded — the acknowledgement is now suppressed, and this is being
+  > retested.** Live testing found the preamble fires on nearly every tool-backed
+  > turn, which is nearly every turn, and a canned phrase ahead of each answer
+  > reads as a tic rather than as reassurance. Two things produced it
+  > independently — the `interim_response` platform feature *and* this prompt
+  > clause — so muting one alone changed nothing audible. Both are now off by
+  > default. The finding above is kept because it records a real failure mode:
+  > if the model reverts to *longer* improvised preambles, bounding rather than
+  > forbidding is the known-good fallback. See issue for the tuning work.
 - **`max_response_output_tokens` does not control spoken length.** Swept at 1200,
   400 and 200, the answer ended cleanly every time and the duration barely moved,
   because the cap counts *text* tokens and a three-sentence answer is only ~75.

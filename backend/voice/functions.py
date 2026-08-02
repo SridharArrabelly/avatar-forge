@@ -31,9 +31,7 @@ async def execute_function(name: str, arguments: str) -> dict:
     if name == "search_minutes":
         return await search_minutes(query=args.get("query", ""))
     if name == "search_web":
-        return await search_web(
-            query=args.get("query", ""), kind=args.get("kind", "web")
-        )
+        return await search_web(query=args.get("query", ""))
 
     logger.warning(f"Model called an unknown tool: {name!r}")
     return {"error": f"Unknown tool: {name}"}

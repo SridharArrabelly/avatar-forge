@@ -76,7 +76,13 @@ def test_binding_resolution():
 
 # ------------------------------------------------------- interim response
 def test_interim_response_gating():
-    _fresh_config(VOICE_BINDING="agent")
+    # Every check in here sets REALTIME_INTERIM_TEXTS explicitly. The shipped
+    # default is now empty (see backend/config.py), so any check written against
+    # the default would pass for the wrong reason: it would prove the text list
+    # is empty rather than that the gate under test actually works.
+    ON = "One moment."
+
+    _fresh_config(VOICE_BINDING="agent", REALTIME_INTERIM_TEXTS=ON)
     from backend.voice.builders import build_interim_response
     from azure.ai.voicelive.models import AzureStandardVoice
 
@@ -84,9 +90,19 @@ def test_interim_response_gating():
     check("agent mode never gets interim_response",
           build_interim_response(azure_voice), None)
 
+    # Off by default. Live testing found the spoken filler fires on nearly every
+    # tool-backed turn — which is nearly every turn — and a canned preamble ahead
+    # of each answer reads as a tic. The frontend's on-screen thinking indicator
+    # covers the same gap silently, in both bindings. The mechanism below is
+    # untouched; only the default changed.
     _fresh_config(VOICE_BINDING="model")
+    from backend.voice.builders import build_interim_response as bir_default
+    check("model mode has no interim_response by default",
+          bir_default(azure_voice), None)
+
+    _fresh_config(VOICE_BINDING="model", REALTIME_INTERIM_TEXTS=ON)
     from backend.voice.builders import build_interim_response as bir
-    check_true("model mode + Azure voice gets interim_response",
+    check_true("model mode + Azure voice gets interim_response when texts are set",
                bir(azure_voice) is not None)
 
     # The service returns a hard 400 for an OpenAI voice and fails the WHOLE
@@ -102,11 +118,11 @@ def test_interim_response_gating():
     check("empty REALTIME_INTERIM_TEXTS disables interim", bir2(azure_voice), None)
 
     # Per-session override must reach the builder, not just the connect call.
-    _fresh_config(VOICE_BINDING="agent")
+    _fresh_config(VOICE_BINDING="agent", REALTIME_INTERIM_TEXTS=ON)
     from backend.voice.builders import build_interim_response as bir3
     check_true("model_binding=True override enables interim in an agent deploy",
                bir3(azure_voice, model_binding=True) is not None)
-    _fresh_config(VOICE_BINDING="model")
+    _fresh_config(VOICE_BINDING="model", REALTIME_INTERIM_TEXTS=ON)
     from backend.voice.builders import build_interim_response as bir4
     check("model_binding=False override disables interim in a model deploy",
           bir4(azure_voice, model_binding=False), None)

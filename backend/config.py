@@ -104,14 +104,25 @@ REALTIME_MAX_TOKENS = int(os.getenv("REALTIME_MAX_TOKENS", "1200"))
 
 # Spoken while a tool call is in flight, so grounding is not dead air. Voice
 # Live picks one at random per turn — several short options rather than one line
-# repeated, which grates within a couple of turns. Set empty to disable.
+# repeated, which grates within a couple of turns.
+#
+# DEFAULT OFF, deliberately. Live testing found the spoken filler fires on every
+# tool-backed turn, which is almost every turn, and "One moment." ahead of each
+# answer reads as a tic rather than as reassurance. The on-screen "thinking"
+# indicator in the frontend already covers the same gap silently and is the
+# mechanism both bindings share, so nothing regresses by muting the voice.
+#
+# Note what this costs, because it is the whole of model mode's apparent speed:
+# the filler is what made model mode start speaking at ~1.0s against agent
+# mode's ~2.4s. Time to the *substantive answer* was 2.42s vs 2.45s — identical.
+# Muting the filler therefore removes a perceived-latency win without changing
+# any real one. Channel C (in-call audio) has no screen to put an indicator on
+# and will need a spoken cue, so this is expected to come back — as a tuned set
+# of triggers and phrasings rather than a blanket preamble.
+#
+# Set REALTIME_INTERIM_TEXTS="Let me check.,One moment." to re-enable.
 REALTIME_INTERIM_TEXTS = [
-    t.strip()
-    for t in os.getenv(
-        "REALTIME_INTERIM_TEXTS",
-        "Let me check.,One moment.,Checking now.,Let me look that up.",
-    ).split(",")
-    if t.strip()
+    t.strip() for t in os.getenv("REALTIME_INTERIM_TEXTS", "").split(",") if t.strip()
 ]
 
 # How long a tool may run before the acknowledgement is spoken. The SDK default

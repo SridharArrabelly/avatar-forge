@@ -175,14 +175,6 @@ SEARCH_WEB_TOOL: dict[str, Any] = {
                 "type": "string",
                 "description": "What to search for, in natural language.",
             },
-            "kind": {
-                "type": "string",
-                "enum": ["web", "news"],
-                "description": (
-                    "Use 'news' when recency is the point ('latest', 'this "
-                    "week', 'any news on'). Otherwise 'web'."
-                ),
-            },
         },
         "required": ["query"],
     },
@@ -275,12 +267,34 @@ def _pick(item: dict[str, Any], keys: tuple[str, ...]) -> str:
     return ""
 
 
-async def search_web(query: str, kind: str = "web") -> dict[str, Any]:
-    """One POST to Web IQ. No SDK layer, no MCP session, no agent."""
+async def search_web(query: str) -> dict[str, Any]:
+    """One POST to Web IQ's ``/search/web``. No SDK layer, no MCP session, no agent.
+
+    **Why there is no ``news`` option.** Web IQ exposes several verticals — web,
+    news, images, video. ``/search/news`` queries a *news-publisher* index, and
+    that index is fundamentally incompatible with a domain allow-list built from
+    corporate and exchange sites. Measured against the live API:
+
+    ===========================================  =======================================
+    ``site:mtn.com`` + ``/search/news``          ``[]``
+    ``site:mtn.com`` + ``/search/web``           executive-committee, leadership, and
+                                                 the new-group-CFO announcement pages
+    no allow-list + ``/search/news``             Moneyweb, MyBroadband, Yahoo Finance
+    ===========================================  =======================================
+
+    Of the allowed domains only ITWeb is a news publisher, so every news query
+    collapsed onto ITWeb and returned articles unrelated to the question —
+    "MTN share price" came back as a 6G-spectrum story. The model then correctly
+    reported it had nothing to answer from.
+
+    ``/search/web`` carries ``lastUpdatedAt``/``crawledAt`` per result, so recency
+    is still available where it matters; it is a ranking signal rather than a
+    separate index. Recency was never worth a vertical that the allow-list empties.
+    """
     query = (query or "").strip()
     if not query:
         return {"error": "query is required"}
-    feature = "news" if str(kind).lower() == "news" else "web"
+    feature = "web"
 
     if not web_search_configured():
         return {"error": "Web search is not configured on this deployment."}

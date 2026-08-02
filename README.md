@@ -52,7 +52,7 @@ flowchart LR
     subgraph Ground["Grounding — where the answers come from"]
         direction TB
         S["Azure AI Search<br/>your document corpus"]
-        N["Grounding with Bing<br/>curated news domains"]
+        N["Grounding with Bing<br/>site-scoped web search"]
     end
 
     A --> API
