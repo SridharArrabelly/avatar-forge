@@ -116,7 +116,8 @@ param bingAllowedDomains array = [
 ]
 
 // App runtime extras
-param agentModel string = 'gpt-5.4'
+@description('Deployment name the Foundry agent binds to. Empty derives it: on a greenfield deploy the agent must bind to the deployment this template just created, so it follows modelDeploymentName. Set explicitly for BYO Foundry, where the deployment already exists and this template did not name it.')
+param agentModel string = ''
 param embeddingDeployment string = 'text-embedding-3-small'
 param avatarName string = 'Lisa-casual-sitting'
 param customAvatarName string = ''
@@ -183,6 +184,13 @@ var tags = {
 var createFoundry = empty(foundryAccountName) || empty(foundryResourceGroup) || empty(foundryProjectEndpoint)
 var createSearch  = empty(searchServiceName) || empty(searchResourceGroup)
 
+// AGENT_MODEL is a *deployment* name, not a catalogue model name — the agent binds to
+// whatever `modelDeploymentName` called the deployment. Keeping them as two independent
+// literals made customising MODEL_DEPLOYMENT_NAME silently create a deployment the agent
+// could never find, so greenfield derives it. BYO keeps the old default because the
+// deployment lives in an account this template did not create and cannot inspect.
+var resolvedAgentModel = !empty(agentModel) ? agentModel : (createFoundry ? modelDeploymentName : 'gpt-5.4')
+
 // ───────── Profile derivation ─────────
 // The profile RAISES capability; it never lowers it. Explicit flags still work
 // on their own, so environments created before profiles existed deploy exactly
@@ -242,7 +250,7 @@ module resources 'resources.bicep' = {
     modelDeploymentName: modelDeploymentName
     modelSkuName: modelSkuName
     modelCapacity: modelCapacity
-    agentModel: agentModel
+    agentModel: resolvedAgentModel
     embeddingDeployment: embeddingDeployment
     avatarName: avatarName
     customAvatarName: customAvatarName
@@ -347,7 +355,7 @@ output APPINSIGHTS_RESOURCE_GROUP string = appInsightsResourceGroup
 // into the container. Otherwise a true greenfield clone (no .env) gets
 // AGENT_MODEL=""/EMBEDDING_DEPLOYMENT="" in the azd env, and the postprovision
 // scripts fail even though the matching Foundry deployments were created.
-output AGENT_MODEL string = agentModel
+output AGENT_MODEL string = resolvedAgentModel
 output EMBEDDING_DEPLOYMENT string = embeddingDeployment
 output VOICELIVE_VOICE string = voiceLiveVoice
 output SR_MODEL string = srModel

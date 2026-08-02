@@ -141,7 +141,7 @@ test checklist + model-shootout results live in
 ## Automated tests
 
 Everything above is a *smoke test* — it needs live Azure resources. Most of the suite
-does not: **eight checks run fully offline**, with no Azure, no credentials and no
+does not: **nine checks run fully offline**, with no Azure, no credentials and no
 network. They are the fastest way to know you have not broken anything.
 
 ```powershell
@@ -151,6 +151,7 @@ uv run python scripts/test_voice_binding.py    # the agent/model binding switch
 uv run python scripts/test_build_query.py      # site scoping renders the operators Web IQ documents
 uv run python scripts/test_avatar_identity.py  # every surface calls the assistant the same name
 uv run python scripts/test_build_package.py    # the Teams package builder's manifest
+uv run python scripts/test_agent_model_binding.py  # the agent binds to a deployment that exists
 uv run python scripts/test_agent_tool_wiring.py
 uv run python scripts/test_rbac_propagation.py # the RBAC-propagation wait used by postprovision
 ```

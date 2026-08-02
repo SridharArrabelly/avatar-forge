@@ -117,16 +117,43 @@ Read by [`scripts/setup_aisearch_index.py`](../scripts/setup_aisearch_index.py) 
 
 Read **only** when `azd` creates a new Foundry model deployment
 ([`infra/main.bicep`](../infra/main.bicep)). Unused for a brownfield (BYO Foundry)
-deploy. Keep `MODEL_DEPLOYMENT_NAME` aligned with `AGENT_MODEL`, and `MODEL_VERSION`
-matched to `MODEL_NAME` (an invalid pair fails the deployment).
+deploy. Keep `MODEL_VERSION` matched to `MODEL_NAME` — an invalid pair fails the
+deployment.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `MODEL_NAME` | `gpt-5.4` | OpenAI model to deploy. |
+| `MODEL_NAME` | `gpt-5.4` | **Which** model to pull from the catalogue. |
 | `MODEL_VERSION` | `2026-03-05` | Model version (must match `MODEL_NAME`). |
-| `MODEL_DEPLOYMENT_NAME` | `gpt-5.4` | Deployment name (the agent binds to it). |
+| `MODEL_DEPLOYMENT_NAME` | `gpt-5.4` | What to **call** that deployment. |
 | `MODEL_SKU_NAME` | `GlobalStandard` | Deployment SKU. |
 | `MODEL_CAPACITY` | `50` | TPM (thousands) capacity. |
+
+### Why `MODEL_NAME` and `MODEL_DEPLOYMENT_NAME` are both needed
+
+They look redundant because the defaults are identical, but they are two different
+fields on the Azure resource and neither can be dropped:
+
+```bicep
+resource deployment 'Microsoft.CognitiveServices/accounts/deployments@...' = {
+  name: modelDeploymentName            // what you call it — the alias callers use
+  properties: {
+    model: { name: modelName, version: modelVersion }   // which model it actually is
+  }
+}
+```
+
+So you can deploy `gpt-5.4` under the name `chat-prod`, then swap the model behind
+that name later without changing a single caller. That indirection is the whole point
+of a deployment name, and it is why callers — including the Foundry agent — reference
+`MODEL_DEPLOYMENT_NAME`, never `MODEL_NAME`.
+
+> **`AGENT_MODEL` is a *deployment* name too, despite the variable name.** It is what
+> the agent binds to. On a greenfield deploy you do **not** set it — it follows
+> `MODEL_DEPLOYMENT_NAME` automatically, because the agent has to bind to the
+> deployment the template just created. Set it explicitly only for BYO Foundry, where
+> the deployment already exists and this template did not name it.
+> [`scripts/test_agent_model_binding.py`](../scripts/test_agent_model_binding.py) pins
+> that behaviour.
 
 ---
 

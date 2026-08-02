@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.43.8.12551",
-      "templateHash": "12868540365098593455"
+      "templateHash": "219725375930438685"
     }
   },
   "parameters": {
@@ -227,7 +227,10 @@
     },
     "agentModel": {
       "type": "string",
-      "defaultValue": "gpt-5.4"
+      "defaultValue": "",
+      "metadata": {
+        "description": "Deployment name the Foundry agent binds to. Empty derives it: on a greenfield deploy the agent must bind to the deployment this template just created, so it follows modelDeploymentName. Set explicitly for BYO Foundry, where the deployment already exists and this template did not name it."
+      }
     },
     "embeddingDeployment": {
       "type": "string",
@@ -411,6 +414,7 @@
     },
     "createFoundry": "[or(or(empty(parameters('foundryAccountName')), empty(parameters('foundryResourceGroup'))), empty(parameters('foundryProjectEndpoint')))]",
     "createSearch": "[or(empty(parameters('searchServiceName')), empty(parameters('searchResourceGroup')))]",
+    "resolvedAgentModel": "[if(not(empty(parameters('agentModel'))), parameters('agentModel'), if(variables('createFoundry'), parameters('modelDeploymentName'), 'gpt-5.4'))]",
     "profileInCall": "[equals(toLower(parameters('deployProfile')), 'in-call')]",
     "wantMeetingBotBridge": "[or(variables('profileInCall'), equals(toLower(parameters('meetingBotEnabled')), 'true'))]",
     "wantMeetingBotHost": "[or(variables('profileInCall'), equals(toLower(parameters('deployMeetingBotHost')), 'true'))]",
@@ -546,7 +550,7 @@
             "value": "[parameters('modelCapacity')]"
           },
           "agentModel": {
-            "value": "[parameters('agentModel')]"
+            "value": "[variables('resolvedAgentModel')]"
           },
           "embeddingDeployment": {
             "value": "[parameters('embeddingDeployment')]"
@@ -3345,7 +3349,7 @@
     },
     "AGENT_MODEL": {
       "type": "string",
-      "value": "[parameters('agentModel')]"
+      "value": "[variables('resolvedAgentModel')]"
     },
     "EMBEDDING_DEPLOYMENT": {
       "type": "string",
