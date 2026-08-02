@@ -1,12 +1,13 @@
 # Avatar Forge
 
-A talking, photorealistic AI avatar that answers questions from **your own
-documents** — over the web and inside Microsoft Teams. The avatar speaks and listens
-in real time (Azure **Voice Live**), grounded by Azure AI Search RAG over your corpus
-plus a web tool for live facts. By default it answers through a **Microsoft Foundry
-agent**; it can instead bind straight to a **realtime model**, which removes the
-transcription hop from the answer path. The Voice Live SDK runs **entirely
-server-side** (Python/FastAPI); the browser only handles audio I/O and avatar video.
+A talking, photorealistic AI avatar that answers from **two sources at once**: your
+own documents, and the outside web sources you choose. It speaks and listens in real
+time (Azure **Voice Live**), grounded by Azure AI Search RAG over your corpus plus a
+domain-scoped web search for anything current. By default it answers through a
+**Microsoft Foundry agent**; it can instead bind straight to a **realtime model**,
+which removes the transcription hop from the answer path. Reach it in a browser or
+inside Microsoft Teams. The Voice Live SDK runs **entirely server-side**
+(Python/FastAPI); the browser only handles audio I/O and avatar video.
 
 ## Architecture
 
