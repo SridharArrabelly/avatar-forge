@@ -142,15 +142,16 @@ BINDINGS: dict[str, Binding] = {
         ),
         tradeoff=(
             "Grounding with Bing works here. Tools and prompt are editable in the "
-            "portal without redeploying. Costs an extra transcription hop."
+            "portal without redeploying. The answer waits on transcription."
         ),
     ),
     "model": Binding(
         key="model",
         title="Model mode",
         summary=(
-            "Bind straight to a realtime model. It takes audio natively, so the "
-            "transcription hop disappears; prompt and tools travel in the session."
+            "Bind straight to a realtime model. It works from the audio itself, so "
+            "the answer no longer waits on the transcript; prompt and tools travel "
+            "in the session."
         ),
         tradeoff=(
             "Lower time-to-first-token, but Grounding with Bing cannot follow — web "

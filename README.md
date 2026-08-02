@@ -4,8 +4,8 @@ A talking, photorealistic AI avatar that answers from **two sources at once**: y
 own documents, and the outside web sources you choose. It speaks and listens in real
 time (Azure **Voice Live**), grounded by Azure AI Search RAG over your corpus plus a
 domain-scoped web search for anything current. By default it answers through a
-**Microsoft Foundry agent**; it can instead bind straight to a **realtime model**,
-which removes the transcription hop from the answer path. Reach it in a browser or
+**Microsoft Foundry agent**; it can instead bind straight to a **realtime model**, so
+the answer no longer waits on the transcript. Reach it in a browser or
 inside Microsoft Teams. The Voice Live SDK runs **entirely server-side**
 (Python/FastAPI); the browser only handles audio I/O and avatar video.
 
@@ -27,7 +27,8 @@ session and grounding corpus — only the edge differs.
 ### Agent mode — `VOICE_BINDING=agent` *(default)*
 
 Voice Live binds to a Foundry agent, which owns the prompt, model and tool routing.
-Speech is transcribed before the agent sees it.
+The agent is text-only, so Voice Live's transcription sits on the answer path — the
+agent cannot start until the words exist.
 
 ```mermaid
 flowchart LR
@@ -42,12 +43,10 @@ flowchart LR
     subgraph Brain["One brain — Python / FastAPI on Azure Container Apps"]
         direction TB
         API["Session + media bridge"]
-        VL["Azure Voice Live<br/>speech in · speech out · avatar"]
-        STT["Speech-to-text<br/><i>SR_MODEL</i>"]
+        VL["Azure Voice Live<br/>speech in · transcription · speech out · avatar"]
         AG["<b>Foundry agent</b><br/>prompt · model · tool routing"]
         API <--> VL
-        VL <--> STT
-        STT <--> AG
+        VL <--> AG
     end
 
     subgraph Ground["Grounding — where the answers come from"]
@@ -66,10 +65,9 @@ flowchart LR
 
 ### Model mode — `VOICE_BINDING=model`
 
-Voice Live binds straight to a realtime model. It accepts audio natively, so the
-transcription hop disappears from the answer path and the prompt and tools travel in
-the session instead. **The front doors are unchanged** — only the middle and the web
-tool differ.
+Voice Live binds straight to a realtime model, which takes the audio itself. The
+prompt and tools travel in the session instead of living in an agent. **The front
+doors are unchanged** — only the middle and the web tool differ.
 
 ```mermaid
 flowchart LR
@@ -84,8 +82,8 @@ flowchart LR
     subgraph Brain2["Same host, different middle"]
         direction TB
         API2["Session + media bridge"]
-        VL2["Azure Voice Live<br/>speech in · speech out · avatar"]
-        RT["<b>Realtime model</b><br/>takes audio directly — no transcription hop<br/>prompt + tools travel in the session"]
+        VL2["Azure Voice Live<br/>speech in · transcription · speech out · avatar"]
+        RT["<b>Realtime model</b><br/>prompt · tools carried in the session"]
         API2 <--> VL2
         VL2 <--> RT
     end
@@ -103,6 +101,12 @@ flowchart LR
     RT --> S2
     RT --> W2
 ```
+
+Transcription is configured identically in both modes and is **not** a separate
+component — it is one field on the Voice Live session, next to the voice and the
+avatar. The difference is what waits for it: in agent mode the answer cannot start
+without the text, while in model mode the transcript is still produced for the
+on-screen transcript but the model is already working from the audio.
 
 Why the grounding box changes: Voice Live accepts exactly two tool types in model
 mode, `FUNCTION` and `MCP`, so the managed Grounding-with-Bing tool has nowhere to

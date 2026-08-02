@@ -65,8 +65,10 @@ flowchart LR
     end
 ```
 
-The recognizer box is gone, and the tools moved from *inside Foundry* to *inside
-this application*.
+The recognizer leaves the **answer path** — transcription is still configured in both
+modes (it is one field on the Voice Live session, not a component), but the model
+works from the audio and no longer waits for the text. The tools also moved from
+*inside Foundry* to *inside this application*.
 
 ---
 
