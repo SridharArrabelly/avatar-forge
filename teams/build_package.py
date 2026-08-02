@@ -252,7 +252,7 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         default=_env_flag("TEAMS_ENABLE_COMPANION"),
         help="Include the optional channel C meeting control panel (configurableTabs). "
-        "Off by default — the package is then identical to the tab-only/chat-only build.",
+        "Off by default — the package is then identical to the tab-only build.",
     )
     parser.add_argument(
         "--enable-calling",
@@ -319,7 +319,7 @@ def main(argv: list[str] | None = None) -> int:
             bot["supportsCalling"] = True
 
     # The channel C meeting control panel (configurableTabs) is opt-in. When not
-    # enabled the entry is dropped so the package is byte-for-byte the tab-only/chat-only
+    # enabled the entry is dropped so the package is byte-for-byte the tab-only
     # shape — the optional Companion never gates the always-working Tab/bot.
     if not args.enable_companion:
         manifest.pop("configurableTabs", None)
@@ -349,7 +349,13 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  app id:   {app_id}")
     print(f"  bot id:   {bot_id or '(none — tab-only package)'}")
     print(f"  companion: {'included (meeting control panel)' if args.enable_companion else '(not included)'}")
-    print(f"  calling:   {'enabled (supportsCalling=true)' if (bot_id and args.enable_calling) else '(chat-only)'}")
+    if not bot_id:
+        calling = "(no bot in this package)"
+    elif args.enable_calling:
+        calling = "enabled (supportsCalling=true)"
+    else:
+        calling = "(not enabled)"
+    print(f"  calling:   {calling}")
     print("Sideload it in Teams via: Apps -> Manage your apps -> Upload an app -> Upload a custom app")
     return 0
 
