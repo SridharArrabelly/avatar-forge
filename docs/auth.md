@@ -1,5 +1,20 @@
 # Authentication
 
+Four identities show up in this repo and they are easy to confuse. Start here:
+
+| Identity | Who it is | Used for | Where it is set up |
+| --- | --- | --- | --- |
+| **Backend principal** | your signed-in user locally; the **user-assigned managed identity** in Azure | Voice Live, the Foundry agent/model, AI Search queries | `az login` / assigned by the template |
+| **Deploying principal** | whoever runs `azd up` | creating resources, stamping RBAC, building the index, registering the agent | `az login` + `azd auth login` |
+| **Calling bot** *(channel C only)* | an Entra app registration behind an Azure Bot | the Teams calling/Graph channel | [`../meeting-bot/README.md`](../meeting-bot/README.md) |
+| **Web IQ key** *(model mode only)* | a service API key, not an Entra identity | the web-search tool | `WEBIQ_API_KEY` in your env |
+
+The first two are what almost everything below is about. They are usually *different*
+principals with *different* roles, which is why a deploy can succeed and the running app
+still get `401`.
+
+## The Entra path
+
 Voice Live agent sessions (`agent_config = { agent_name, project_name }`) require
 Microsoft Entra ID; API-key auth is rejected on the agent path. The backend uses
 [`DefaultAzureCredential`](https://learn.microsoft.com/python/api/azure-identity/azure.identity.defaultazurecredential)
@@ -9,7 +24,9 @@ acquires tokens for two scopes:
 - `https://ai.azure.com/.default` — Voice Live + Foundry agent
 - `https://search.azure.com/.default` — AI Search index (catalogue pre-warm)
 
-Run `az login` locally; in Azure, attach a managed identity.
+Run `az login` locally; in Azure, attach a managed identity. This is unchanged by
+[`VOICE_BINDING`](voice-binding.md) — model mode reaches Voice Live over the same
+credential; it only adds the Web IQ key below.
 
 ## Required roles
 
@@ -24,6 +41,22 @@ For the `azd` deploy, the template assigns the managed identity's runtime roles
 automatically; BYO cross-RG grants are handled by
 [`scripts/grant_byo_rbac.py`](../scripts/grant_byo_rbac.py) — see
 [deployment.md](deployment.md#cross-rg-rbac-easy-to-miss).
+
+## Keys, where they still exist
+
+"Entra everywhere" is the intent, and it holds for Voice Live and the Foundry agent. Two
+exceptions are real, so it is worth knowing they exist before you go looking for a role
+assignment that will not help:
+
+| Variable | Path | When |
+| --- | --- | --- |
+| `WEBIQ_API_KEY` | the Web IQ web-search tool ([`backend/voice/tools.py`](../backend/voice/tools.py)) | **model mode only** — agent mode uses Grounding-with-Bing-Custom-Search, a native Foundry tool that rides the Entra path. `WEBIQ_USE_ENTRA` switches this to a token instead. |
+| `AZURE_SEARCH_API_KEY` | the meeting-catalogue `SearchClient` ([`backend/voice/catalog.py`](../backend/voice/catalog.py)) | optional fallback. Unset — the normal case — it uses the credential above. |
+
+`AZURE_VOICELIVE_API_KEY` is deliberately **ignored** on the agent path
+([`backend/api/websocket.py`](../backend/api/websocket.py) forces an empty key), so
+setting it will not rescue a broken agent session. Both variables in the table above are
+documented in [configuration.md](configuration.md).
 
 ## Startup credential pre-warm
 
@@ -66,11 +99,11 @@ scope at startup, not one per SDK call. In Azure with managed identity those
 acquisitions are in-process HTTP calls to IMDS (cached ~1 hour) rather than subprocess
 spawns.
 
-## Calling bot identity (separate)
+## Calling bot identity (channel C)
 
-Channel C's calling bot uses its **own** identity — an Entra app registration (client id
-+ secret) registered as an Azure Bot resource — which is separate from the backend
-managed identity above and separate from user SSO (deferred). It reaches
-Foundry/Search through the backend's managed identity over the bridge websocket; only
-the Graph calling/Bot Framework channel auth uses the bot's app credentials. Setup steps
-are in [`../meeting-bot/README.md`](../meeting-bot/README.md).
+The calling bot is the one identity that is **not** the backend principal: an Entra app
+registration (client id + secret) registered as an Azure Bot resource. Only the Graph
+calling / Bot Framework channel auth uses those app credentials — the bot reaches
+Foundry and Search through the *backend's* managed identity over the bridge websocket,
+so it never holds AI credentials of its own. User SSO is deferred. Setup steps are in
+[`../meeting-bot/README.md`](../meeting-bot/README.md).

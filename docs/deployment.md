@@ -82,9 +82,10 @@ azd env new <environment-name>
 #    Skip it and preflight asks; either way it is validated before azd runs.
 azd env set AZURE_LOCATION swedencentral
 
-# 4. Choose the channel. Records DEPLOY_PROFILE (web · teams-tab · in-call), sets the
-#    flags that profile implies, and prints the full numbered plan marking who
-#    performs each step. See channels/README.md to choose.
+# 4. Choose the channel AND the brain. Records DEPLOY_PROFILE (web · teams-tab ·
+#    in-call) and VOICE_BINDING (agent · model), sets the flags those imply, and
+#    prints the full numbered plan marking who performs each step.
+#    channels/README.md to choose the channel; voice-binding.md to choose the brain.
 uv run python scripts/set_profile.py
 
 # 5. Verify you can actually finish that plan — regions, providers, tooling and every
