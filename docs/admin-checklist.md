@@ -77,10 +77,10 @@ without the policy.
 ### E — In-call avatar (headless browser)
 
 Requirements are not yet established — see
-[channels/e-in-call-headless.md](channels/e-in-call-headless.md). The
+[channels/d-in-call-headless.md](channels/d-in-call-headless.md). The
 *hypothesis* under test is that it needs **no Graph permissions and no Teams
 policy**, because it joins as an ordinary (guest) participant through a browser.
-If that holds, it removes every hard blocker in channel D, which is the main
+If that holds, it removes every hard blocker in channel C, which is the main
 reason to evaluate it.
 
 ---
@@ -89,7 +89,7 @@ reason to evaluate it.
 
 | Blocker | Best available fallback |
 | --- | --- |
-| No Teams admin (cannot get the access policy) | Stop at **A + B**. Evaluate **E**. Channel D is not available to you |
+| No Teams admin (cannot get the access policy) | Stop at **A + B**. Evaluate **D**. Channel C is not available to you |
 | No Entra admin (cannot consent) | Stop at **A + B**. C and D both require consent |
 | Custom app upload disabled | **A** only, via a browser. Ask for org-wide publication of the package |
 | No model quota in region | Deploy the core in a region that has quota; channels are region-independent of Teams |

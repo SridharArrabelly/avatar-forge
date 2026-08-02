@@ -15,7 +15,7 @@ For local development see [development.md](development.md); for env vars see
 - **Azure AI Foundry** (account + project + model deployment) — created or BYO
 - **Azure AI Search** (Basic, AAD auth) — created or BYO
 - **Windows VM + NSG + public FQDN, and a second Azure Bot with the Teams calling
-  channel** *(channel D only)* — the media host; created only when the in-call profile
+  channel** *(channel C only)* — the media host; created only when the in-call profile
   is selected and its inputs are set. This is the one costly addition (~$283/month).
 
 Everything after the first six lines is additive and conditional: a `web` profile
@@ -348,7 +348,7 @@ uv run python scripts/setup_foundry_agent.py      # re-register the agent + tool
 ## Teams (tab + in-call)
 
 The deployed Container App HTTPS URL is the Teams tab `contentUrl` and the bridge
-endpoint channel D's media bot connects back to. Building the package and sideloading
+endpoint channel C's media bot connects back to. Building the package and sideloading
 are in [`teams/README.md`](../teams/README.md); the calling bot's registration and host
 are in [`../meeting-bot/README.md`](../meeting-bot/README.md). Both are **opt-in**: with
 no Teams package built and no in-call flags set, the deploy is the channel A web app.

@@ -1,5 +1,5 @@
 /*
- * Configuration page for the Companion configurable tab (channel D, issue #27).
+ * Configuration page for the Companion configurable tab (channel C, issue #27).
  *
  * Teams opens this page when a user adds the meeting tab. It sets the tab's
  * content URL (the control panel) and marks the config valid so Save enables.

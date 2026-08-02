@@ -31,7 +31,7 @@ Inputs (precedence: CLI flag > process env / .env > selected azd environment):
     --app-id   / TEAMS_APP_ID        Optional. Stable GUID. Defaults to a deterministic
                                      uuid5 derived from the hostname so rebuilds match.
     --bot-id   / TEAMS_BOT_ID        Optional. Azure Bot / Entra app GUID. Falls back to the
-                                     azd env's MEETING_BOT_APP_ID (the channel D calling bot).
+                                     azd env's MEETING_BOT_APP_ID (the channel C calling bot).
                                      When neither is set the build is tab-only (channel B) —
                                      the additive `bots` entry is dropped so the Tab package
                                      always builds.
@@ -251,7 +251,7 @@ def main(argv: list[str] | None = None) -> int:
         "--enable-companion",
         action="store_true",
         default=_env_flag("TEAMS_ENABLE_COMPANION"),
-        help="Include the optional channel D meeting control panel (configurableTabs). "
+        help="Include the optional channel C meeting control panel (configurableTabs). "
         "Off by default — the package is then identical to the tab-only/chat-only build.",
     )
     parser.add_argument(
@@ -259,7 +259,7 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         default=_env_flag("TEAMS_ENABLE_CALLING"),
         help="Mark the bot as a Teams calling bot (supportsCalling=true) for the "
-        "channel D (#27) in-call media bot. Off by default. Requires a --bot-id and a "
+        "channel C (#27) in-call media bot. Off by default. Requires a --bot-id and a "
         "tenant policy that allows calling bots in meetings.",
     )
     args = parser.parse_args(argv)
@@ -312,13 +312,13 @@ def main(argv: list[str] | None = None) -> int:
     if not bot_id:
         manifest.pop("bots", None)
 
-    # Channel D (#27): mark the bot as a calling bot so it can join meeting media.
+    # Channel C (#27): mark the bot as a calling bot so it can join meeting media.
     # Opt-in — default leaves supportsCalling=false.
     if bot_id and args.enable_calling:
         for bot in manifest.get("bots", []):
             bot["supportsCalling"] = True
 
-    # The channel D meeting control panel (configurableTabs) is opt-in. When not
+    # The channel C meeting control panel (configurableTabs) is opt-in. When not
     # enabled the entry is dropped so the package is byte-for-byte the tab-only/chat-only
     # shape — the optional Companion never gates the always-working Tab/bot.
     if not args.enable_companion:

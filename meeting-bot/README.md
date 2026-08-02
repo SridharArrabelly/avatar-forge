@@ -1,13 +1,13 @@
 # Avatar-Forge Teams meeting media bot (.NET / Windows)
 
 > **Deploying or operating this?** Start at
-> **[`docs/channels/d-in-call-media-bot.md`](../docs/channels/d-in-call-media-bot.md)**
+> **[`docs/channels/c-in-call-media-bot.md`](../docs/channels/c-in-call-media-bot.md)**
 > — the operational page (what deploys, admin steps, verification, cost). This file
 > is the *code-local* reference: project layout, build, and the traps that cost real
 > debugging time.
 
-> **The in-call media bot — channel D (issue #27).** This is the thin .NET/Windows media
-> relay described in [`docs/channels/d-design-media-bot.md`](../docs/channels/d-design-media-bot.md).
+> **The in-call media bot — channel C (issue #27).** This is the thin .NET/Windows media
+> relay described in [`docs/channels/c-design-media-bot.md`](../docs/channels/c-design-media-bot.md).
 > It joins a Teams meeting, captures the **mixed participant audio**, and forwards
 > raw PCM16 over a WebSocket to the **unchanged** Python backend
 > (`backend/acs/bridge.py::AcsVoiceBridge`). All answering / RAG / turn-taking
@@ -154,7 +154,7 @@ Set via `appsettings.json` or environment (`Bot__*`). **Never commit the secret.
 > emitting `response.audio.delta` and muxes the answer audio (AAC) into the same
 > fragmented-MP4 stream, so the bridge recovers the audio from there instead. Both
 > defaults are `false` = the audio-only bot, byte-for-byte unchanged. Full
-> design: [`docs/channels/d-design-avatar-video.md`](../docs/channels/d-design-avatar-video.md).
+> design: [`docs/channels/c-design-avatar-video.md`](../docs/channels/c-design-avatar-video.md).
 
 ## What `azd up` provisions
 
@@ -364,7 +364,7 @@ periodically:
 
 ## Cost / honesty note
 
-Per the ADR in `docs/channels/d-design-media-bot.md`, this breaks the pure-Python / Linux-ACA
+Per the ADR in `docs/channels/c-design-media-bot.md`, this breaks the pure-Python / Linux-ACA
 guardrail **only** for the media leg, because no alternative can hear the room. The
 brain stays Python; this service stays a dumb pump. The real tax is the Windows host
 + certs + one extra PCM hop — not the language.

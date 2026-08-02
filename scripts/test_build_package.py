@@ -129,9 +129,9 @@ def main() -> int:
     for label, argv, env, want in cases:
         check(label, surfaces(build(argv, env)[0]), want)
 
-    print("\n   bot id falls back to the azd env (channel D's calling bot)")
+    print("\n   bot id falls back to the azd env (channel C's calling bot)")
     # The bicep TEAMS_BOT_ID output is gone, so MEETING_BOT_APP_ID is the value a
-    # channel D deploy actually leaves in the azd env. Without this fallback the
+    # channel C deploy actually leaves in the azd env. Without this fallback the
     # documented `build_package.py --enable-calling` produces a tab-only package
     # and silently drops the bot the operator just registered.
     m, _ = build(HOST, {"MEETING_BOT_APP_ID": BOT})

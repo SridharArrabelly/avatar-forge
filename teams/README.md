@@ -5,8 +5,8 @@
 > the package.
 >
 > - **Channel B — Teams personal tab** → [`docs/channels/b-teams-tab.md`](../docs/channels/b-teams-tab.md)
-> - **Channel D — in-call media bot**: its *runtime* lives in [`meeting-bot/`](../meeting-bot/), but its
->   manifest flags are built here → [`docs/channels/d-in-call-media-bot.md`](../docs/channels/d-in-call-media-bot.md)
+> - **Channel C — in-call media bot**: its *runtime* lives in [`meeting-bot/`](../meeting-bot/), but its
+>   manifest flags are built here → [`docs/channels/c-in-call-media-bot.md`](../docs/channels/c-in-call-media-bot.md)
 > - Manual/admin steps → [`docs/admin-checklist.md`](../docs/admin-checklist.md)
 
 This folder packages the Avatar Forge web app as a **Microsoft Teams app**: a personal
@@ -16,12 +16,12 @@ required**.
 - **Personal tab** (below): an anonymous, sideloaded prototype that embeds
   the existing web UI (mic + WebRTC avatar). No SSO, no org publishing.
 
-The avatar joining a **live call** is channel D. Its *runtime* — a .NET media bot on its
-own Windows host — is **not** built from this folder (see `meeting-bot/`), but D's
+The avatar joining a **live call** is channel C. Its *runtime* — a .NET media bot on its
+own Windows host — is **not** built from this folder (see `meeting-bot/`), but C's
 **Teams surface is**: two opt-in flags here add its manifest entries. See
 [In-call media](#in-call-media-issue-27--documented-elsewhere) at the bottom.
 
-Start with the tab walkthrough, then the in-call section if you're enabling channel D.
+Start with the tab walkthrough, then the in-call section if you're enabling channel C.
 
 - Personal-scope **static tab** that embeds the existing web UI (mic + WebRTC avatar).
 - **No SSO** and **no org/admin publishing** — those are a later phase you'll drive
@@ -166,19 +166,19 @@ Only `frame-ancestors` is set on purpose — a full CSP (`script-src`/`connect-s
 # In-call media (issue #27) — documented elsewhere
 
 The avatar joining the **call itself** — hearing every participant and answering aloud
-with a lip-synced camera tile — is **channel D**. Its runtime is a separate .NET media
+with a lip-synced camera tile — is **channel C**. Its runtime is a separate .NET media
 bot on a Windows host and is **not** packaged from this folder. Its **Teams surface**
 is, via the two opt-in flags below.
 
 | What you want | Where it lives |
 | --- | --- |
-| Deploy it / admin steps / cost | [`docs/channels/d-in-call-media-bot.md`](../docs/channels/d-in-call-media-bot.md) |
-| Why it is built this way | [`docs/channels/d-design-media-bot.md`](../docs/channels/d-design-media-bot.md) |
-| How the avatar's face gets into the call | [`docs/channels/d-design-avatar-video.md`](../docs/channels/d-design-avatar-video.md) |
+| Deploy it / admin steps / cost | [`docs/channels/c-in-call-media-bot.md`](../docs/channels/c-in-call-media-bot.md) |
+| Why it is built this way | [`docs/channels/c-design-media-bot.md`](../docs/channels/c-design-media-bot.md) |
+| How the avatar's face gets into the call | [`docs/channels/c-design-avatar-video.md`](../docs/channels/c-design-avatar-video.md) |
 | The bot's own code, build and traps | [`meeting-bot/README.md`](../meeting-bot/README.md) |
 | Running a live test | [`docs/testing-meetings.md`](../docs/testing-meetings.md) |
 
-This folder contributes exactly two things to channel D, both opt-in and both
+This folder contributes exactly two things to channel C, both opt-in and both
 manifest-only:
 
 | Flag | Manifest effect | What it gives you |
@@ -199,12 +199,12 @@ registration must be dedicated to the calling bot.
 
 That is needed only for the app's in-meeting presence. The calling bot itself joins via
 Graph application permissions and does **not** require the app to be installed in the
-meeting, so channel D works with no Teams package at all.
+meeting, so channel C works with no Teams package at all.
 
-> **Historical note.** Earlier revisions of this file described channel D as an
+> **Historical note.** Earlier revisions of this file described channel C as an
 > ACS-based, audio-only participant. Live testing disproved that design: ACS
 > `connect_call` media streaming does not carry Teams *meeting* audio, and a browser/ACS
 > client leg can only hear its own microphone. The shipped design is the Graph
 > Real-Time Media bot, and it carries video as well as audio. The full reasoning,
 > including what was ruled out and why, is in
-> [`d-design-media-bot.md`](../docs/channels/d-design-media-bot.md).
+> [`c-design-media-bot.md`](../docs/channels/c-design-media-bot.md).

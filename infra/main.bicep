@@ -130,10 +130,10 @@ param avatarBackgroundImageUrl string = ''
 param srModel string = 'mai-transcribe-1'
 param recognitionLanguage string = 'auto'
 
-// ───────── channel D in-call media (#27) ─────────
+// ───────── channel C in-call media (#27) ─────────
 @description('Deployment profile from `scripts/set_profile.py` — one of "web", "teams-tab", "in-call". Drives which optional channels deploy. Empty keeps the pre-profile behaviour (explicit flags only).')
 param deployProfile string = ''
-@description('Enable channel D ACS Call Automation media participant ("true"/"false"). When not "true" (default), no ACS resource is created and the deployment behaves exactly as today.')
+@description('Enable channel C ACS Call Automation media participant ("true"/"false"). When not "true" (default), no ACS resource is created and the deployment behaves exactly as today.')
 param enableAcs string = 'false'
 @description('ACS data residency geography (NOT an Azure region), e.g. "United States", "Europe", "Africa".')
 param acsDataLocation string = 'United States'
@@ -146,7 +146,7 @@ param acsRequireWakePhrase string = ''
 @description('"true"/"false". In-call avatar sends an outgoing video tile so it is a visible participant.')
 param acsAvatarVideoEnabled string = ''
 
-// ───────── channel D Windows media host (#27) ─────────
+// ───────── channel C Windows media host (#27) ─────────
 // Deployed only for the in-call channel. Requires its own Entra app — an app can
 // back only ONE Azure Bot resource, so this cannot reuse botAppId.
 @description('"true"/"false". Provision the Windows media host + calling bot registration. Implied by deployProfile="in-call".')
@@ -262,7 +262,7 @@ module resources 'resources.bicep' = {
   }
 }
 
-// ───────── channel D: Windows media host + calling bot registration ─────────
+// ───────── channel C: Windows media host + calling bot registration ─────────
 // Conditional and additive. Only instantiated for the in-call channel.
 
 // The name in the Teams meeting roster must match the name on the web stage and
@@ -321,10 +321,10 @@ output BING_CONNECTION_NAME string = resources.outputs.bingConnectionName
 output BING_CUSTOM_CONFIG_NAME string = resources.outputs.bingCustomConfigName
 output APPLICATIONINSIGHTS_CONNECTION_STRING string = resources.outputs.appInsightsConnectionString
 
-// Channel D in-call media (#27). Empty unless enableAcs=true.
+// Channel C in-call media (#27). Empty unless enableAcs=true.
 output ACS_ENDPOINT string = resources.outputs.acsEndpoint
 
-// Channel D Windows media host. Empty strings unless the in-call channel deployed.
+// Channel C Windows media host. Empty strings unless the in-call channel deployed.
 output DEPLOY_PROFILE string = deployProfile
 output MEETING_BOT_HOST_DEPLOYED string = deployHost ? 'true' : 'false'
 output MEETING_BOT_FQDN string = deployHost ? meetingBotHost.outputs.publicFqdn : ''

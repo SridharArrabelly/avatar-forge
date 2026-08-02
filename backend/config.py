@@ -120,8 +120,8 @@ REALTIME_INTERIM_TEXTS = [
 # instead of the model improvising a preamble to fill it.
 REALTIME_INTERIM_THRESHOLD_MS = int(os.getenv("REALTIME_INTERIM_THRESHOLD_MS", "300"))
 
-# ───────── Teams in-call media participant (channel D, issue #27) ─────────
-# Channel D is the live in-call avatar. It is ADDITIVE and OPT-IN: every endpoint
+# ───────── Teams in-call media participant (channel C, issue #27) ─────────
+# Channel C is the live in-call avatar. It is ADDITIVE and OPT-IN: every endpoint
 # and the media bridge are gated on ACS being configured, so a deploy without ACS
 # behaves exactly as the web app alone. Two legs share the same Voice Live pipeline:
 #   1. the .NET Graph media bot on a Windows VM  -> wss://.../ws/acs/audio
@@ -222,7 +222,7 @@ MEETING_BOT_VIDEO_FPS = int(os.getenv("MEETING_BOT_VIDEO_FPS", "15"))
 BROWSER_JOIN_VIDEO_ENABLED = os.getenv(
     "BROWSER_JOIN_VIDEO_ENABLED", "false"
 ).strip().lower() in ("1", "true", "yes", "on")
-# True when channel D in-call media is configured: either an ACS resource is set,
+# True when channel C in-call media is configured: either an ACS resource is set,
 # or the Graph media bot bridge is explicitly enabled.
 ACS_ENABLED = bool(ACS_ENDPOINT or ACS_CONNECTION_STRING or MEETING_BOT_ENABLED)
 

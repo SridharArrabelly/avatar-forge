@@ -312,7 +312,7 @@ it — see [`teams/README.md`](../teams/README.md).
 | `TEAMS_ENABLE_CALLING` | `--enable-calling` | `false` | Sets `supportsCalling: true`. Pair with the **calling** bot's id (`MEETING_BOT_APP_ID`). |
 | `TEAMS_ENABLE_COMPANION` | `--enable-companion` | `false` | Adds the in-meeting side panel / stage tabs. Off keeps the package identical to the tab-only shape. |
 
-## Teams in-call avatar (channel D, issue #27)
+## Teams in-call avatar (channel C, issue #27)
 
 Opt-in. The avatar joins a Teams **meeting**, hears every participant, and answers
 spoken questions aloud with a lip-synced camera tile, using the same Voice Live +
@@ -323,7 +323,7 @@ The `ACS_*` prefix is historical: these settings govern the in-call media bridge
 regardless of which transport feeds it (the Graph media bot on `/ws/acs/audio`, or the
 browser joiner on `/ws/acs/browser`). `MEETING_BOT_ENABLED=true` is enough on its own —
 it serves the media bot **without** provisioning an ACS resource. See
-[`docs/channels/d-in-call-media-bot.md`](channels/d-in-call-media-bot.md).
+[`docs/channels/c-in-call-media-bot.md`](channels/c-in-call-media-bot.md).
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -348,11 +348,11 @@ it serves the media bot **without** provisioning an ACS resource. See
 >   unless you are specifically using that page.
 > - **The audio *bridge*** — `ACS_AUDIO_SAMPLE_RATE`, `ACS_WAKE_PHRASES`,
 >   `ACS_REQUIRE_WAKE_PHRASE`, `ACS_IDLE_TIMEOUT_S`, `ACS_FOLLOWUP_WINDOW_S`. These
->   are read by `backend/acs/bridge.py` and **do apply to channel D**, which speaks
+>   are read by `backend/acs/bridge.py` and **do apply to channel C**, which speaks
 >   the same wire protocol over `/ws/acs/audio`. The turn-taking ones are the knobs
 >   you will actually tune in a live meeting.
 >
-> Channel D joins through Graph calling on the Windows host and never touches the ACS
+> Channel C joins through Graph calling on the Windows host and never touches the ACS
 > resource; the `acs` in the paths is the protocol's name, not a dependency.
 
 ### The avatar's face in the meeting

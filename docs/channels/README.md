@@ -2,7 +2,7 @@
 
 > **Platform: Windows + PowerShell.** Every command in this documentation is
 > written for PowerShell on Windows, which is the only combination that is
-> routinely tested here. Channel D *requires* Windows regardless — the Teams
+> routinely tested here. Channel C *requires* Windows regardless — the Teams
 > Real-Time Media Platform runs on nothing else. On macOS or Linux the Python
 > and `azd` steps work unchanged, but you will need to translate the shell
 > syntax yourself (`Invoke-RestMethod` → `curl`, backtick continuations → `\`,
@@ -30,8 +30,8 @@ access you need**.
 | --- | --- | --- | --- | --- | --- |
 | **A** | **Web** (standalone) | Shipped | — *(this is the core)* | **None** beyond an Azure subscription | [a-web.md](a-web.md) |
 | **B** | **Teams personal tab** | Shipped | **None** | Upload/sideload a Teams app package | [b-teams-tab.md](b-teams-tab.md) |
-| **D** | **In-call avatar** — Graph media bot | **Working** | Azure Bot (calling) + **Windows VM** + DNS + TLS | **Highest**: Graph app permissions, admin consent, **Teams app access policy** | [d-in-call-media-bot.md](d-in-call-media-bot.md) |
-| **E** | **In-call avatar** — headless browser | Placeholder | Container/job | TBD (expected lower than D) | [e-in-call-headless.md](e-in-call-headless.md) |
+| **C** | **In-call avatar** — Graph media bot | **Working** | Azure Bot (calling) + **Windows VM** + DNS + TLS | **Highest**: Graph app permissions, admin consent, **Teams app access policy** | [c-in-call-media-bot.md](c-in-call-media-bot.md) |
+| **D** | **In-call avatar** — headless browser | Placeholder | Container/job | TBD (expected lower than C) | [d-in-call-headless.md](d-in-call-headless.md) |
 
 ### Two things this table is deliberately saying
 
@@ -40,9 +40,9 @@ B is the best-value step in the whole product: it adds a Teams surface for **zer
 extra Azure resources** — the manifest simply points a `staticTab` at the ACA URL
 the web app already serves.
 
-**D and E are rivals, not siblings.** They are two implementations of the *same*
+**C and D are rivals, not siblings.** They are two implementations of the *same*
 capability (the avatar present in a live meeting). You are expected to run the
-comparison in [e-in-call-headless.md](e-in-call-headless.md#comparison) and keep
+comparison in [d-in-call-headless.md](d-in-call-headless.md#comparison) and keep
 one. They are numbered separately only so each can be documented and deployed
 independently while the comparison is open.
 
@@ -57,15 +57,15 @@ flowchart LR
 
     subgraph Rivals["Live in-call presence — pick ONE, then retire the other"]
         direction LR
-        D["<b>D</b> · Graph media bot<br/>Windows VM · <b>built &amp; working</b><br/>admin: <b>Teams access policy</b>"]
-        E["<b>E</b> · Headless browser<br/><i>placeholder</i><br/>admin: TBD"]
+        C["<b>C</b> · Graph media bot<br/>Windows VM · <b>built &amp; working</b><br/>admin: <b>Teams access policy</b>"]
+        D["<b>D</b> · Headless browser<br/><i>placeholder</i><br/>admin: TBD"]
     end
 
     A -- "in-call needs A deployed<br/><i>(but not B)</i>" --> Rivals
 ```
 
 Note what the arrow into the rivals box starts from: **A**, not B. In-call presence
-needs the backend, not the Teams tab — you can deploy D without ever installing B.
+needs the backend, not the Teams tab — you can deploy C without ever installing B.
 
 ---
 
@@ -75,11 +75,11 @@ needs the backend, not the Teams tab — you can deploy D without ever installin
 | --- | --- | --- |
 | Demo the avatar to anyone with a browser | **A** | No Teams, no admin, no manifest |
 | Put it in front of Teams users with least friction | **A + B** | Zero extra infra; sideload if you lack admin rights |
-| Have it **join a meeting, hear the room, and answer aloud** | **A + D** | The only path with true in-call presence |
-| Evaluate a cheaper in-call option | **A + E** | Then run the comparison and drop the loser |
+| Have it **join a meeting, hear the room, and answer aloud** | **A + C** | The only path with true in-call presence |
+| Evaluate a cheaper in-call option | **A + D** | Then run the comparison and drop the loser |
 
 **Cannot get Teams admin?** Stop at **A + B** (sideloading a personal tab is
-usually permitted when uploading custom apps is enabled). **D is blocked without
+usually permitted when uploading custom apps is enabled). **C is blocked without
 a Teams administrator** — it requires a Teams app access policy that only they
 can create. Confirm that before investing in the VM.
 
@@ -107,13 +107,13 @@ capability, so environments created before profiles existed are unaffected.
 | --- | --- | --- |
 | `DEPLOY_PROFILE` | — | `web` · `teams-tab` · `in-call`. Drives everything below. |
 | *(none)* | `web`, `teams-tab` | Channel **A**. Container app, Foundry agent, AI Search, ACR, identity, roles. |
-| `MEETING_BOT_ENABLED` | `in-call` | Serves the media-bot bridge (`/ws/acs/audio`) for **D**. |
+| `MEETING_BOT_ENABLED` | `in-call` | Serves the media-bot bridge (`/ws/acs/audio`) for **C**. |
 | `DEPLOY_MEETING_BOT_HOST` | `in-call` | Provisions the Windows media host + calling bot registration. |
-| `MEETING_BOT_APP_ID` / `_DNS_LABEL` / `_ADMIN_PASSWORD` | you supply | Required for **D**; the host is skipped if any is missing. |
-| `ENABLE_ACS` | `false` | Provisions `modules/communicationServices.bicep`. **No channel above needs this.** It serves the separate browser joiner (`/acs-join.html`), where a browser tab joins a meeting as an anonymous guest. Channel D joins via Graph calling — the `acs` in `/ws/acs/audio` is the bridge protocol's name, not an ACS dependency. |
+| `MEETING_BOT_APP_ID` / `_DNS_LABEL` / `_ADMIN_PASSWORD` | you supply | Required for **C**; the host is skipped if any is missing. |
+| `ENABLE_ACS` | `false` | Provisions `modules/communicationServices.bicep`. **No channel above needs this.** It serves the separate browser joiner (`/acs-join.html`), where a browser tab joins a meeting as an anonymous guest. Channel C joins via Graph calling — the `acs` in `/ws/acs/audio` is the bridge protocol's name, not an ACS dependency. |
 | `DEPLOY_BING_GROUNDING` | `true` | Provisions `modules/bingGrounding.bicep` (Bing account + site allow-list) and the Foundry connection to it, enabling the agent's web/news tool. On by default; set `false` to skip. Independent of the above; applies to every channel. |
 
-> **Channel D needs its own Azure Bot registration.** An Entra app can back only
+> **Channel C needs its own Azure Bot registration.** An Entra app can back only
 > *one* Azure Bot resource, so `MEETING_BOT_APP_ID` must be an app registration
 > dedicated to the calling bot. Pointing it at an app that already backs another
 > bot fails with `MsaAppId is already in use`.
@@ -128,26 +128,26 @@ Deployment mechanics: [`../deployment.md`](../deployment.md).
 There is **no one-folder-per-channel rule**, and trying to read the tree that way
 will mislead you. Two things break the pattern:
 
-- **`teams/` is shared by B and D.** It holds one manifest template and one
+- **`teams/` is shared by B and C.** It holds one manifest template and one
   builder; flags decide which channel's package comes out. It is *Teams packaging*,
   not "the tab channel".
-- **D's Teams surface and its runtime live apart.** The manifest flags are built
+- **C's Teams surface and its runtime live apart.** The manifest flags are built
   here; the media bot itself is a separate .NET service on its own Windows host.
 
 | Channel | Runtime code | Teams package | Infra module |
 | --- | --- | --- | --- |
 | **A** web | `backend/`, `frontend/` | — | base `infra/` |
 | **B** tab | `frontend/teams.js` (same app) | `teams/` → `staticTabs` | *(none — reuses A)* |
-| **D** in-call | `meeting-bot/` (.NET, own Windows host) + `backend/acs/` (bridge) + `frontend/acs-join.js`, `companion.js` | `teams/` → `supportsCalling`, `configurableTabs` *(optional)* | `modules/meetingBotHost.bicep` |
-| **E** headless | *(not built)* | — | — |
+| **C** in-call | `meeting-bot/` (.NET, own Windows host) + `backend/acs/` (bridge) + `frontend/acs-join.js`, `companion.js` | `teams/` → `supportsCalling`, `configurableTabs` *(optional)* | `modules/meetingBotHost.bicep` |
+| **D** headless | *(not built)* | — | — |
 
 One manifest, three progressive shapes — the build flags are the difference:
 
 | `teams/build_package.py` flags | Manifest keys kept | Channel |
 | --- | --- | --- |
 | `--hostname X` | `staticTabs` only | **B** |
-| `+ --enable-calling` | `bots`, `supportsCalling=true` | **D** invocable in a call |
-| `+ --enable-companion` | `configurableTabs` | **D** meeting control panel |
+| `+ --enable-calling` | `bots`, `supportsCalling=true` | **C** invocable in a call |
+| `+ --enable-companion` | `configurableTabs` | **C** meeting control panel |
 
 Omitted keys are *dropped from the package*, so a channel you did not opt into
 cannot appear in Teams. Details: [`../../teams/README.md`](../../teams/README.md).
@@ -166,7 +166,7 @@ So you can compare them without re-reading prose:
 5. **How to verify** — the exact commands that prove it works
 6. **Cost & teardown** — what it costs to leave running, and how to stop paying
 
-*(Channel E is a placeholder and does not follow the contract yet — it has a
+*(Channel D is a placeholder and does not follow the contract yet — it has a
 proposed architecture and pre-registered comparison criteria instead.)*
 
 ### Where architecture lives, and why it is split three ways
@@ -185,9 +185,9 @@ the split is by *what changes*:
 That last row is deliberate: **A and B have no design records and should not get
 one.** Nothing was decided — B is the web app in an iframe. Writing "design
 documents" for them would be
-ceremony, and ceremony is what makes people stop reading documentation. D has two
-records because D had two genuinely hard decisions (the .NET/Windows split, and
-audio/video from one synthesis). E will earn one when it is built.
+ceremony, and ceremony is what makes people stop reading documentation. C has two
+records because C had two genuinely hard decisions (the .NET/Windows split, and
+audio/video from one synthesis). D will earn one when it is built.
 
 ---
 
@@ -197,7 +197,7 @@ These are decision documents, kept separate from the operational pages above
 because they answer a different question — why the architecture is what it is,
 including options that were rejected and what they would have cost.
 
-- [d-design-media-bot.md](d-design-media-bot.md) — why a .NET/Windows media bot
+- [c-design-media-bot.md](c-design-media-bot.md) — why a .NET/Windows media bot
   bridged to a Python brain, and the three options evaluated
-- [d-design-avatar-video.md](d-design-avatar-video.md) — why the avatar's audio
+- [c-design-avatar-video.md](c-design-avatar-video.md) — why the avatar's audio
   and video must come from one synthesis, and how the video reaches the meeting

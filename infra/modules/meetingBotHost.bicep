@@ -1,7 +1,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Avatar-Forge Teams meeting media bot — Windows host + calling registration.
 //
-// Channel D, issue #27. Deployed by `azd up` ONLY when the in-call channel is
+// Channel C, issue #27. Deployed by `azd up` ONLY when the in-call channel is
 // selected — either `DEPLOY_PROFILE=in-call` or `DEPLOY_MEETING_BOT_HOST=true`,
 // and only once the required inputs (app id, DNS label, admin password) are
 // present. A deploy that does not opt in never instantiates this module, so it
@@ -19,8 +19,8 @@
 // Azure Bot resource, so it cannot be shared with any other bot registration.
 // `scripts/preflight.py` checks for that collision before you deploy.
 //
-// Operational docs: docs/channels/d-in-call-media-bot.md
-// Design record:    docs/channels/d-design-media-bot.md
+// Operational docs: docs/channels/c-in-call-media-bot.md
+// Design record:    docs/channels/c-design-media-bot.md
 // ─────────────────────────────────────────────────────────────────────────────
 targetScope = 'resourceGroup'
 

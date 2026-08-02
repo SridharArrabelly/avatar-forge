@@ -68,7 +68,7 @@ spawns.
 
 ## Calling bot identity (separate)
 
-Channel D's calling bot uses its **own** identity — an Entra app registration (client id
+Channel C's calling bot uses its **own** identity — an Entra app registration (client id
 + secret) registered as an Azure Bot resource — which is separate from the backend
 managed identity above and separate from user SSO (deferred). It reaches
 Foundry/Search through the backend's managed identity over the bridge websocket; only

@@ -1,4 +1,4 @@
-"""ACS HTTP + WebSocket endpoints (channel D, issue #27).
+"""ACS HTTP + WebSocket endpoints (channel C, issue #27).
 
 All endpoints are additive and gated on ``ACS_ENABLED``. When ACS is not
 configured every endpoint returns 503 and the rest of the app is unaffected.
@@ -133,7 +133,7 @@ def build_acs_router() -> APIRouter:
 
     @router.get("/api/acs/config")
     async def acs_config():
-        """Tell the joiner page whether channel D is enabled."""
+        """Tell the joiner page whether channel C is enabled."""
         return {
             "enabled": ACS_ENABLED,
             "endpoint": ACS_ENDPOINT,

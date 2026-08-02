@@ -10,7 +10,7 @@ Profiles map onto the channel ladder documented in `docs/channels/README.md`:
 
     web         A            the core web app
     teams-tab   A + B        adds a Teams personal tab (no extra Azure resources)
-    in-call     A + B + D    adds the live in-meeting avatar (media bot)
+    in-call     A + B + C    adds the live in-meeting avatar (media bot)
 
 `teams-tab` provisions exactly the same Azure resources as `web` — the difference
 is entirely in the Teams app package and who has to upload it. That is a feature,
@@ -246,7 +246,7 @@ PROFILES: dict[str, Profile] = {
     "in-call": Profile(
         key="in-call",
         title="Web + tab + in-call meeting avatar",
-        channels="A + B + D",
+        channels="A + B + C",
         summary=(
             "The avatar joins a Teams meeting, hears the room and answers aloud with a lip-synced "
             "camera tile. Highest capability and highest administrator burden."
@@ -339,7 +339,7 @@ PROFILES: dict[str, Profile] = {
                     "Build and upload the Teams app package (optional for D)",
                     YOU,
                     AFTER,
-                    "The calling bot joins through Graph application permissions, so channel D "
+                    "The calling bot joins through Graph application permissions, so channel C "
                     "works WITHOUT installing anything in Teams. Build the package only if you "
                     "also want the app's in-meeting presence; --enable-calling sets "
                     "supportsCalling=true in the manifest.",

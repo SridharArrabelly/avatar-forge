@@ -52,8 +52,8 @@ param srModel string = 'mai-transcribe-1'
 @description('Recognition language locale (BCP-47, e.g. en-ZA). Use "auto" to let the SR model auto-detect.')
 param recognitionLanguage string = 'auto'
 
-// ───────── channel D in-call media (#27) ─────────
-@description('ACS endpoint for the Call Automation media participant. Empty disables channel D in the container.')
+// ───────── channel C in-call media (#27) ─────────
+@description('ACS endpoint for the Call Automation media participant. Empty disables channel C in the container.')
 param acsEndpoint string = ''
 
 @description('"true"/"false" string. When "true", the .NET Teams media bot bridge (/ws/acs/audio) is served WITHOUT an ACS resource — sets MEETING_BOT_ENABLED so ACS_ENABLED is true on the Voice Live path alone.')
@@ -74,9 +74,9 @@ param developerMode string = 'false'
 @description('Placeholder image used on first provision; azd replaces it during `azd deploy`.')
 param containerImage string = 'mcr.microsoft.com/k8se/quickstart:latest'
 
-// Channel D ACS env (additive). Surfaces ACS_ENDPOINT only when enabled; the app
+// Channel C ACS env (additive). Surfaces ACS_ENDPOINT only when enabled; the app
 // reads it to construct the Call Automation client (managed identity via
-// AZURE_CLIENT_ID). Empty -> channel D stays off and the container behaves as today.
+// AZURE_CLIENT_ID). Empty -> channel C stays off and the container behaves as today.
 var acsEnv = !empty(acsEndpoint) ? [
   {
     name: 'ACS_ENDPOINT'
@@ -117,7 +117,7 @@ var webIqEnv = webIqConfigured ? concat([
   { name: 'WEBIQ_ALLOWED_DOMAINS', value: webIqAllowedDomains }
 ]) : []
 
-// Channel D Teams media-bot env (additive). The .NET media bot connects to the
+// Channel C Teams media-bot env (additive). The .NET media bot connects to the
 // /ws/acs/audio bridge, which only needs Voice Live (no ACS resource). MEETING_BOT_ENABLED
 // flips ACS_ENABLED on so the bridge is served. Empty/false -> behaves as today.
 var meetingBotOn = toLower(meetingBotEnabled) == 'true'

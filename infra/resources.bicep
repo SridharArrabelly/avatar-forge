@@ -86,8 +86,8 @@ param avatarBackgroundImageUrl string = ''
 param srModel string = 'mai-transcribe-1'
 param recognitionLanguage string = 'auto'
 
-// ───────── channel D in-call media (#27) ─────────
-@description('Enable channel D ACS Call Automation media participant ("true"/"false"). When not "true" (default), no ACS resource is created and the container behaves as today.')
+// ───────── channel C in-call media (#27) ─────────
+@description('Enable channel C ACS Call Automation media participant ("true"/"false"). When not "true" (default), no ACS resource is created and the container behaves as today.')
 param enableAcs string = 'false'
 @description('ACS data residency geography (NOT an Azure region), e.g. "United States", "Europe", "Africa".')
 param acsDataLocation string = 'United States'
@@ -252,8 +252,8 @@ module foundryRoleForSearch 'modules/foundryRoleForSearch.bicep' = if (createSea
   }
 }
 
-// ───────── channel D in-call media (#27) ─────────
-// Only provisioned when channel D is explicitly enabled. Additive + conditional,
+// ───────── channel C in-call media (#27) ─────────
+// Only provisioned when channel C is explicitly enabled. Additive + conditional,
 // mirroring the botService opt-in: a deploy with enableAcs=false never creates ACS.
 module acs 'modules/communicationServices.bicep' = if (acsEnabled) {
   name: 'acs'
