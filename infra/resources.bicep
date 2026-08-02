@@ -55,7 +55,15 @@ param bingAllowedDomains array = []
 // Bing is only created when it is asked for AND there is a Foundry project to
 // attach the connection to. Without the project the account would be an orphan
 // the agent could never use.
-var createBing = deployBingGrounding && createFoundry
+//
+// It is also agent-mode only. Grounding with Bing is a *managed Foundry tool*:
+// it attaches to an agent, and model mode has no agent — the Voice Live session
+// schema accepts only FUNCTION and MCP tools, so there is nowhere for it to
+// bind. In model mode the web tool is Web IQ, called in-process. Creating the
+// Bing account under `voiceBinding=model` bills a G2 SKU for a resource nothing
+// can reach.
+var agentBinding = toLower(voiceBinding) != 'model'
+var createBing = deployBingGrounding && createFoundry && agentBinding
 // Deployed names are generated when not pinned, so a first-time deploy needs no
 // prior knowledge of them — they come back as outputs and land in the azd env.
 var bingConnectionNameEffective = empty(bingConnectionName) ? 'bing-grounding-connection' : bingConnectionName
@@ -180,6 +188,7 @@ module foundry 'modules/foundry.bicep' = if (createFoundry) {
     modelName: modelName
     modelVersion: modelVersion
     modelDeploymentName: modelDeploymentName
+    deployAgentModel: agentBinding
     modelSkuName: modelSkuName
     modelCapacity: modelCapacity
     searchServiceName: createSearch ? search!.outputs.name : ''

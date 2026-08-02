@@ -189,7 +189,7 @@ def _core_costs() -> list[CostItem]:
         CostItem("Log Analytics + App Insights", HOURLY, "ingestion, 30-day retention"),
         CostItem("Voice Live minutes", PER_USE, "higher with avatar video; dominates a live session"),
         CostItem("Model tokens", PER_USE, "`GlobalStandard` chat + embeddings, billed per token"),
-        CostItem("Bing searches", PER_USE, "`DEPLOY_BING_GROUNDING=false` to skip the tool"),
+        CostItem("Web searches", PER_USE, "Bing (agent mode) or Web IQ (model mode); either can be left off"),
     ]
 
 
@@ -214,16 +214,16 @@ def _core_steps() -> list[Step]:
             "uv run python scripts/preflight.py",
         ),
         Step(
-            "Point the web/news tool at your own sources",
+            "Point the web tool at your own sources",
             YOU,
             BEFORE,
-            "azd deploys the web tool by default — the Bing account, the curated site "
-            "allow-list and the Foundry connection — and fills in the two BING_* names "
-            "for you. Edit bingAllowedDomains in infra/main.bicep so it searches your "
-            "sources rather than the sample ones. To skip the tool entirely (it is a "
-            "billable resource), set the flag below to false; the avatar then answers "
-            "from your indexed documents alone, which is a supported end state.",
-            "azd env set DEPLOY_BING_GROUNDING false   # only if you do NOT want it",
+            "The two bindings use different search engines. Agent mode: azd deploys "
+            "Grounding with Bing Custom Search for you — edit bingAllowedDomains in "
+            "infra/main.bicep, or set the flag below to false to skip it. Model mode: "
+            "Bing is never deployed (no agent to attach it to); set WEBIQ_API_KEY and "
+            "WEBIQ_ALLOWED_DOMAINS as bare hosts instead. Either way, skipping web "
+            "search is supported — the avatar then answers from your documents alone.",
+            "azd env set DEPLOY_BING_GROUNDING false   # agent mode only",
         ),
         Step(
             "Provision + deploy Azure resources",

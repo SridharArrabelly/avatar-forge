@@ -115,11 +115,28 @@ problems that are easy to confuse: *how long until she starts speaking* (latency
 which model mode improves) and *how long she then talks for* (length, which is a
 prompt concern and independent of the binding).
 
-### No new infrastructure
+### Less infrastructure, not more
 
 Voice Live manages the realtime model itself — there is no model deployment and no
-quota request behind `VOICELIVE_MODEL`. Model mode provisions **nothing**. It is a
-configuration change, not a deployment.
+quota request behind `VOICELIVE_MODEL`. Model mode provisions **nothing** of its
+own. It is a configuration change, not a deployment.
+
+It also *removes* three things. Because the binding decides whether a Foundry agent
+is in the request path at all, `azd up` under `VOICE_BINDING=model` skips:
+
+| skipped | why |
+| --- | --- |
+| the agent's chat-model deployment (`gpt-5.4`) | backs the *agent*; nothing in the backend reads it. Costs $0 at rest but holds 50K TPM of quota — enough to block a second deployment in a constrained region |
+| the Foundry agent itself | never bound; `AGENT_NAME` is not read in this mode |
+| the Bing account + allow-list + connection | a managed Foundry tool has no agent to attach to (see *The tools become ours*), so it bills a G2 SKU nothing can reach |
+
+`DEPLOY_BING_GROUNDING` is ignored under this binding rather than obeyed — the
+resource would be unreachable whatever the flag says.
+
+**Not gated, in either mode:** AI Search and the `text-embedding-3-small`
+deployment. Model mode uses the index *more* directly than agent mode does —
+`search_minutes` calls it in-process — and the meeting catalogue is fetched from
+it unconditionally on every session.
 
 ### The tools become ours
 
@@ -225,6 +242,24 @@ makes the two hard to compare.
 > quantity, and no amount of running them side by side makes them comparable. Before
 > any A/B, pin both modes to the same marker.
 
+Two further confounds, both measured rather than assumed:
+
+- **The spoken filler is a feature flag, not an architecture.** It was built only in
+  model mode, so a naive first-audio comparison is biased toward it by roughly the
+  length of a tool call. Agent mode was then probed live and **does** accept
+  `interim_response` — the service echoed the config back in full — so the gap is
+  something we withheld from agent mode, not something model mode earns. Enable it on
+  both sides or neither.
+- **The two bindings search different engines.** Agent mode uses Grounding with Bing
+  Custom Search over **7 path-scoped, boosted entries**; model mode uses Web IQ over
+  **5 bare hosts**, because `site:` cannot match a path. A web-grounded question is
+  therefore not the same question in both modes. Report web-grounded numbers
+  separately from minutes-only ones, which *are* comparable — the corpus is identical.
+
+When both were pinned to the same marker and interleaved A/B/A/B, time-to-**answer**
+came out at 2.45s (agent) versus 2.42s (model) — indistinguishable, with model mode's
+range the wider of the two. The entire difference was time-to-first-*sound*.
+
 Each websocket already opens its own Voice Live connection and shares no state, so the
 constraint is purely which binding the deployment was built with.
 
@@ -294,16 +329,24 @@ instructions. Two findings from tuning it are worth keeping:
 | Situation | Binding |
 | --- | --- |
 | Anything shipping today, unchanged behaviour required | **agent** |
-| Perceived latency is the priority | **model** |
+| Time-to-answer is the priority | either — **measured indistinguishable** (2.45s vs 2.42s) |
 | The managed Bing grounding tool is required as-is | **agent** |
+| Path-scoped / boosted web sources matter | **agent** — Web IQ scopes to bare hosts only |
 | Semantic EOU tuning matters more than ~1.5 s | **agent** |
+| You want the tool round trip under your own control | **model** |
 | Branded custom neural voice | either — keep an Azure voice |
 
-Agent mode remains the default deliberately. Model mode is the faster path and the
-one with fewer moving parts at runtime, but it moves tool correctness from
-Foundry's problem to ours, and retrieval quality is the thing to watch: the managed
-`azure_ai_search` tool does its own query rewriting and semantic ranking, so a
-comparison that only measures milliseconds can "win" by answering worse.
+Agent mode remains the default deliberately. Model mode is the one with fewer moving
+parts at runtime and it owns its tool round trip (0.27–1.63 s in-process, against
+1.3–1.9 s managed), but it moves tool correctness from Foundry's problem to ours, and
+retrieval quality is the thing to watch: the managed `azure_ai_search` tool does its
+own query rewriting and semantic ranking, so a comparison that only measures
+milliseconds can "win" by answering worse.
+
+> **Model mode is not faster to an answer.** That was the expectation going in, and
+> the interleaved A/B in §5 falsified it. What model mode did have was a spoken filler
+> that started sound at 1.00 s — and agent mode accepts the same feature. Choose model
+> mode for tool control and one less hop, not for speed.
 
 ---
 

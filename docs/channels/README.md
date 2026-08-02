@@ -111,7 +111,14 @@ capability, so environments created before profiles existed are unaffected.
 | `DEPLOY_MEETING_BOT_HOST` | `in-call` | Provisions the Windows media host + calling bot registration. |
 | `MEETING_BOT_APP_ID` / `_DNS_LABEL` / `_ADMIN_PASSWORD` | you supply | Required for **C**; the host is skipped if any is missing. |
 | `ENABLE_ACS` | `false` | Provisions `modules/communicationServices.bicep`. **No channel above needs this.** It serves the separate browser joiner (`/acs-join.html`), where a browser tab joins a meeting as an anonymous guest. Channel C joins via Graph calling — the `acs` in `/ws/acs/audio` is the bridge protocol's name, not an ACS dependency. |
-| `DEPLOY_BING_GROUNDING` | `true` | Provisions `modules/bingGrounding.bicep` (Bing account + site allow-list) and the Foundry connection to it, enabling the agent's web/news tool. On by default; set `false` to skip. Independent of the above; applies to every channel. |
+| `DEPLOY_BING_GROUNDING` | `true` | Provisions `modules/bingGrounding.bicep` (Bing account + site allow-list) and the Foundry connection to it, enabling the agent's web tool. On by default; set `false` to skip. Applies to every channel, but **only in agent mode** — see below. |
+
+> **Provisioning follows `VOICE_BINDING`.** Grounding with Bing is a *managed
+> Foundry tool*, and model mode has no agent for it to attach to, so under
+> `VOICE_BINDING=model` bicep skips the Bing account, the Foundry agent and the
+> agent's chat-model deployment — regardless of `DEPLOY_BING_GROUNDING`. Model
+> mode's web tool is Web IQ, called in-process. Both bindings still need AI
+> Search and the embedding deployment, which are never gated.
 
 > **Channel C needs its own Azure Bot registration.** An Entra app can back only
 > *one* Azure Bot resource, so `MEETING_BOT_APP_ID` must be an app registration

@@ -235,12 +235,17 @@ def main() -> int:
         "binding: model mode does not demand AGENT_NAME",
         not any(k.startswith("Agent mode") for k in r),
     )
-    # Bing is deployed by default and gated only on its own flag, so model mode
-    # would silently bill for a resource Voice Live cannot attach to.
+    # Bicep gates Bing on the binding, so model mode never provisions it whatever
+    # DEPLOY_BING_GROUNDING says. Preflight must therefore REPORT that (so the
+    # user is not surprised by a missing resource) without asking them to fix
+    # anything. Asserting `ok` is what pins the difference: the previous version
+    # reported the same line as a defect with an `azd env set` remedy.
     check(
-        "binding: model mode flags the unusable Bing resource",
+        "binding: model mode reports Bing as skipped, not as a problem",
         "Model mode: Bing grounding" in r
-        and r["Model mode: Bing grounding"].warn_only,
+        and r["Model mode: Bing grounding"].ok
+        and r["Model mode: Bing grounding"].warn_only
+        and "azd env set DEPLOY_BING_GROUNDING" not in (r["Model mode: Bing grounding"].fix or ""),
     )
 
     r = binding({"VOICE_BINDING": "model", "DEPLOY_BING_GROUNDING": "false"})

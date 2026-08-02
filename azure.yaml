@@ -72,6 +72,10 @@ hooks:
 
         $greenfieldFoundry = [string]::IsNullOrWhiteSpace($env:FOUNDRY_ACCOUNT_NAME)
         $greenfieldSearch  = [string]::IsNullOrWhiteSpace($env:SEARCH_SERVICE_NAME)
+        # Model mode binds Voice Live straight to a realtime model; there is no
+        # agent in the request path and nothing reads AGENT_NAME. Creating one
+        # anyway leaves a resource that looks live but is never called.
+        $agentBinding = ($env:VOICE_BINDING -ne 'model')
         $indexState = 'reused'
         $agentState = 'reused'
 
@@ -100,17 +104,20 @@ hooks:
           Write-Host "[brownfield] Skipping AI Search index build - using existing index '$env:SEARCH_INDEX_NAME'." -ForegroundColor Yellow
         }
 
-        if ($greenfieldFoundry) {
+        if ($greenfieldFoundry -and $agentBinding) {
           Write-Host "[greenfield] Creating Foundry agent '$env:AGENT_NAME' ..." -ForegroundColor Cyan
           uv run python scripts/setup_foundry_agent.py
           # Exit 3 is deliberate: the agent exists and answers, but an OPTIONAL
-          # tool (web/news grounding) was left out. That is a degraded success,
-          # not a failure, and must not be reported as one.
+          # tool (site-scoped web grounding) was left out. That is a degraded
+          # success, not a failure, and must not be reported as one.
           switch ($LASTEXITCODE) {
             0       { $agentState = 'ok' }
             3       { $agentState = 'degraded' }
             default { $agentState = 'failed' }
           }
+        } elseif (-not $agentBinding) {
+          Write-Host "[model mode] Skipping Foundry agent creation - VOICE_BINDING=model binds a realtime model directly." -ForegroundColor Yellow
+          $agentState = 'not-applicable'
         } else {
           Write-Host "[brownfield] Skipping Foundry agent creation - using existing agent '$env:AGENT_NAME'." -ForegroundColor Yellow
         }
@@ -146,6 +153,7 @@ hooks:
                        Write-Host "                 set BING_CONNECTION_NAME + BING_CUSTOM_CONFIG_NAME, then re-run:" -ForegroundColor Yellow
                        Write-Host "                 uv run python scripts/setup_foundry_agent.py" -ForegroundColor Yellow }
           'failed'   { Write-Host "  Agent        : NOT CREATED" -ForegroundColor Red }
+          'not-applicable' { Write-Host "  Agent        : not used - VOICE_BINDING=model binds '$env:VOICELIVE_MODEL' directly" -ForegroundColor Cyan }
           default    { Write-Host "  Agent        : reusing existing '$env:AGENT_NAME'" -ForegroundColor Yellow }
         }
         Write-Host ""
@@ -193,16 +201,22 @@ hooks:
           echo "[brownfield] Skipping AI Search index build - using existing index '$SEARCH_INDEX_NAME'."
         fi
 
-        if [ -z "$FOUNDRY_ACCOUNT_NAME" ]; then
+        if [ -z "$FOUNDRY_ACCOUNT_NAME" ] && [ "$VOICE_BINDING" != "model" ]; then
           echo "[greenfield] Creating Foundry agent '$AGENT_NAME' ..."
           # Exit 3 is deliberate: the agent exists and answers, but an OPTIONAL
-          # tool (web/news grounding) was left out. Degraded success, not failure.
+          # tool (site-scoped web grounding) was left out. Degraded success, not
+          # failure.
           uv run python scripts/setup_foundry_agent.py
           case $? in
             0) agent_state=ok ;;
             3) agent_state=degraded ;;
             *) agent_state=failed ;;
           esac
+        elif [ "$VOICE_BINDING" = "model" ]; then
+          # Model mode binds Voice Live straight to a realtime model; there is no
+          # agent in the request path and nothing reads AGENT_NAME.
+          echo "[model mode] Skipping Foundry agent creation - VOICE_BINDING=model binds a realtime model directly."
+          agent_state=not-applicable
         else
           echo "[brownfield] Skipping Foundry agent creation - using existing agent '$AGENT_NAME'."
         fi
@@ -237,6 +251,7 @@ hooks:
                     echo "                 set BING_CONNECTION_NAME + BING_CUSTOM_CONFIG_NAME, then re-run:"
                     echo "                 uv run python scripts/setup_foundry_agent.py" ;;
           failed)   echo "  Agent        : NOT CREATED" ;;
+          not-applicable) echo "  Agent        : not used - VOICE_BINDING=model binds '$VOICELIVE_MODEL' directly" ;;
           *)        echo "  Agent        : reusing existing '$AGENT_NAME'" ;;
         esac
         echo ""

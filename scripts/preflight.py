@@ -319,19 +319,19 @@ def check_voice_binding(cfg: dict[str, str]) -> list[CheckResult]:
                 warn_only=True,
             )
         )
-        # Bing is deployed by default and gated only on its own flag, so model
-        # mode otherwise pays for a billable resource it cannot reach.
+        # Bing is now gated on the binding in resources.bicep, so model mode no
+        # longer provisions it whatever DEPLOY_BING_GROUNDING says. Report that
+        # as a fact rather than a warning — there is nothing for the user to fix.
         if cfg.get("DEPLOY_BING_GROUNDING", "true").strip().lower() != "false":
             results.append(
                 CheckResult(
                     "Model mode: Bing grounding",
-                    False,
-                    "will be deployed, but model mode cannot use it",
+                    True,
+                    "not deployed — model mode cannot attach it",
                     fix="        Voice Live accepts only FUNCTION and MCP tools in model mode,\n"
                         "        so the managed Grounding-with-Bing tool has nothing to attach\n"
-                        "        to. Deploying it bills a Bing account the avatar can never\n"
-                        "        reach. Web IQ is the web tool in this mode.\n"
-                        "        azd env set DEPLOY_BING_GROUNDING false",
+                        "        to. Bicep skips it under this binding even though\n"
+                        "        DEPLOY_BING_GROUNDING is set. Web IQ is the web tool here.",
                     warn_only=True,
                 )
             )

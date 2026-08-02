@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.43.8.12551",
-      "templateHash": "5504084744551663265"
+      "templateHash": "12868540365098593455"
     }
   },
   "parameters": {
@@ -605,7 +605,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.43.8.12551",
-              "templateHash": "5604624739316978565"
+              "templateHash": "10797037708533948915"
             }
           },
           "parameters": {
@@ -867,7 +867,8 @@
               "communicationServices": "acs",
               "resourceGroup": "rg"
             },
-            "createBing": "[and(parameters('deployBingGrounding'), parameters('createFoundry'))]",
+            "agentBinding": "[not(equals(toLower(parameters('voiceBinding')), 'model'))]",
+            "createBing": "[and(and(parameters('deployBingGrounding'), parameters('createFoundry')), variables('agentBinding'))]",
             "bingConnectionNameEffective": "[if(empty(parameters('bingConnectionName')), 'bing-grounding-connection', parameters('bingConnectionName'))]",
             "bingCustomConfigNameEffective": "[if(empty(parameters('bingCustomConfigName')), 'avatar-web-search', parameters('bingCustomConfigName'))]",
             "bingEnvSegment": "[take(parameters('environmentName'), 45)]",
@@ -1342,6 +1343,9 @@
                   "modelDeploymentName": {
                     "value": "[parameters('modelDeploymentName')]"
                   },
+                  "deployAgentModel": {
+                    "value": "[variables('agentBinding')]"
+                  },
                   "modelSkuName": {
                     "value": "[parameters('modelSkuName')]"
                   },
@@ -1363,7 +1367,7 @@
                     "_generator": {
                       "name": "bicep",
                       "version": "0.43.8.12551",
-                      "templateHash": "4792431322175992725"
+                      "templateHash": "433770032466175673"
                     }
                   },
                   "parameters": {
@@ -1409,6 +1413,13 @@
                     },
                     "modelCapacity": {
                       "type": "int"
+                    },
+                    "deployAgentModel": {
+                      "type": "bool",
+                      "defaultValue": true,
+                      "metadata": {
+                        "description": "Deploy the agent's chat model. Agent mode only.\n\nThe chat model backs the Foundry *agent*. Model mode binds Voice Live straight\nto a realtime speech-to-speech model, which Voice Live deploys and manages\nitself — it never appears as a deployment here, and nothing in the backend\nreads this one. Deploying it anyway ties up quota (50K TPM) for a model that is\nnever called.\n\nThe embedding deployment below is NOT gated: both bindings answer from the\nAI Search index, and building that index needs embeddings.\n"
+                      }
                     },
                     "embeddingModelName": {
                       "type": "string",
@@ -1530,6 +1541,7 @@
                       ]
                     },
                     {
+                      "condition": "[parameters('deployAgentModel')]",
                       "type": "Microsoft.CognitiveServices/accounts/deployments",
                       "apiVersion": "2025-04-01-preview",
                       "name": "[format('{0}/{1}', parameters('accountName'), parameters('modelDeploymentName'))]",
@@ -1673,7 +1685,7 @@
                     },
                     "modelDeploymentName": {
                       "type": "string",
-                      "value": "[parameters('modelDeploymentName')]"
+                      "value": "[if(parameters('deployAgentModel'), parameters('modelDeploymentName'), '')]"
                     },
                     "embeddingDeploymentName": {
                       "type": "string",
