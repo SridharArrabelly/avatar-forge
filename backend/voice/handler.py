@@ -132,37 +132,51 @@ class VoiceSessionHandler:
         self._audio_chunk_count = 0
         self._video_chunk_count = 0
 
+    def _build_connect_kwargs(self) -> dict:
+        """Assemble the arguments handed to ``voicelive.connect()``.
+
+        Extracted from :meth:`start` so the binding shape can be asserted
+        without opening a socket. ``scripts/test_voice_binding.py`` checks every
+        key here against the installed SDK's real ``connect()`` signature,
+        because an unrecognised key does not raise — it is swallowed by
+        ``**kwargs`` and the session silently binds to nothing.
+        """
+        connect_kwargs = {
+            "endpoint": self.endpoint,
+            "credential": self.credential,
+            "api_version": VOICELIVE_API_VERSION,
+        }
+        if self.model_binding:
+            if not VOICELIVE_MODEL:
+                raise ValueError("VOICELIVE_MODEL must be set when VOICE_BINDING=model")
+            connect_kwargs["model"] = VOICELIVE_MODEL
+            logger.info(
+                f"Connecting to Voice Live with model: {VOICELIVE_MODEL} "
+                f"(api_version={VOICELIVE_API_VERSION})"
+            )
+        else:
+            if not AGENT_NAME or not AGENT_PROJECT_NAME:
+                raise ValueError("AGENT_NAME and AGENT_PROJECT_NAME must be set in the environment")
+            # Top-level arguments, NOT an ``agent_config`` dict. The SDK removed
+            # that parameter and now builds the structure itself from these two.
+            # A dict lands in **kwargs and is discarded, leaving the session
+            # bound to neither an agent nor a model; the service then rejects it
+            # with "Missing required parameter: model", which surfaces
+            # confusingly as a closing-transport error on the next write.
+            connect_kwargs["agent_name"] = AGENT_NAME
+            connect_kwargs["project_name"] = AGENT_PROJECT_NAME
+            logger.info(
+                f"Connecting to Voice Live with agent: {AGENT_NAME} "
+                f"(project={AGENT_PROJECT_NAME}, api_version={VOICELIVE_API_VERSION})"
+            )
+        return connect_kwargs
+
     async def start(self):
         """Start the Voice Live session."""
         try:
             self.is_running = True
 
-            connect_kwargs = {
-                "endpoint": self.endpoint,
-                "credential": self.credential,
-                "api_version": VOICELIVE_API_VERSION,
-            }
-            if self.model_binding:
-                if not VOICELIVE_MODEL:
-                    raise ValueError("VOICELIVE_MODEL must be set when VOICE_BINDING=model")
-                connect_kwargs["model"] = VOICELIVE_MODEL
-                logger.info(
-                    f"Connecting to Voice Live with model: {VOICELIVE_MODEL} "
-                    f"(api_version={VOICELIVE_API_VERSION})"
-                )
-            else:
-                agent_name = AGENT_NAME
-                project_name = AGENT_PROJECT_NAME
-                if not agent_name or not project_name:
-                    raise ValueError("AGENT_NAME and AGENT_PROJECT_NAME must be set in the environment")
-                connect_kwargs["agent_config"] = {
-                    "agent_name": agent_name,
-                    "project_name": project_name,
-                }
-                logger.info(
-                    f"Connecting to Voice Live with agent: {agent_name} "
-                    f"(project={project_name}, api_version={VOICELIVE_API_VERSION})"
-                )
+            connect_kwargs = self._build_connect_kwargs()
 
             async with connect(**connect_kwargs) as connection:
                 self.connection = connection

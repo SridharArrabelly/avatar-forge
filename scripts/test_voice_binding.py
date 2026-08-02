@@ -217,10 +217,63 @@ def test_agent_mode_carries_no_model_keys():
           None)
 
 
+def test_connect_kwargs_match_the_installed_sdk() -> None:
+    """Every key we hand ``connect()`` must be a real parameter of it.
+
+    This is the check that would have caught a live outage. The SDK floor is a
+    range, so a routine ``uv lock`` can move the installed version, and
+    azure-ai-voicelive changed its agent binding from an ``agent_config`` dict
+    to top-level ``agent_name``/``project_name``. Because ``connect()`` ends in
+    ``**kwargs``, the stale key raised NOTHING — it was silently dropped, the
+    session bound to neither an agent nor a model, and the service answered
+    "Missing required parameter: model", which surfaced to us as an unrelated
+    "Cannot write to closing transport" on the following write.
+
+    So this deliberately asserts against ``inspect.signature`` of the SDK that
+    is actually installed, rather than against a hardcoded list of names. It
+    catches the next signature change too, not just the one already fixed.
+    """
+    import inspect
+    from unittest.mock import Mock
+
+    from azure.ai.voicelive.aio import connect
+
+    accepted = {
+        name
+        for name, p in inspect.signature(connect).parameters.items()
+        if p.kind not in (p.VAR_KEYWORD, p.VAR_POSITIONAL)
+    }
+
+    def kwargs_for(binding: str) -> dict:
+        _fresh_config(VOICE_BINDING=binding, AGENT_NAME="a", AGENT_PROJECT_NAME="p",
+                      VOICELIVE_MODEL="gpt-realtime")
+        from backend.voice.handler import VoiceSessionHandler
+        h = VoiceSessionHandler(
+            client_id="t", endpoint="https://x", credential=Mock(),
+            send_message=Mock(), config={},
+        )
+        return h._build_connect_kwargs()
+
+    for binding in ("agent", "model"):
+        kw = kwargs_for(binding)
+        unknown = sorted(set(kw) - accepted)
+        check(f"{binding} mode passes only parameters the SDK declares",
+              unknown, [])
+
+    agent_kw = kwargs_for("agent")
+    check_true("agent mode binds via agent_name", "agent_name" in agent_kw)
+    check_true("agent mode binds via project_name", "project_name" in agent_kw)
+    # The specific shape that broke. Named explicitly so the failure message
+    # points straight at the cause rather than at a generic 'unknown key'.
+    check("agent mode does not pass a removed agent_config dict",
+          "agent_config" in agent_kw, False)
+
+
 def main() -> int:
     for fn in (test_binding_resolution, test_interim_response_gating,
                test_turn_detection_eou, test_client_cannot_choose_binding,
-               test_agent_mode_carries_no_model_keys):
+               test_agent_mode_carries_no_model_keys,
+               test_connect_kwargs_match_the_installed_sdk):
         try:
             fn()
         except Exception as e:  # a raising test is a failing test
