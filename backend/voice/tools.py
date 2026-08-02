@@ -28,6 +28,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import time
 from typing import Any
 from urllib.parse import urlsplit
@@ -173,12 +174,116 @@ SEARCH_WEB_TOOL: dict[str, Any] = {
         "properties": {
             "query": {
                 "type": "string",
-                "description": "What to search for, in natural language.",
+                "description": (
+                    "What to search for, in natural language. Do not add "
+                    "'site:' operators or domain names — the trusted sources "
+                    "are applied automatically."
+                ),
             },
         },
         "required": ["query"],
     },
 }
+
+
+_HOSTISH = r"[A-Za-z0-9][A-Za-z0-9.-]*\.[A-Za-z]{2,}"
+# `site:x.com`, `-site:x.com`, and the colon-less `site x.com` the model writes.
+# The lookbehind admits a preceding `(` so an OR-group's first operator is seen,
+# and the value stops at `)` so the group's own bracket survives to be cleaned
+# up as a pair rather than half-eaten.
+_SITE_OP_RE = re.compile(r"(?<![^\s(])-?site\s*:\s*[^\s)]+", re.IGNORECASE)
+_BARE_SITE_RE = re.compile(rf"(?<![^\s(])-?site\s+{_HOSTISH}(?!\S)", re.IGNORECASE)
+# Leftovers once the operators inside an OR-group are gone: `( OR )`, `(OR x`,
+# `x OR )`, doubled `OR OR`, and a dangling `OR` at either end.
+_LEFTOVERS = (
+    (re.compile(r"\(\s*(?:OR\s*)*\)", re.IGNORECASE), " "),
+    (re.compile(r"\(\s*(?:OR\s+)+", re.IGNORECASE), "("),
+    (re.compile(r"(?:\s+OR)+\s*\)", re.IGNORECASE), ")"),
+    (re.compile(r"(?<!\S)OR(?:\s+OR)+(?!\S)", re.IGNORECASE), "OR"),
+    (re.compile(r"^\s*(?:OR\s+)+", re.IGNORECASE), ""),
+    (re.compile(r"(?:\s+OR)+\s*$", re.IGNORECASE), ""),
+)
+
+# Hostname labels that mark a non-production copy of an allowed site. `site:`
+# matches a domain *and all its subdomains*, so an allow-list of bare hosts
+# silently admits these.
+NONPROD_LABELS = frozenset(
+    {"dev", "development", "staging", "stage", "test", "testing", "uat", "qa",
+     "preview", "beta", "sandbox", "demo", "local"}
+)
+
+
+def strip_scope_operators(query: str) -> str:
+    """Remove any site scoping the model wrote into its own query.
+
+    The tool schema asks for natural language, but the model writes operators
+    anyway — observed live as ``'MTN Group CFO name site mtn.com'``. Note the
+    missing colon: Web IQ then matches ``site`` and ``mtn.com`` as ordinary
+    keywords, and :func:`build_query` appends the real allow-list on top, so the
+    wire query carries two overlapping scopes.
+
+    Measured against the live API, this is **not** catastrophic — the polluted
+    query still returned five relevant results. But it is not free either: for
+    "MTN Group share price" the model's ``site mtn.com`` pushed the live price
+    pages (``sashares.co.za``, ``jse.co.za``) below MTN's own investor landing
+    page, which does not carry a price. Stripping it costs one regex pass and
+    makes the wire query a deterministic function of the allow-list, which is
+    what makes retrieval behaviour reproducible between runs.
+    """
+    cleaned = _BARE_SITE_RE.sub(" ", _SITE_OP_RE.sub(" ", query))
+    if cleaned != query:
+        for pattern, repl in _LEFTOVERS:
+            cleaned = pattern.sub(repl, cleaned)
+    cleaned = re.sub(r"\s{2,}", " ", cleaned).strip()
+    # Never hand back an empty query: if the model wrote nothing but operators,
+    # the original is a worse query but still a real one.
+    return cleaned or query.strip()
+
+
+def host_of(d: str) -> str:
+    """Reduce a domain or full URL to its bare host.
+
+    `site:` matches a domain, not a path, so an allow-list entry written as a
+    URL has to be cut back to its host before it becomes an operator.
+    """
+    return (urlsplit(d if "//" in d else f"//{d}").netloc or d).strip("/").lower()
+
+
+def is_nonprod_host(host: str, domains: list[str]) -> bool:
+    """True for `dev.`/`staging.`/... copies of an otherwise allowed domain.
+
+    ``site:sashares.co.za`` matches every subdomain, so the allow-list admits
+    ``dev.sashares.co.za`` — and Web IQ ranked exactly that **first** for "MTN
+    Group share price", quoting ``R211.74`` last updated 2026-06-05 while the
+    production host carried ``R204.97`` from 2026-07-31. Two months stale, from
+    a staging site, offered as the current share price.
+
+    This is a regression against the Bing custom-search config it replaced,
+    whose entries were path-scoped and so could not match a sibling subdomain.
+    It cannot be expressed as a ``site:`` operator, so it is enforced on the way
+    out instead.
+
+    The test is deliberately anchored to the allow-list rather than to label
+    shapes: a host is rejected only when it is a *strict subdomain* of an
+    allowed domain **and** the extra labels are all non-production markers.
+    Guessing from the leftmost label alone would misfire on two-level TLDs — a
+    hypothetical allowed ``test.co.za`` is its own site, not a staging copy —
+    and would reject legitimate subdomains such as ``senspdf.jse.co.za``, which
+    carries the JSE's SENS filings.
+    """
+    host = host_of(host)
+    if not host:
+        return False
+    for raw in domains:
+        allowed = host_of(raw.strip().lstrip("-"))
+        if not allowed or not host.endswith(f".{allowed}"):
+            continue
+        prefix = host[: -len(allowed) - 1].split(".")
+        # `www` is a production host; ignore it when judging the rest.
+        extra = [p for p in prefix if p and p != "www"]
+        if extra and all(p in NONPROD_LABELS for p in extra):
+            return True
+    return False
 
 
 def build_query(query: str, domains: list[str]) -> str:
@@ -195,12 +300,13 @@ def build_query(query: str, domains: list[str]) -> str:
 
     A full URL is reduced to its host because `site:` matches a domain, not a
     path.
+
+    Any scoping the model wrote itself is stripped first, so the operators here
+    are the only ones on the wire.
     """
+    query = strip_scope_operators(query)
     if not domains:
         return query
-
-    def host_of(d: str) -> str:
-        return (urlsplit(d if "//" in d else f"//{d}").netloc or d).strip("/")
 
     include: list[str] = []
     exclude: list[str] = []
@@ -299,9 +405,12 @@ async def search_web(query: str) -> dict[str, Any]:
     if not web_search_configured():
         return {"error": "Web search is not configured on this deployment."}
 
+    domains = _allowed_domains()
     body = {
-        "query": build_query(query, _allowed_domains()),
-        "maxResults": WEB_MAX_RESULTS,
+        "query": build_query(query, domains),
+        # Over-fetch by two so dropping a staging mirror does not starve the
+        # answer; the list is trimmed back to WEB_MAX_RESULTS after filtering.
+        "maxResults": WEB_MAX_RESULTS + 2,
         "language": os.getenv("WEBIQ_LANGUAGE", "en"),
         "region": os.getenv("WEBIQ_REGION", "ZA"),
         "contentFormat": "text",
@@ -335,16 +444,33 @@ async def search_web(query: str) -> dict[str, Any]:
     # carries a clean `source` ("Moneyweb") so the model can attribute a claim
     # without parsing a hostname. `clickUrl` is a redirect tracker; `url` is the
     # real link. `thumbnail`/`isAdult` are dropped as noise.
-    results = [
-        {
-            "title": _pick(i, ("title", "name")),
-            "source": _pick(i, ("source",)),
-            "url": _pick(i, ("url", "contentUrl", "hostPageUrl")),
-            "published": _pick(i, ("lastUpdatedAt", "crawledAt", "datePublished"))[:10],
-            "extract": _pick(i, ("content", "snippet", "description"))[:WEB_MAX_LENGTH],
-        }
-        for i in raw
-    ]
+    results: list[dict[str, Any]] = []
+    dropped: list[str] = []
+    for i in raw:
+        url = _pick(i, ("url", "contentUrl", "hostPageUrl"))
+        host = urlsplit(url).netloc
+        if is_nonprod_host(host, domains):
+            dropped.append(host)
+            continue
+        results.append(
+            {
+                "title": _pick(i, ("title", "name")),
+                "source": _pick(i, ("source",)),
+                "url": url,
+                "published": _pick(
+                    i, ("lastUpdatedAt", "crawledAt", "datePublished")
+                )[:10],
+                "extract": _pick(i, ("content", "snippet", "description"))[
+                    :WEB_MAX_LENGTH
+                ],
+            }
+        )
+
+    if dropped:
+        logger.info(f"[TOOL] search_web dropped non-production hosts: {dropped}")
+
+    # Back to the answer budget: the over-fetch existed only to survive filtering.
+    results = results[:WEB_MAX_RESULTS]
 
     elapsed_ms = (time.monotonic() - started) * 1000
     logger.info(
