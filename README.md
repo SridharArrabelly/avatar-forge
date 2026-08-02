@@ -173,10 +173,10 @@ Deploying is a *sequence*, not one command: some steps Bicep performs, some only
 person with the right directory role can, and they interleave. Rather than make you
 discover that halfway through, the tooling tells you the whole sequence up front.
 
-> **Platform: Windows + PowerShell.** All commands are written for PowerShell. On
-> macOS or Linux the `azd` and Python steps work unchanged — translate the shell
-> syntax yourself. Channel C requires Windows regardless (the Teams Real-Time Media
-> Platform runs on nothing else).
+> **Platform: Windows + PowerShell.** All commands are written for PowerShell; on
+> macOS or Linux the `azd` and Python steps work unchanged, but you translate the
+> shell syntax yourself ([details](docs/channels/README.md)). Channel C requires
+> Windows regardless — the Teams Real-Time Media Platform runs on nothing else.
 
 ```powershell
 azd auth login
@@ -218,11 +218,7 @@ Details: **[docs/deployment.md](docs/deployment.md)** ·
 
 ## Documentation
 
-**New here?** Read [docs/channels/README.md](docs/channels/README.md) to pick a
-front door, then [docs/admin-checklist.md](docs/admin-checklist.md) to find out
-whether you can actually deploy it.
-
-**Start here**
+**Start here** — pick a front door, then check whether you can actually deploy it.
 
 | Doc | What's in it |
 |---|---|

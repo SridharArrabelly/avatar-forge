@@ -9,14 +9,16 @@ or `azd` for local development — just `uv` and `az login`. For env vars see
 
 - **Python 3.10+**
 - An active Azure account ([free account](https://azure.microsoft.com/free/ai-services))
-- A **Microsoft Foundry** resource in a [Voice Live region](https://learn.microsoft.com/azure/ai-services/speech-service/voice-live)
+- A **Microsoft Foundry** resource in a region that supports both Voice Live and the
+  avatar — `eastus2`, `southeastasia`, `swedencentral`, `westus2`
 - A base chat model deployed in Foundry (e.g. `gpt-4.1` or `gpt-5`+) — the agent binds to it
 - An [Azure AI Search](https://learn.microsoft.com/azure/search/search-create-service-portal)
   service, added as a [connected resource](https://learn.microsoft.com/azure/ai-foundry/how-to/connections-add)
   in the Foundry project (its connection name → `SEARCH_CONNECTION_NAME`)
 
-> **Avatar regions.** The avatar feature is available in: Southeast Asia, North Europe,
-> West Europe, Sweden Central, South Central US, East US 2, West US 2.
+> Those four regions are the intersection of the Voice Live and avatar region sets;
+> `scripts/preflight.py` holds the authoritative lists and checks them for you.
+> [deployment.md](deployment.md#regions) explains what happens if you pick another.
 
 ## 1. Install uv (one-time)
 

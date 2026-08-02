@@ -90,7 +90,7 @@ reason to evaluate it.
 | Blocker | Best available fallback |
 | --- | --- |
 | No Teams admin (cannot get the access policy) | Stop at **A + B**. Evaluate **D**. Channel C is not available to you |
-| No Entra admin (cannot consent) | Stop at **A + B**. C and D both require consent |
+| No Entra admin (cannot consent) | Stop at **A + B**. C requires consent; D's requirement is not yet established (see above) |
 | Custom app upload disabled | **A** only, via a browser. Ask for org-wide publication of the package |
 | No model quota in region | Deploy the core in a region that has quota; channels are region-independent of Teams |
 

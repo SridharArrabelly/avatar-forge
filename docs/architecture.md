@@ -76,7 +76,7 @@ The **in-call avatar** (issue #27) reuses the same Voice Live + Foundry pipeline
 - **Browser joiner (`frontend/acs-join.html`) — a fallback for demos.** Joins with the
   ACS Calling Web SDK (anonymous, lobby-governed, no admin) over `/ws/acs/browser`. It
   can only ever hear **the operator's own microphone**, because Teams isolates
-  per-client audio. Useful when you have no admin rights; not a substitute for D.
+  per-client audio. Useful when you have no admin rights; not a substitute for C.
 
 Both are non-recording and fully opt-in — every `/api/acs/*` route returns 503 when
 disabled. An optional Teams meeting **side-panel control panel**

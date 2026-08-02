@@ -179,7 +179,7 @@ proposed architecture and pre-registered comparison criteria instead.)*
 ### Where architecture lives, and why it is split three ways
 
 A reasonable question is whether each channel should carry its own full design and
-architecture. It should not — because **all five channels share one core**, and five
+architecture. It should not — because **all four channels share one core**, and four
 copies of the same Voice Live/Foundry pipeline would drift apart within a month. So
 the split is by *what changes*:
 
