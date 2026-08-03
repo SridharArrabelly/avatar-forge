@@ -98,6 +98,7 @@ let _LocalVideoStreamCtor = null; // captured from the SDK at join() time
 let localVideoStream = null;      // ACS LocalVideoStream wrapping the placard canvas
 let placardStream = null;         // MediaStream from canvas.captureStream()
 let placardTimerId = null;        // canvas redraw timer (setInterval keeps frames flowing even when the tab is backgrounded)
+let placardDraw = null;           // current tile paint fn, so decoded frames can drive it
 let placardImg = null;            // brand logo image, loaded once from /brand/color.png
 
 // ───────── browser-side media bridge (client-side audio path) ─────────
@@ -202,7 +203,15 @@ const PLAYBACK_LEAD = 0.25; // seconds of cushion ahead of the play clock
 // roughly half a second lip sync is visibly broken anyway, so resyncing (a tiny
 // discontinuity, almost always during idle silence) is strictly better than
 // letting the gap grow.
-const MAX_PLAYBACK_LEAD = 0.5;
+const MAX_PLAYBACK_LEAD = 0.35;
+// Lead we actively steer back to. Capping the runaway (below) stopped the drift
+// growing without bound, but measurement showed it then settled just under the
+// cap (avLead=0.44 steady), and audio trailing the picture by that much still
+// reads as bad lip sync — the ear notices a lag past roughly 0.15s. The avatar's
+// muxed track is mostly silence between turns, so silent chunks are dropped
+// until the lead is back to target: nothing audible is lost, and unlike a hard
+// resync it can never cut speech mid-word.
+const TARGET_LEAD = 0.15;
 const CAPTURE_TAIL = 0.4;   // extra mic-mute time after playback drains (anti-echo)
 // Peak amplitude (0..1) above which a chunk counts as *speech* rather than the
 // avatar's idle silence. See the half-duplex note in playPcmChunk.
@@ -215,12 +224,18 @@ function playPcmChunk(int16) {
         const a = f32[i] < 0 ? -f32[i] : f32[i];
         if (a > peak) peak = a;
     }
+    const now = audioCtx.currentTime;
+    // Shave the A/V lead back down during silence (see TARGET_LEAD). Dropping the
+    // chunk leaves playCursor where it is, so the clock catches up to it.
+    if (peak < SPEECH_PEAK && playCursor > now + TARGET_LEAD) {
+        avLead = playCursor - now;
+        return;
+    }
     const buf = audioCtx.createBuffer(1, f32.length, MEDIA_SAMPLE_RATE);
     buf.copyToChannel(f32, 0);
     const node = audioCtx.createBufferSource();
     node.buffer = buf;
     node.connect(outboundDest);
-    const now = audioCtx.currentTime;
     // If we've fallen behind (or this is the first chunk of a turn), rebuild the
     // cushion rather than scheduling right at "now", which would underrun.
     if (playCursor < now + 0.02) {
@@ -236,7 +251,7 @@ function playPcmChunk(int16) {
         // Without the avatar there are gaps between turns, the cursor falls
         // behind and self-corrects, which is why this only showed up with video.
         avResyncs += 1;
-        playCursor = now + PLAYBACK_LEAD;
+        playCursor = now + TARGET_LEAD;
     }
     avLead = playCursor - now;
     node.start(playCursor);
@@ -615,7 +630,26 @@ function setupAvatarVideo() {
             reportVideo("failed", `addSourceBuffer: ${e && e.message ? e.message : e}`);
         }
     });
+    // Repaint the tile the instant a frame decodes, rather than resampling the
+    // stream on a fixed timer. The avatar renders at ~25fps; a 15fps timer landed
+    // between source frames, so some were shown twice and others skipped, and the
+    // uneven cadence is what read as jerky/"robotic" motion. requestVideoFrameCallback
+    // fires exactly once per decoded frame, so motion is 1:1 with the source.
+    // The interval stays as a keep-alive for the placard and backgrounded tabs.
+    pumpAvatarFrames(v);
     avatarVideoEl = v;
+}
+
+function pumpAvatarFrames(v) {
+    if (typeof v.requestVideoFrameCallback !== "function") return;
+    const step = () => {
+        if (avatarVideoEl !== v) return; // torn down — let the loop die
+        if (placardDraw) {
+            try { placardDraw(); } catch (_) { /* never break the frame loop */ }
+        }
+        try { v.requestVideoFrameCallback(step); } catch (_) {}
+    };
+    try { v.requestVideoFrameCallback(step); } catch (_) {}
 }
 
 function handleAvatarChunk(base64Data) {
@@ -771,8 +805,12 @@ async function startPlacardVideo() {
         ctx.font = "500 20px -apple-system, 'Segoe UI', system-ui, sans-serif";
         const w = ctx.measureText(label).width + 62;
         const x = (canvas.width - w) / 2;
-        const y = canvas.height - 56;
-        ctx.fillStyle = "rgba(11,16,32,.72)";
+        // Keep the badge inside the 16:9 centre crop. The tile canvas is 4:3 and
+        // Teams crops to its own aspect, lopping off roughly the top and bottom
+        // eighth — a badge pinned near canvas.height was simply never on screen.
+        const y = Math.round(canvas.height * 0.72);
+        ctx.textAlign = "left";
+        ctx.fillStyle = "rgba(11,16,32,.78)";
         if (ctx.roundRect) {
             ctx.beginPath(); ctx.roundRect(x, y, w, 34, 17); ctx.fill();
         } else {
@@ -782,12 +820,11 @@ async function startPlacardVideo() {
         for (let i = 0; i < 3; i++) {
             const on = Math.floor(t * 3) % 3 === i;
             ctx.beginPath();
-            ctx.fillStyle = on ? "#22c55e" : "rgba(255,255,255,.35)";
+            ctx.fillStyle = on ? "#f59e0b" : "rgba(255,255,255,.35)";
             ctx.arc(x + 20 + i * 12, y + 17, on ? 4.5 : 3.5, 0, Math.PI * 2);
             ctx.fill();
         }
-        ctx.textAlign = "left";
-        ctx.fillStyle = "rgba(255,255,255,.9)";
+        ctx.fillStyle = "rgba(255,255,255,.92)";
         ctx.fillText(label, x + 52, y + 24);
     }
     function draw() {
@@ -824,20 +861,24 @@ async function startPlacardVideo() {
         const r = 6 + 2 * Math.sin(t * (thinking ? 6 : 3));
         ctx.beginPath();
         ctx.fillStyle = thinking ? "#f59e0b" : "#22c55e";
-        ctx.arc(canvas.width / 2 - 64, H * 0.883, r, 0, Math.PI * 2);
+        ctx.arc(canvas.width / 2 - 64, H * 0.823, r, 0, Math.PI * 2);
         ctx.fill();
         ctx.fillStyle = "rgba(255,255,255,.75)";
         ctx.font = "400 18px -apple-system, 'Segoe UI', system-ui, sans-serif";
         ctx.textAlign = "left";
-        ctx.fillText(status, canvas.width / 2 - 48, H * 0.9);
+        ctx.fillText(status, canvas.width / 2 - 48, H * 0.84);
         keepFrameAlive();
     }
     // setInterval (unlike requestAnimationFrame) keeps firing in a backgrounded tab
     // (throttled to ~1s, which is still enough to keep the encoder alive and the
     // logo/name visible) instead of freezing to a blank tile.
-    placardStream = canvas.captureStream(15);
+    placardStream = canvas.captureStream(30);
     localVideoStream = new _LocalVideoStreamCtor(placardStream);
-    placardTimerId = setInterval(draw, 66);
+    placardDraw = draw;
+    // 30fps keep-alive. When the avatar is live, requestVideoFrameCallback drives
+    // the repaints and this merely guarantees frames keep flowing (placard state,
+    // backgrounded tab) instead of the tile freezing.
+    placardTimerId = setInterval(draw, 33);
     draw();
     await call.startVideo(localVideoStream);
     reportVideo("tile-on", `${canvas.width}x${canvas.height}`);
@@ -848,6 +889,7 @@ function teardownPlacardVideo() {
         try { clearInterval(placardTimerId); } catch (_) {}
         placardTimerId = null;
     }
+    placardDraw = null;
     const lvs = localVideoStream;
     localVideoStream = null;
     if (call && lvs && typeof call.stopVideo === "function") {

@@ -617,6 +617,7 @@ class BrowserVoiceBridge:
         if self._closed or active == self._thinking:
             return
         self._thinking = active
+        logger.info(f"[browser {self.client_id}] thinking cue -> {active}")
         try:
             await self._ws.send_text(json.dumps({"type": "thinking", "active": active}))
         except Exception as e:  # noqa: BLE001 — a cue must never kill the call
