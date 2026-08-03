@@ -125,9 +125,9 @@ add or drop criteria afterwards.
 
 | Criterion | C — Graph media bot | D — headless browser |
 | --- | --- | --- |
-| **Admin dependency** *(decisive)* | Graph consent + **Teams access policy** | Hypothesis: none |
-| Hears the whole room | Yes | ? |
-| Publishes a camera tile (the face) | Yes | ? |
+| **Admin dependency** *(decisive)* | Entra admin consent for `Calls.*.All` (the Teams access policy is only needed for short `/meet/` links) | Hypothesis: none |
+| Hears the whole room | Yes | ? — see the `srcObject` note above |
+| Publishes a camera tile (the face) | Yes | Yes — already built in `acs-join.js` |
 | Added latency over the Voice Live budget | ~125 ms transport | ? |
 | Audio fidelity | Verified clean | ? |
 | Idle cost | ~$283/month VM (`D4s_v5`), no scale-to-zero | ? |
@@ -135,11 +135,22 @@ add or drop criteria afterwards.
 | Terms-of-use standing | Supported, first-party API | ? |
 | Effort to reach parity | Built | ? |
 
-**Decision rule:** if D clears admin dependency *and* publishes a camera tile at
-comparable quality, it supersedes C and C should be retired rather than kept in
-parallel. Maintaining two in-call implementations is a cost nobody is paying for.
-If D cannot show a face, it is a fallback for policy-blocked tenants, not a
-replacement.
+**Decision rule — both are kept (owner's call, 2026-08-03).** An earlier version of
+this page said that if D cleared the admin dependency it "supersedes C and C should be
+retired rather than kept in parallel". **That is overridden.** C is a genuine design
+that works, and the two fail in *different directions*:
+
+| | C — Graph media bot | D — headless browser |
+| --- | --- | --- |
+| Authorisation | admin consent once, then **any** meeting from a link | none — but the tenant must permit anonymous guest join |
+| Platform standing | supported, first-party API | rides an SDK **implementation detail** (`srcObject`), not a contract |
+| Breaks when | no administrator is available | the SDK changes how it renders remote audio, or anonymous join is disabled |
+
+That makes them complementary rather than redundant: C is the robust path wherever an
+administrator exists, D is the only path where one does not. The cost of keeping both
+is real and is accepted deliberately rather than by drift — C carries the
+[three-month media-SDK treadmill](c-in-call-media-bot.md), D carries an unsupported
+touchpoint that can fail silently. Neither is free.
 
 ## When to build it
 
