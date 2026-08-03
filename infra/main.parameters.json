@@ -60,6 +60,7 @@
     "acsAudioSampleRate":  { "value": "${ACS_AUDIO_SAMPLE_RATE=}" },
     "acsRequireWakePhrase":{ "value": "${ACS_REQUIRE_WAKE_PHRASE=}" },
     "acsAvatarVideoEnabled":{ "value": "${ACS_AVATAR_VIDEO_ENABLED=}" },
+    "browserJoinVideoEnabled":{ "value": "${BROWSER_JOIN_VIDEO_ENABLED=}" },
 
     "deployProfile":            { "value": "${DEPLOY_PROFILE=}" },
     "deployMeetingBotHost":     { "value": "${DEPLOY_MEETING_BOT_HOST=false}" },

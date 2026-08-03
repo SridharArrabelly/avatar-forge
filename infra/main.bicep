@@ -200,6 +200,8 @@ param acsAudioSampleRate string = ''
 param acsRequireWakePhrase string = ''
 @description('"true"/"false". In-call avatar sends an outgoing video tile so it is a visible participant.')
 param acsAvatarVideoEnabled string = ''
+@description('"true"/"false". The browser joiner\'s tile carries the LIVE lip-synced avatar instead of a static placard. Needs acsAvatarVideoEnabled="true" as well — the tile has to exist before it can carry a face.')
+param browserJoinVideoEnabled string = ''
 
 // ───────── channel C Windows media host (#27) ─────────
 // Deployed only for the in-call channel. Requires its own Entra app — an app can
@@ -321,6 +323,7 @@ module resources 'resources.bicep' = {
     acsAudioSampleRate: acsAudioSampleRate
     acsRequireWakePhrase: acsRequireWakePhrase
     acsAvatarVideoEnabled: acsAvatarVideoEnabled
+    browserJoinVideoEnabled: browserJoinVideoEnabled
   }
 }
 
