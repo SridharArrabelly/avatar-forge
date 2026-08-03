@@ -256,6 +256,31 @@ uv run python scripts/setup_aisearch_index.py
 
 ## Runtime config / model deployment overrides
 
+> ⚠️ **Never run `azd provision` on its own against a live deployment — always follow it
+> with `azd deploy`, or use `azd up`.**
+>
+> The container app is declared in Bicep with a placeholder image
+> (`mcr.microsoft.com/k8se/quickstart:latest`), because on a greenfield deploy the real
+> image does not exist until `azd deploy` builds it. `azd provision` therefore *resets*
+> the app template back to that placeholder and creates a new revision from it. The app
+> runs in **`Single` revision mode**, so the newest revision takes 100% of traffic as
+> soon as it reports ready — and your site starts serving the Azure quickstart welcome
+> page instead of the avatar.
+>
+> The failure is quiet and delayed. `azd provision` prints `SUCCESS`, and for the first
+> minute or two the old revision is still the `latestReadyRevisionName`, so the site
+> looks fine. Verify with:
+>
+> ```powershell
+> az containerapp show -g <rg> -n <app> `
+>   --query "properties.template.containers[0].image" -o tsv
+> ```
+>
+> If that prints `mcr.microsoft.com/k8se/quickstart:latest`, run `azd deploy` now. It
+> rebuilds, pushes and cuts traffic to a revision carrying both the real image and any
+> env vars the provision added — which is also why flipping an infra flag needs *both*
+> steps before the new setting is live in the running container.
+
 The Bicep template accepts overrides via azd env vars — set them before
 `azd provision`. [configuration.md](configuration.md) is the single source of truth
 for every variable; the sections that apply at provisioning time are:
