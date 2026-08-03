@@ -8,11 +8,30 @@ meeting at the same time.
 | --- | --- | --- |
 | Page / API | `acs-join.html` | `POST :9441/api/join` |
 | Runs on | your laptop's browser tab | the Windows VM |
+| Joins the meeting as | anonymous guest, via the ACS Calling Web SDK | the bot's Entra identity, via Graph calling |
 | WebSocket | `/ws/acs/browser` | `/ws/acs/audio` |
+| Brain (Voice Live + Foundry agent) | **the container app** | **the container app** |
+| Needs an **ACS resource** | **yes** (`/api/acs/token` mints the guest token) | no — joins via Graph |
+| Needs the VM running | no | **yes** (~$283/mo if left on) |
 | **Hears** | **only your machine's mic / shared audio** | **everyone in the meeting** |
 | Face | browser decodes fMP4 → canvas → ACS tile | Python decodes → NV12 → `VideoSocket` |
-| Needs the VM running | no | **yes** (~$283/mo if left on) |
 | Status | proven in real meetings | **proven in real meetings** — joins, hears the room, answers aloud with a lip-synced tile |
+
+**Neither path is a self-contained system, and the VM is not a second brain.** The
+media bot holds no Voice Live session, no agent and no search index — it joins the
+call, pulls raw PCM, and opens a WebSocket *back* to the container app
+(`Bot__BridgeWebSocketUrl` → `wss://<container-app>/ws/acs/audio`). Both sockets then
+hand off to the same `VoiceSessionHandler`. So the container is always required; the
+only question either path answers is **who joins the meeting and where the audio comes
+from**. This is also why `acs-join.html` keeps working with the VM deallocated, and why
+the two rows above disagree only about the ACS resource and the VM.
+
+> ⚠️ **The joiner page can look enabled when it isn't.** `ACS_ENABLED` is
+> `ACS_ENDPOINT or ACS_CONNECTION_STRING or MEETING_BOT_ENABLED`, so deploying the
+> `in-call` profile *without* an ACS resource makes `/api/acs/config` report
+> `enabled: true` — the page loads and offers to join, then `/api/acs/token` fails with
+> a 500 because there is no resource to mint a VoIP identity from. If you want the
+> browser joiner, set `ENABLE_ACS=true` as well; the two flags are independent.
 
 > ⚠️ **Never run both in one meeting.** Two assistants would hear each other's answers and
 > feed back. Leave one before starting the other.
