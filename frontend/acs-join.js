@@ -128,6 +128,15 @@ let displaySource = null;       // MediaStreamSource for the far-side audio
 let captureFrames = 0;          // ScriptProcessor callbacks (diagnostics)
 let captureMaxRms = 0;          // peak RMS since last stats report (diagnostics)
 let playCursor = 0;             // scheduling cursor for outbound playback
+let avLead = 0;                 // seconds playback is scheduled ahead of the clock
+let avResyncs = 0;              // times the drift guard had to pull it back
+// The web stage covers the wait for the first token with an on-screen "thinking"
+// indicator. In a meeting there is no screen — but the avatar's video tile is a
+// canvas we draw ourselves, so it can carry the same cue. Voice Live's built-in
+// StaticInterimResponseConfig is not an option here: it requires the model
+// binding, and the in-call session runs the Foundry agent binding for tools.
+let thinkingSince = 0;
+const THINKING_SHOW_AFTER_MS = 600;
 let scheduledSources = [];      // active outbound buffer sources (for barge-in flush)
 let captureMutedUntil = 0;      // half-duplex: drop mic capture until this ctx time
 
@@ -175,6 +184,8 @@ function openMediaSocket() {
                     skipAvatarToLiveEdge();
                 } else if (msg.type === "video_data") {
                     handleAvatarChunk(msg.delta);
+                } else if (msg.type === "thinking") {
+                    thinkingSince = msg.active ? performance.now() : 0;
                 }
             } catch (_) { /* ignore */ }
             return;
@@ -187,6 +198,11 @@ function openMediaSocket() {
 // A small jitter buffer (lead time) absorbs network/WS timing variance so the
 // scheduled chunks play gap-free instead of underrunning into clicks/breakups.
 const PLAYBACK_LEAD = 0.25; // seconds of cushion ahead of the play clock
+// Hard ceiling on how far ahead of the clock playback may be scheduled. Beyond
+// roughly half a second lip sync is visibly broken anyway, so resyncing (a tiny
+// discontinuity, almost always during idle silence) is strictly better than
+// letting the gap grow.
+const MAX_PLAYBACK_LEAD = 0.5;
 const CAPTURE_TAIL = 0.4;   // extra mic-mute time after playback drains (anti-echo)
 // Peak amplitude (0..1) above which a chunk counts as *speech* rather than the
 // avatar's idle silence. See the half-duplex note in playPcmChunk.
@@ -207,7 +223,22 @@ function playPcmChunk(int16) {
     const now = audioCtx.currentTime;
     // If we've fallen behind (or this is the first chunk of a turn), rebuild the
     // cushion rather than scheduling right at "now", which would underrun.
-    if (playCursor < now + 0.02) playCursor = now + PLAYBACK_LEAD;
+    if (playCursor < now + 0.02) {
+        playCursor = now + PLAYBACK_LEAD;
+    } else if (playCursor > now + MAX_PLAYBACK_LEAD) {
+        // A/V drift guard. playCursor only ever reset when it fell BEHIND the
+        // clock, which with the avatar enabled never happens: the muxed AAC track
+        // streams continuously for the whole session (she idles on camera between
+        // turns), so chunks never stop arriving. Every network burst schedules a
+        // clump further into the future and the lead ratchets up permanently —
+        // by minutes into a call the audio ran seconds behind the MediaSource
+        // video, which plays live. That is the "lips move, voice follows" gap.
+        // Without the avatar there are gaps between turns, the cursor falls
+        // behind and self-corrects, which is why this only showed up with video.
+        avResyncs += 1;
+        playCursor = now + PLAYBACK_LEAD;
+    }
+    avLead = playCursor - now;
     node.start(playCursor);
     playCursor += buf.duration;
     // Half-duplex: while Nuru is speaking (and for a short tail afterwards), the
@@ -234,6 +265,7 @@ function flushPlayback() {
     }
     scheduledSources = [];
     playCursor = audioCtx ? audioCtx.currentTime : 0;
+    avLead = 0;
     captureMutedUntil = 0; // playback cancelled — re-open the mic immediately
 }
 
@@ -317,6 +349,8 @@ function ensureCaptureNode() {
                     videoState,
                     videoChunks: avatarChunksIn,
                     avatarPic: avatarHasPicture,
+                    avLead: Number(avLead.toFixed(3)),
+                    avResyncs,
                     micCapture: MIC_CAPTURE,
                 }));
             } catch (_) { /* ignore */ }
@@ -730,6 +764,32 @@ async function startPlacardVideo() {
             if (vt && typeof vt.requestFrame === "function") vt.requestFrame();
         } catch (_) { /* requestFrame not supported — captureStream fps covers it */ }
     }
+    function drawThinking(t) {
+        // Only after a short delay, so quick answers never flash a badge.
+        if (!thinkingSince || performance.now() - thinkingSince < THINKING_SHOW_AFTER_MS) return;
+        const label = "thinking";
+        ctx.font = "500 20px -apple-system, 'Segoe UI', system-ui, sans-serif";
+        const w = ctx.measureText(label).width + 62;
+        const x = (canvas.width - w) / 2;
+        const y = canvas.height - 56;
+        ctx.fillStyle = "rgba(11,16,32,.72)";
+        if (ctx.roundRect) {
+            ctx.beginPath(); ctx.roundRect(x, y, w, 34, 17); ctx.fill();
+        } else {
+            ctx.fillRect(x, y, w, 34);
+        }
+        // Three dots cycling, so it reads as activity rather than a frozen tile.
+        for (let i = 0; i < 3; i++) {
+            const on = Math.floor(t * 3) % 3 === i;
+            ctx.beginPath();
+            ctx.fillStyle = on ? "#22c55e" : "rgba(255,255,255,.35)";
+            ctx.arc(x + 20 + i * 12, y + 17, on ? 4.5 : 3.5, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        ctx.textAlign = "left";
+        ctx.fillStyle = "rgba(255,255,255,.9)";
+        ctx.fillText(label, x + 52, y + 24);
+    }
     function draw() {
         const t = (performance.now() - t0) / 1000;
         ctx.fillStyle = "#0b1020";
@@ -739,6 +799,7 @@ async function startPlacardVideo() {
         // cover the height and centre-crop horizontally rather than letterboxing
         // a small face into a wide black box.
         if (drawAvatarFrame(ctx, canvas)) {
+            drawThinking(t);
             keepFrameAlive();
             return;
         }
@@ -755,16 +816,20 @@ async function startPlacardVideo() {
         ctx.fillStyle = "#ffffff";
         ctx.font = "600 34px -apple-system, 'Segoe UI', system-ui, sans-serif";
         ctx.fillText(name, canvas.width / 2, H * 0.79);
-        // "listening" status with a gentle pulse (and frame keep-alive).
-        const r = 6 + 2 * Math.sin(t * 3);
+        // Status pulse (and frame keep-alive). On the placard the status line
+        // itself carries the cue, so no separate badge is drawn here.
+        const thinking = thinkingSince
+            && performance.now() - thinkingSince >= THINKING_SHOW_AFTER_MS;
+        const status = thinking ? "thinking" : "listening";
+        const r = 6 + 2 * Math.sin(t * (thinking ? 6 : 3));
         ctx.beginPath();
-        ctx.fillStyle = "#22c55e";
+        ctx.fillStyle = thinking ? "#f59e0b" : "#22c55e";
         ctx.arc(canvas.width / 2 - 64, H * 0.883, r, 0, Math.PI * 2);
         ctx.fill();
         ctx.fillStyle = "rgba(255,255,255,.75)";
         ctx.font = "400 18px -apple-system, 'Segoe UI', system-ui, sans-serif";
         ctx.textAlign = "left";
-        ctx.fillText("listening", canvas.width / 2 - 48, H * 0.9);
+        ctx.fillText(status, canvas.width / 2 - 48, H * 0.9);
         keepFrameAlive();
     }
     // setInterval (unlike requestAnimationFrame) keeps firing in a backgrounded tab

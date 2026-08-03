@@ -528,6 +528,7 @@ class BrowserVoiceBridge:
         self._avatar_video = avatar_video
         self._decoder: Optional[AvatarStreamDecoder] = None
         self._video_out = 0
+        self._thinking = False
 
     def _ensure_decoder(self) -> AvatarStreamDecoder:
         if self._decoder is None:
@@ -588,8 +589,15 @@ class BrowserVoiceBridge:
                 )
                 if self.handler is not None:
                     await self.handler.interrupt()
+            else:
+                await self._send_thinking(True)
+
+        elif mtype == "transcript_delta" and msg.get("role") == "assistant":
+            # First token of the answer — the wait is over, drop the cue.
+            await self._send_thinking(False)
 
         elif mtype in ("response_done", "audio_done"):
+            await self._send_thinking(False)
             if not self._suppress_current_response:
                 self._last_answer_done_ms = time.monotonic() * 1000.0
             if ACS_REQUIRE_WAKE_PHRASE:
@@ -597,6 +605,22 @@ class BrowserVoiceBridge:
 
         elif mtype == "stop_playback":
             await self._send_stop_audio()
+
+    async def _send_thinking(self, active: bool) -> None:
+        """Tell the browser to show/hide the "thinking" cue on the video tile.
+
+        The web stage covers the wait for the first token with an on-screen
+        indicator; a meeting has no screen, so the avatar's own tile carries it.
+        Voice Live's built-in interim response is not available here — it needs
+        the model binding, and the in-call session uses the agent binding.
+        """
+        if self._closed or active == self._thinking:
+            return
+        self._thinking = active
+        try:
+            await self._ws.send_text(json.dumps({"type": "thinking", "active": active}))
+        except Exception as e:  # noqa: BLE001 — a cue must never kill the call
+            logger.debug(f"[browser {self.client_id}] thinking cue failed: {e}")
 
     async def _send_video_delta(self, delta_b64: str) -> None:
         """Forward one raw fMP4 chunk to the browser's MediaSource player.
@@ -663,6 +687,8 @@ class BrowserVoiceBridge:
                                     f"videoState={ctrl.get('videoState')} "
                                     f"videoChunks={ctrl.get('videoChunks')} "
                                     f"avatarPic={ctrl.get('avatarPic')} "
+                                    f"avLead={ctrl.get('avLead')} "
+                                    f"avResyncs={ctrl.get('avResyncs')} "
                                     f"micCapture={ctrl.get('micCapture')}"
                                 )
                             elif ct == "remote_wired":
