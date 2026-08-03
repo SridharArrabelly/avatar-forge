@@ -131,6 +131,14 @@ let captureMaxRms = 0;          // peak RMS since last stats report (diagnostics
 let playCursor = 0;             // scheduling cursor for outbound playback
 let avLead = 0;                 // seconds playback is scheduled ahead of the clock
 let avResyncs = 0;              // times the drift guard had to pull it back
+// Tile render health. The joiner tab generates the outgoing video, so anything
+// that throttles its rendering (backgrounding, occlusion by the Teams window,
+// GPU/power state) degrades the tile everyone else sees. Reported so a "it went
+// jerky when I moved windows" report can be checked instead of guessed at.
+let drawCount = 0;              // canvas repaints since the last stats report
+let rvfcCount = 0;              // decoded avatar frames since the last report
+let lastDrawMs = 0;
+let statsLastMs = 0;
 // The web stage covers the wait for the first token with an on-screen "thinking"
 // indicator. In a meeting there is no screen — but the avatar's video tile is a
 // canvas we draw ourselves, so it can carry the same cue. Voice Live's built-in
@@ -198,20 +206,22 @@ function openMediaSocket() {
 // Voice Live PCM16 -> schedule into the outgoing call audio.
 // A small jitter buffer (lead time) absorbs network/WS timing variance so the
 // scheduled chunks play gap-free instead of underrunning into clicks/breakups.
-const PLAYBACK_LEAD = 0.25; // seconds of cushion ahead of the play clock
-// Hard ceiling on how far ahead of the clock playback may be scheduled. Beyond
-// roughly half a second lip sync is visibly broken anyway, so resyncing (a tiny
-// discontinuity, almost always during idle silence) is strictly better than
-// letting the gap grow.
-const MAX_PLAYBACK_LEAD = 0.35;
-// Lead we actively steer back to. Capping the runaway (below) stopped the drift
-// growing without bound, but measurement showed it then settled just under the
-// cap (avLead=0.44 steady), and audio trailing the picture by that much still
-// reads as bad lip sync — the ear notices a lag past roughly 0.15s. The avatar's
-// muxed track is mostly silence between turns, so silent chunks are dropped
-// until the lead is back to target: nothing audible is lost, and unlike a hard
-// resync it can never cut speech mid-word.
-const TARGET_LEAD = 0.15;
+// It doubles as the A/V sync offset:
+// Offset between the audio we schedule and the picture MediaSource is playing.
+// These are NOT equal-length paths: video goes through MediaSource buffering,
+// decode, a canvas repaint and a WebRTC encode, while the PCM goes almost
+// straight out — so the audio has to be held back to meet it. Measured live
+// in-meeting: at 0.44s the voice trailed the lips, at 0.15s it ran ahead of
+// them, so the crossover sits between. Tunable per-join with ?lead=0.30 so it
+// can be dialled in during a call instead of needing a redeploy.
+const _leadParam = Number(new URLSearchParams(location.search).get("lead"));
+const TARGET_LEAD = (Number.isFinite(_leadParam) && _leadParam > 0 && _leadParam <= 1)
+    ? _leadParam
+    : 0.28;
+const PLAYBACK_LEAD = TARGET_LEAD; // seconds of cushion ahead of the play clock
+// Hard ceiling before we resync. Silence-shaving (below) does the routine work;
+// this only catches a burst big enough that waiting for silence would be worse.
+const MAX_PLAYBACK_LEAD = TARGET_LEAD + 0.15;
 const CAPTURE_TAIL = 0.4;   // extra mic-mute time after playback drains (anti-echo)
 // Peak amplitude (0..1) above which a chunk counts as *speech* rather than the
 // avatar's idle silence. See the half-duplex note in playPcmChunk.
@@ -312,6 +322,16 @@ function ensureCaptureNode() {
     // a change to a live-verified media path and wants its own live test round.
     captureNode = audioCtx.createScriptProcessor(4096, 1, 1);
     captureNode.onaudioprocess = (e) => {
+        // Render watchdog. setInterval is clamped to ~1Hz and requestVideoFrameCallback
+        // stops entirely once the tab is hidden or fully occluded — and the joiner tab
+        // normally sits behind the Teams window, so the outgoing tile can silently
+        // collapse to a slideshow. The audio thread is never throttled, so drive a
+        // repaint from here whenever the normal painters have gone quiet. It only
+        // restores ~6fps (this callback is 4096 samples / 170ms), but that is the
+        // difference between a moving tile and a frozen one.
+        if (placardDraw && performance.now() - lastDrawMs > 120) {
+            try { placardDraw(); } catch (_) { /* never break capture */ }
+        }
         if (!mediaWs || mediaWs.readyState !== WebSocket.OPEN) return;
         const samples = e.inputBuffer.getChannelData(0);
         // Track signal level so we can tell (from server logs) whether the
@@ -347,6 +367,13 @@ function ensureCaptureNode() {
         const humanMuted = allHumansMuted();
         const muted = selfTalking || humanMuted;
         if (captureFrames % 25 === 0) {
+            const _nowMs = performance.now();
+            const _dt = statsLastMs ? (_nowMs - statsLastMs) / 1000 : 0;
+            statsLastMs = _nowMs;
+            const drawFps = _dt > 0 ? Math.round(drawCount / _dt) : 0;
+            const vFps = _dt > 0 ? Math.round(rvfcCount / _dt) : 0;
+            drawCount = 0;
+            rvfcCount = 0;
             try {
                 mediaWs.send(JSON.stringify({
                     type: "capture_stats",
@@ -366,6 +393,10 @@ function ensureCaptureNode() {
                     avatarPic: avatarHasPicture,
                     avLead: Number(avLead.toFixed(3)),
                     avResyncs,
+                    lead: TARGET_LEAD,
+                    drawFps,
+                    vFps,
+                    hidden: document.visibilityState !== "visible",
                     micCapture: MIC_CAPTURE,
                 }));
             } catch (_) { /* ignore */ }
@@ -644,6 +675,7 @@ function pumpAvatarFrames(v) {
     if (typeof v.requestVideoFrameCallback !== "function") return;
     const step = () => {
         if (avatarVideoEl !== v) return; // torn down — let the loop die
+        rvfcCount += 1;
         if (placardDraw) {
             try { placardDraw(); } catch (_) { /* never break the frame loop */ }
         }
@@ -828,6 +860,8 @@ async function startPlacardVideo() {
         ctx.fillText(label, x + 52, y + 24);
     }
     function draw() {
+        drawCount += 1;
+        lastDrawMs = performance.now();
         const t = (performance.now() - t0) / 1000;
         ctx.fillStyle = "#0b1020";
         ctx.fillRect(0, 0, canvas.width, canvas.height);

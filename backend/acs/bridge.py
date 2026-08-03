@@ -690,6 +690,10 @@ class BrowserVoiceBridge:
                                     f"avatarPic={ctrl.get('avatarPic')} "
                                     f"avLead={ctrl.get('avLead')} "
                                     f"avResyncs={ctrl.get('avResyncs')} "
+                                    f"lead={ctrl.get('lead')} "
+                                    f"drawFps={ctrl.get('drawFps')} "
+                                    f"vFps={ctrl.get('vFps')} "
+                                    f"hidden={ctrl.get('hidden')} "
                                     f"micCapture={ctrl.get('micCapture')}"
                                 )
                             elif ct == "remote_wired":
