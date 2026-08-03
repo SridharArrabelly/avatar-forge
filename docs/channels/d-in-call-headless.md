@@ -154,6 +154,35 @@ Recorded honestly, before any work:
 - Whether it violates any acceptable-use terms — **check this first**, because a
   negative answer ends the evaluation immediately
 
+## Operational constraint — the joiner tab must stay visible
+
+Measured in a live meeting, from `capture stats`:
+
+| joiner tab | canvas repaints | decoded avatar frames |
+| --- | --- | --- |
+| visible | 55 fps | 25 fps |
+| hidden | ~6 fps | 0 fps |
+
+The browser generates the outgoing video tile, so anything that throttles its
+rendering degrades the tile every participant sees. The moment the tab is hidden
+(switched away, minimised, or fully covered — e.g. Teams maximised on a laptop
+screen), `requestVideoFrameCallback` stops entirely and `setInterval` is clamped.
+At 6 fps the avatar's lips move a handful of times a second, which reads as
+"robotic" and as broken lip sync no matter how the audio offset is tuned.
+
+Mitigations in the code, in order of effectiveness:
+
+1. Repaints are driven by `MediaStreamTrackProcessor` reading decoded frames off
+   the media pipeline. That is data-driven rather than a timer, so it is not
+   subject to timer throttling. Falls back to `requestVideoFrameCallback`.
+2. A watchdog repaint runs from the audio callback (the audio thread is never
+   throttled). This is only ~6 fps — a floor, not a fix.
+3. The joiner page warns when the tab is hidden.
+
+**Operationally: keep the joiner tab visible** — a second monitor, or side by side
+with Teams. This is a genuine disadvantage of D versus C, where a server-side
+media bot has no such dependency, and belongs in the comparison below.
+
 ## <a id="comparison"></a>Comparison criteria — agreed up front
 
 Both options are scored on the same axes. Fill this in after building D; do not

@@ -139,6 +139,7 @@ let drawCount = 0;              // canvas repaints since the last stats report
 let rvfcCount = 0;              // decoded avatar frames since the last report
 let lastDrawMs = 0;
 let statsLastMs = 0;
+let framePumpVia = "none";      // which clock is driving the repaints
 // The web stage covers the wait for the first token with an on-screen "thinking"
 // indicator. In a meeting there is no screen — but the avatar's video tile is a
 // canvas we draw ourselves, so it can carry the same cue. Voice Live's built-in
@@ -396,6 +397,7 @@ function ensureCaptureNode() {
                     lead: TARGET_LEAD,
                     drawFps,
                     vFps,
+                    pumpVia: framePumpVia,
                     hidden: document.visibilityState !== "visible",
                     micCapture: MIC_CAPTURE,
                 }));
@@ -672,7 +674,55 @@ function setupAvatarVideo() {
 }
 
 function pumpAvatarFrames(v) {
+    // Prefer a DATA-driven clock over a timer. Measured live in-meeting: while the
+    // tab is visible the tile repaints at 55fps against a 25fps source; the instant
+    // it goes hidden, requestVideoFrameCallback stops dead (vFps 25 -> 0) and the
+    // repaint collapses to the ~6fps audio-thread watchdog. The joiner tab normally
+    // sits behind the Teams window, so that is the common case, not an edge case —
+    // and lips that move 6 times a second look broken no matter what the audio
+    // offset is. Reading decoded frames off the media pipeline is not a timer, so
+    // it keeps delivering while hidden.
+    let gotFrames = false;
+    try {
+        const cap = typeof v.captureStream === "function" ? v.captureStream() : null;
+        const track = cap && cap.getVideoTracks ? cap.getVideoTracks()[0] : null;
+        if (track && typeof window.MediaStreamTrackProcessor === "function") {
+            const reader = new window.MediaStreamTrackProcessor({ track })
+                .readable.getReader();
+            framePumpVia = "frames";
+            (async () => {
+                for (;;) {
+                    const { value, done } = await reader.read();
+                    if (done) break;
+                    try { value.close(); } catch (_) {}
+                    if (avatarVideoEl !== v) break;
+                    gotFrames = true;
+                    rvfcCount += 1;
+                    if (placardDraw) {
+                        try { placardDraw(); } catch (_) { /* never break the pump */ }
+                    }
+                }
+                try { reader.cancel(); } catch (_) {}
+            })();
+            // Don't trust it blindly: if nothing arrives, fall back rather than
+            // leaving the tile with no clock at all.
+            setTimeout(() => {
+                if (!gotFrames && avatarVideoEl === v) {
+                    reportVideo("pump-fallback", "no frames from MediaStreamTrackProcessor");
+                    startRvfcPump(v);
+                }
+            }, 2500);
+            return;
+        }
+    } catch (e) {
+        reportVideo("pump-fallback", `trackprocessor: ${e && e.message ? e.message : e}`);
+    }
+    startRvfcPump(v);
+}
+
+function startRvfcPump(v) {
     if (typeof v.requestVideoFrameCallback !== "function") return;
+    framePumpVia = framePumpVia === "frames" ? "frames+rvfc" : "rvfc";
     const step = () => {
         if (avatarVideoEl !== v) return; // torn down — let the loop die
         rvfcCount += 1;
@@ -916,6 +966,20 @@ async function startPlacardVideo() {
     draw();
     await call.startVideo(localVideoStream);
     reportVideo("tile-on", `${canvas.width}x${canvas.height}`);
+    watchTabVisibility();
+}
+
+let _visWatch = false;
+function watchTabVisibility() {
+    if (_visWatch) return;
+    _visWatch = true;
+    document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible") return;
+        // Measured: hidden drops the tile from 55fps to ~6fps and stops
+        // requestVideoFrameCallback outright. Say so, because from the meeting side
+        // it just looks like the avatar broke.
+        log("Tab hidden — keep this tab visible, or the avatar's video degrades.");
+    });
 }
 
 function teardownPlacardVideo() {
