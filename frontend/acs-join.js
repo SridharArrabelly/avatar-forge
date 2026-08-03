@@ -1021,11 +1021,28 @@ async function join() {
 
         // Initialise the device manager (some SDK builds require it before join).
         // Mic permission is best-effort only — we send synthesized audio, not mic.
+        //
+        // VIDEO permission matters even though the outgoing tile is a canvas
+        // MediaStream that never touches a camera: the SDK gates startVideo() on
+        // the browser's video permission state regardless of the stream's origin
+        // (its own failure text is "Failed to start video ... ensure to allow
+        // video permissions"). Asking for audio only, as this did, meant
+        // startVideo() could never succeed and the avatar had no tile at all.
         try {
             const deviceManager = await callClient.getDeviceManager();
-            await deviceManager.askDevicePermission({ audio: true, video: false });
+            const perms = await deviceManager.askDevicePermission({ audio: true, video: true });
+            console.log(`[acs-join] device permissions audio=${perms && perms.audio} video=${perms && perms.video}`);
+            if (perms && perms.video === false) {
+                log("Camera permission was not granted — the avatar's video tile will not appear.");
+            }
         } catch (permErr) {
+            // A machine with no camera can reject the video half outright; the
+            // audio leg must still come up, so fall back rather than abort.
             console.warn("[acs-join] device permission (non-fatal):", permErr);
+            try {
+                const dm = await callClient.getDeviceManager();
+                await dm.askDevicePermission({ audio: true, video: false });
+            } catch (_) { /* best effort */ }
         }
 
         callAgent = await callClient.createCallAgent(credential, {
