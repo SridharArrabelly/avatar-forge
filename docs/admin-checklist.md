@@ -96,6 +96,39 @@ without the policy.
 > are asking, because "one irreversible-looking PowerShell command" lands better
 > than "ongoing access".
 
+#### Untried alternative: meeting-scoped RSC instead of tenant-wide consent
+
+Steps 2–3 grant the bot `Calls.*.All` across **the whole tenant**, which is why
+they need an Entra administrator. Microsoft documents a narrower alternative:
+**resource-specific consent (RSC)**, scoped to one chat or meeting.
+
+| Permission | Action | Mode |
+| --- | --- | --- |
+| `Calls.JoinGroupCalls.Chat` | Join calls associated with this chat or meeting | Application |
+| `Calls.AccessMedia.Chat` | Access media streams in calls associated with this chat or meeting | Application |
+
+Both are listed as supported **application-context** RSC permissions for a chat
+or meeting, and Microsoft names the consenting party as *"a meeting organizer or
+presenter"* — not an administrator
+([RSC reference](https://learn.microsoft.com/en-us/microsoftteams/platform/graph-api/rsc/resource-specific-consent),
+updated 2026-05-29). Application-mode RSC needs manifest **≥ v1.6**; ours is
+already 1.17.
+
+**If this works, the organizer grants media access by installing the app in
+their own meeting, and steps 2, 3 and 5 all disappear** — the entire
+administrator dependency for channel C collapses to nothing. That makes it the
+single highest-value experiment available to anyone blocked here.
+
+> **Not implemented and not proven — deliberately.** The shipped manifest carries
+> no `webApplicationInfo` / `authorization.permissions.resourceSpecific` block, so
+> today the bot uses the tenant-wide path, which is the one **verified live on
+> 2026-07-30**. Two honest caveats before anyone bets on RSC:
+> the same Microsoft page warns that *"the features associated with some
+> permissions listed here might not be generally available"*, and the tenant can
+> disable RSC outright (`DisabledForAllApps`), in which case organizer grants stop
+> working. Swapping a working authorisation path for an unverified one is a change
+> to make on its own, against a live meeting — not in passing.
+
 ### D — In-call avatar (headless browser)
 
 Requirements are not yet established — see
@@ -111,8 +144,8 @@ reason to evaluate it.
 
 | Blocker | Best available fallback |
 | --- | --- |
-| No Teams admin (cannot get the access policy) | Stop at **A + B**. Evaluate **D**. Channel C is not available to you |
-| No Entra admin (cannot consent) | Stop at **A + B**. C requires consent; D's requirement is not yet established (see above) |
+| No Teams admin (cannot get the access policy) | **C is still available** — join with a classic `/l/meetup-join/` link, which needs no policy (see step 5). Short `/meet/<id>` links are what you lose |
+| No Entra admin (cannot consent) | Stop at **A + B** today. Before giving up on C, try meeting-scoped **RSC** — an organizer can grant it without an admin (see above); untested. D's requirement is not yet established |
 | Custom app upload disabled | **A** only, via a browser. Ask for org-wide publication of the package |
 | No model quota in region | Deploy the core in a region that has quota; channels are region-independent of Teams |
 
