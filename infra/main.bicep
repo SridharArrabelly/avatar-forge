@@ -103,16 +103,41 @@ param bingSkuName string = 'G2'
 @description('''
 The curated allow-list the web tool is restricted to — a HARD boundary enforced by
 Bing, which is what makes an open-web tool safe for an executive assistant. Replace
-these with your own sources. boostLevel is SuperBoost or Boosted.
+these with your own sources.
+
+boostLevel is SuperBoost or Boosted — those are the API values. The portal renders
+them as "Super Boost" and "Boost", which are display labels and are NOT accepted here.
+
+SuperBoost is for sources that should win a tie: MTN's own investor, results and
+leadership pages, plus the share-price / market-data sources and Reuters Africa.
+Boosted is the industry and regulator press that supplies context.
+
+Order below is kept identical to the live configuration this was taken from, so the
+two can be diffed line by line:
+  az rest --method get --url "https://management.azure.com<configId>?api-version=2025-05-01-preview"
 ''')
 param bingAllowedDomains array = [
   { domain: 'https://www.mtn.com/investors', includeSubPages: true, boostLevel: 'SuperBoost' }
-  { domain: 'https://sashares.co.za/mtn-shares', includeSubPages: true, boostLevel: 'SuperBoost' }
+  { domain: 'https://www.mtn.com/media-centre', includeSubPages: true, boostLevel: 'SuperBoost' }
+  { domain: 'https://www.mtn.com/leadership', includeSubPages: true, boostLevel: 'SuperBoost' }
+  // The trailing '/#' is verbatim from the working configuration. A fragment is
+  // client-side only and should not affect scoping; it is kept rather than tidied
+  // so this list is a faithful copy. Simplify to '/financial-results' if it ever
+  // looks like it is matching nothing.
+  { domain: 'https://www.mtn.com/financial-results/#', includeSubPages: true, boostLevel: 'SuperBoost' }
+  { domain: 'https://www.jse.co.za/market-data', includeSubPages: true, boostLevel: 'SuperBoost' }
+  { domain: 'https://www.ft.com/telecoms', includeSubPages: true, boostLevel: 'Boosted' }
+  { domain: 'https://www.itweb.co.za', includeSubPages: true, boostLevel: 'Boosted' }
+  { domain: 'https://mybroadband.co.za', includeSubPages: true, boostLevel: 'Boosted' }
+  { domain: 'https://www.news24.com/fin24', includeSubPages: true, boostLevel: 'Boosted' }
+  { domain: 'https://africanwirelesscomms.com', includeSubPages: true, boostLevel: 'Boosted' }
+  { domain: 'https://www.itnewsafrica.com', includeSubPages: true, boostLevel: 'Boosted' }
+  { domain: 'https://www.icasa.org.za', includeSubPages: true, boostLevel: 'Boosted' }
   { domain: 'https://www.mtn.com/newsroom', includeSubPages: true, boostLevel: 'Boosted' }
-  { domain: 'https://www.mtn.com', includeSubPages: true, boostLevel: 'Boosted' }
-  { domain: 'https://www.jse.co.za/jse/instruments', includeSubPages: true, boostLevel: 'Boosted' }
-  { domain: 'https://www.itweb.co.za/categories/ojkjlyr7wo7k6amv', includeSubPages: true, boostLevel: 'Boosted' }
-  { domain: 'https://www.telecoms.com', includeSubPages: true, boostLevel: 'Boosted' }
+  { domain: 'https://www.reuters.com/world/africa', includeSubPages: true, boostLevel: 'SuperBoost' }
+  { domain: 'https://techcentral.co.za', includeSubPages: true, boostLevel: 'Boosted' }
+  { domain: 'https://www.moneyweb.co.za/tools-and-data', includeSubPages: true, boostLevel: 'SuperBoost' }
+  { domain: 'https://sashares.co.za/mtn-shares', includeSubPages: true, boostLevel: 'SuperBoost' }
 ]
 
 // App runtime extras

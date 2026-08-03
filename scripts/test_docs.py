@@ -1,6 +1,6 @@
 """Offline documentation checks — no network, no Azure, no deploy.
 
-Three failure modes that have all bitten this repo and that neither a build nor a
+Four failure modes that have all bitten this repo and that neither a build nor a
 test suite would otherwise catch:
 
 1. **Broken relative links.** Docs are heavily cross-linked and files get renamed
@@ -18,6 +18,11 @@ test suite would otherwise catch:
    what actually gates a deploy. Prose cannot be trusted to stay in sync with a
    constant; it has to be pinned. Any doc that names regions is now checked
    against `preflight.py`, the authoritative copy.
+
+4. **Counts quoted for the Bing allow-list drifting from `infra/main.bicep`.** Same
+   one-fact-many-copies shape as (3): the list grew from 7 entries to 17 while three
+   separate sentences went on saying 7. The bicep parameter is what actually deploys,
+   so it is the source of truth and the prose is checked against it.
 
 Run:  uv run python scripts/test_docs.py
 """
@@ -40,6 +45,14 @@ BLOCK = re.compile(r"```mermaid\n(.*?)```", re.S)
 # appear anywhere on a line, including on both sides of an edge.
 DEF = re.compile(r"([A-Za-z][A-Za-z0-9_]*)\s*[\[\(\{]")
 SUBGRAPH = re.compile(r"^\s*subgraph\s+([A-Za-z][A-Za-z0-9_]*)")
+# Prose that states how many entries the Bing allow-list has. Both phrasings the docs
+# actually use are listed, and at least one match is REQUIRED (see check_bing_allowlist)
+# so that rewording the prose fails loudly instead of silently disabling the check.
+ALLOWLIST_COUNT = re.compile(
+    r"\*{0,2}(\d+)\s+(?:path-scoped[^.\n]{0,40}?entries|entries with boost levels)"
+)
+# Counts the `{ domain: ... }` rows inside the `bingAllowedDomains` array in main.bicep.
+BICEP_DOMAIN = re.compile(r"^\s*\{\s*domain:", re.M)
 EDGE = re.compile(
     r"([A-Za-z][A-Za-z0-9_]*)\s*(?:<-->|-\.->|-->|---|<--|-\.-)\s*"
     r'(?:\|[^|]*\|\s*)?(?:"[^"]*"\s*(?:-->|-\.->)?\s*)?([A-Za-z][A-Za-z0-9_]*)'
@@ -184,15 +197,58 @@ def check_regions(files: list[str]) -> int:
     return mentions
 
 
+def check_bing_allowlist(files: list[str]) -> int:
+    """Any count the docs quote for the Bing allow-list must match `infra/main.bicep`.
+
+    The bicep parameter is the thing that actually deploys, so it is the source of
+    truth. This guard exists because the list grew from 7 entries to 17 while three
+    separate sentences went on saying 7 — the same one-fact-many-copies drift that
+    put a region in the docs the code never supported.
+    """
+    bicep = (ROOT / "infra" / "main.bicep").read_text(encoding="utf-8")
+    array = re.search(
+        r"param bingAllowedDomains array = \[(.*?)^\]", bicep, re.S | re.M
+    )
+    if not array:
+        failures.append(
+            "could not find `param bingAllowedDomains array = [...]` in "
+            "infra/main.bicep — update the pattern in scripts/test_docs.py"
+        )
+        return 0
+
+    actual = len(BICEP_DOMAIN.findall(array.group(1)))
+    mentions = 0
+    for rel in files:
+        text = (ROOT / rel).read_text(encoding="utf-8")
+        for match in ALLOWLIST_COUNT.finditer(text):
+            mentions += 1
+            claimed = int(match.group(1))
+            if claimed != actual:
+                failures.append(
+                    f"stale allow-list count in {rel}: says {claimed} entries, but "
+                    f"`bingAllowedDomains` in infra/main.bicep has {actual}"
+                )
+
+    if not mentions:
+        failures.append(
+            "no doc states the Bing allow-list size any more. If the wording changed, "
+            "update ALLOWLIST_COUNT in scripts/test_docs.py — otherwise this check "
+            "silently stops guarding anything."
+        )
+    return mentions
+
+
 def main() -> int:
     files = _tracked_markdown()
     links = check_links(files)
     blocks = check_mermaid(files)
     regions = check_regions(files)
+    allowlist = check_bing_allowlist(files)
 
     print(
-        f"checked {links} relative links, {blocks} mermaid blocks and "
-        f"{regions} region mentions across {len(files)} files"
+        f"checked {links} relative links, {blocks} mermaid blocks, "
+        f"{regions} region mentions and {allowlist} allow-list counts "
+        f"across {len(files)} files"
     )
     if failures:
         print()
