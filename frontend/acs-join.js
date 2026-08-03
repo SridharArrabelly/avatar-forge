@@ -543,6 +543,7 @@ let avatarSourceBuffer = null;
 let avatarChunkQueue = [];
 let avatarHasPicture = false;     // first decoded frame seen -> safe to paint
 let avatarChunksIn = 0;           // fMP4 deltas received from the server
+let appendFailed = false;         // report the first appendBuffer failure only
 let avatarLastDrawMs = 0;         // last time the video actually advanced
 
 function setupAvatarVideo() {
@@ -559,6 +560,13 @@ function setupAvatarVideo() {
     v.muted = true;
     v.volume = 0;
     v.addEventListener("canplay", () => v.play().catch(() => {}));
+    // The <video> reports decode failures here rather than by throwing, so a
+    // stream MediaSource accepts but cannot actually decode would otherwise be
+    // completely silent.
+    v.addEventListener("error", () => {
+        const err = v.error;
+        reportVideo("failed", `video element: code=${err ? err.code : "?"} ${err && err.message ? err.message : ""}`);
+    });
     v.addEventListener("loadeddata", () => { avatarHasPicture = true; reportVideo("face-live"); });
 
     avatarMediaSource = new MediaSource();
@@ -604,7 +612,14 @@ function drainAvatarQueue() {
     } catch (e) {
         // QuotaExceeded: drop what we've already played and retry once. The tile
         // is live video — old buffered media has no value.
-        console.warn("[acs-join] appendBuffer failed", e);
+        // A codec mismatch also surfaces here (we declare avc1.42E01E/Baseline;
+        // isTypeSupported only checks the string, so a stream in a different
+        // profile passes setup and fails on the first real append), so report the
+        // first one rather than letting it repeat silently into a blank tile.
+        if (!appendFailed) {
+            appendFailed = true;
+            reportVideo("failed", `appendBuffer: ${e && e.name ? e.name : ""} ${e && e.message ? e.message : e}`);
+        }
         try {
             const v = avatarVideoEl;
             if (sb.buffered.length && v) {
@@ -637,6 +652,7 @@ function teardownAvatarVideo() {
     avatarChunkQueue = [];
     avatarHasPicture = false;
     avatarChunksIn = 0;
+    appendFailed = false;
     videoState = "off";
     avatarLastDrawMs = 0;
 }
