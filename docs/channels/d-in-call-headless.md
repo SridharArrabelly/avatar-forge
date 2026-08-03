@@ -112,7 +112,7 @@ Tunable per session, so a live call can be adjusted without a redeploy.
 | --- | --- | --- |
 | `?mic=0` | mic on | Drops the local microphone tap. Isolates the srcObject hook — the only way to prove the leg hears *other* participants rather than the operator. |
 | `?remote=0` | hook on | Disables the srcObject hook. Kill switch back to mic-only behaviour. |
-| `?duplex=full` | half | Keeps the microphone live while she speaks, so a human can cut her off mid-answer. |
+| `?duplex=full` | half | Keeps the microphone live while she speaks, so a human can cut her off mid-answer. Also a checkbox on the join page, toggleable mid-call. |
 | `?lead=<seconds>` | `0.28` | Audio-ahead-of-video offset for lip-sync. |
 
 ### Why barge-in is half-duplex by default
@@ -129,8 +129,23 @@ the interruption never reaches Voice Live. This is the honest explanation for
 during them.
 
 **On headphones there is no loop**, so the gate buys nothing and only costs
-responsiveness. `?duplex=full` turns it off and gives true barge-in. Use it for
-headset demos; leave it off on a speakerphone or laptop speakers.
+responsiveness. `?duplex=full` turns it off and gives true barge-in — as does the
+**"Let me interrupt her mid-answer"** checkbox on the join page, which applies
+immediately without rejoining. Use it for headset demos; leave it off on a
+speakerphone or laptop speakers.
+
+## Silence is ambiguous — the wake-phrase hint
+
+The wake phrase is what stops her talking over a room, but it creates a UX trap:
+when an utterance arrives without it she stays *completely* silent, which from the
+room's side is indistinguishable from a dead microphone. Live testing hit this
+immediately — *"Hey, what was the schedule in the last meeting?"* was heard,
+transcribed and correctly suppressed, and read as her being broken.
+
+So a suppressed utterance now paints a short **`say "Hey Simone" to ask me`** nudge on
+her tile for 4s. Silent by design: interjecting audibly is exactly what the wake
+phrase exists to prevent. The label is derived from `ACS_WAKE_PHRASES[0]`, so it can
+never drift from the gate that actually decides.
 
 ## <a id="adia"></a>Prior art — the ADIA implementation
 

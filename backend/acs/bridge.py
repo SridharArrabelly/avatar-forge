@@ -579,6 +579,11 @@ class BrowserVoiceBridge:
 
         if mtype == "transcript_done" and msg.get("role") == "user":
             self._on_user_utterance((msg.get("transcript") or "").strip())
+            # She heard it, understood it, and chose not to answer. To a human
+            # that is indistinguishable from a broken microphone, so say so on
+            # the tile — silently, since the whole point is not to interrupt.
+            if ACS_REQUIRE_WAKE_PHRASE and not self._answer_armed:
+                await self._send_hint()
 
         elif mtype == "response_created":
             self._suppress_current_response = not self._answer_armed
@@ -622,6 +627,24 @@ class BrowserVoiceBridge:
             await self._ws.send_text(json.dumps({"type": "thinking", "active": active}))
         except Exception as e:  # noqa: BLE001 — a cue must never kill the call
             logger.debug(f"[browser {self.client_id}] thinking cue failed: {e}")
+
+    async def _send_hint(self) -> None:
+        """Nudge the room with the wake phrase after an unaddressed utterance.
+
+        Derived from ACS_WAKE_PHRASES[0] rather than hard-coded, so the hint can
+        never drift from the gate that actually decides.
+        """
+        if self._closed:
+            return
+        phrase = (ACS_WAKE_PHRASES[0] if ACS_WAKE_PHRASES else "").strip()
+        if not phrase:
+            return
+        text = f'say "{phrase.title()}" to ask me'
+        logger.info(f"[browser {self.client_id}] wake-phrase hint -> {text!r}")
+        try:
+            await self._ws.send_text(json.dumps({"type": "hint", "text": text}))
+        except Exception as e:  # noqa: BLE001 — a hint must never kill the call
+            logger.debug(f"[browser {self.client_id}] hint failed: {e}")
 
     async def _send_video_delta(self, delta_b64: str) -> None:
         """Forward one raw fMP4 chunk to the browser's MediaSource player.

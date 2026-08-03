@@ -34,7 +34,7 @@ const MIC_CAPTURE = new URLSearchParams(location.search).get("mic") !== "0";
 // voice (played by the Teams client, which browser AEC cannot cancel — it is a
 // different app's output) looping back in as a new question. On headphones there
 // is no such loop, and barge-in matters more, so ?duplex=full turns the gate off.
-const FULL_DUPLEX = new URLSearchParams(location.search).get("duplex") === "full";
+let FULL_DUPLEX = new URLSearchParams(location.search).get("duplex") === "full";
 // ?remote=0 disables the srcObject interception entirely, restoring the exact
 // pre-2026-08-03 behaviour (mic-only capture). This leg is live-verified, so
 // there is a way back that does not need a redeploy.
@@ -172,6 +172,13 @@ function noteBuildId(id) {
 // binding, and the in-call session runs the Foundry agent binding for tools.
 let thinkingSince = 0;
 const THINKING_SHOW_AFTER_MS = 250;
+// A suppressed utterance looks exactly like a dead microphone from the room's
+// side: she heard the question, understood it, and deliberately said nothing.
+// The tile is ours to draw, so it carries the reason. Silent by design — the
+// whole point of the wake phrase is not to interject.
+let hintText = "";
+let hintUntil = 0;
+const HINT_MS = 4000;
 let scheduledSources = [];      // active outbound buffer sources (for barge-in flush)
 let captureMutedUntil = 0;      // half-duplex: drop mic capture until this ctx time
 
@@ -221,6 +228,10 @@ function openMediaSocket() {
                     handleAvatarChunk(msg.delta);
                 } else if (msg.type === "thinking") {
                     thinkingSince = msg.active ? performance.now() : 0;
+                    if (msg.active) hintUntil = 0; // answering beats nudging
+                } else if (msg.type === "hint") {
+                    hintText = msg.text || "";
+                    hintUntil = hintText ? performance.now() + HINT_MS : 0;
                 }
             } catch (_) { /* ignore */ }
             return;
@@ -947,6 +958,28 @@ async function startPlacardVideo() {
         ctx.fillStyle = "rgba(255,255,255,.92)";
         ctx.fillText(label, x + 52, y + 24);
     }
+    function drawHint() {
+        if (!hintUntil || performance.now() > hintUntil) return;
+        // Never stack on the thinking badge — they share the safe band, and if
+        // she is answering the nudge is already moot.
+        if (thinkingSince) return;
+        ctx.font = "500 19px -apple-system, 'Segoe UI', system-ui, sans-serif";
+        const w = ctx.measureText(hintText).width + 34;
+        const x = (canvas.width - w) / 2;
+        const y = Math.round(canvas.height * 0.72);
+        // Fade the last 600ms so it retreats rather than blinking out.
+        const left = hintUntil - performance.now();
+        const a = Math.min(1, left / 600);
+        ctx.textAlign = "left";
+        ctx.fillStyle = `rgba(11,16,32,${0.78 * a})`;
+        if (ctx.roundRect) {
+            ctx.beginPath(); ctx.roundRect(x, y, w, 34, 17); ctx.fill();
+        } else {
+            ctx.fillRect(x, y, w, 34);
+        }
+        ctx.fillStyle = `rgba(255,255,255,${0.92 * a})`;
+        ctx.fillText(hintText, x + 17, y + 23);
+    }
     function draw() {
         drawCount += 1;
         lastDrawMs = performance.now();
@@ -959,6 +992,7 @@ async function startPlacardVideo() {
         // a small face into a wide black box.
         if (drawAvatarFrame(ctx, canvas)) {
             drawThinking(t);
+            drawHint();
             keepFrameAlive();
             return;
         }
@@ -989,6 +1023,7 @@ async function startPlacardVideo() {
         ctx.font = "400 18px -apple-system, 'Segoe UI', system-ui, sans-serif";
         ctx.textAlign = "left";
         ctx.fillText(status, canvas.width / 2 - 48, H * 0.84);
+        drawHint();
         keepFrameAlive();
     }
     // setInterval (unlike requestAnimationFrame) keeps firing in a backgrounded tab
@@ -1439,6 +1474,20 @@ leaveBtn.addEventListener("click", leave);
 muteNuruBtn.addEventListener("click", muteNuru);
 unmuteNuruBtn.addEventListener("click", unmuteNuru);
 farSideBtn.addEventListener("click", startFarSideCapture);
+
+// Barge-in is a live toggle, not a reload: whether echo is possible depends on
+// whether the operator is wearing headphones, which can change mid-meeting.
+const duplexChk = $("duplexChk");
+if (duplexChk) {
+    duplexChk.checked = FULL_DUPLEX;
+    duplexChk.addEventListener("change", () => {
+        FULL_DUPLEX = duplexChk.checked;
+        if (FULL_DUPLEX) captureMutedUntil = 0; // reopen immediately
+        log(FULL_DUPLEX
+            ? `Interruption on — talk over ${avatarDisplayName} to cut her off. Use headphones, or she will hear herself.`
+            : `Interruption off — ${avatarDisplayName}'s mic tap closes while she speaks.`);
+    });
+}
 
 // The Companion control panel (companion.html, opened in a separate window so the
 // ACS Calling leg runs OUTSIDE the Teams meeting webview) hands the meeting link

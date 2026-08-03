@@ -62,6 +62,20 @@
         far side, click <em>Capture far-side audio</em> and share the Teams
         window/tab <strong>with “Share audio” ticked</strong>.
     </p>
+    <div class="row">
+        <label style="display:flex;align-items:center;gap:.5rem;font-size:.9rem;opacity:.85">
+            <input id="duplexChk" type="checkbox" />
+            Let me interrupt {{AVATAR_NAME}} mid-answer (headphones only)
+        </label>
+    </div>
+    <p class="notice">
+        While {{AVATAR_NAME}} speaks, her microphone tap is normally closed. Her voice
+        is played by <em>Teams</em>, a different application, so the browser cannot echo-cancel
+        it — left open, she hears herself and answers her own words. That gate is also why
+        talking over her does nothing. On <strong>headphones</strong> there is no echo path,
+        so tick the box above to interrupt her freely. Leave it clear on speakers.
+    </p>
+
     <div id="status">Idle.</div>
 
     <script src="/brand.js"></script>
