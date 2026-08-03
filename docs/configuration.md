@@ -179,7 +179,7 @@ and `bing_grounding` tools go with it — the tool surface becomes in-process Py
 |---|---|---|
 | `WEBIQ_API_KEY` | — | Enables the `search_web` tool in model mode. Passed to the container app as a **secret**, never as a plain environment variable. Unset leaves the web tool off entirely and the assistant answers from the minutes corpus alone. |
 | `WEBIQ_BASE_URL` | `https://api.microsoft.ai/v3` | Web IQ endpoint. |
-| `WEBIQ_ALLOWED_DOMAINS` | — | Comma-separated hosts that scope the search, e.g. `jse.co.za,mtn.com`. Web IQ has no server-side allow-list — its request model exposes no `site` field — so [`build_query()`](../backend/voice/tools.py) compiles these into `site:a OR site:b` operators on the query, which is the mechanism the Web IQ API documents. Same intent as `bingAllowedDomains`: an open-web tool answering to an executive should not be able to cite anywhere at all. Empty searches the open web. **Write bare hosts, not URLs and not `www.`** — see the two notes below. |
+| `WEBIQ_ALLOWED_DOMAINS` | *derived from `bingAllowedDomains`* | Comma-separated hosts that scope the search, e.g. `jse.co.za,mtn.com`. Web IQ has no server-side allow-list — its request model exposes no `site` field — so [`build_query()`](../backend/voice/tools.py) compiles these into `site:a OR site:b` operators on the query, which is the mechanism the Web IQ API documents. Same intent as `bingAllowedDomains`, and by default the **same sources**: leave this empty and `main.bicep` derives the bare hosts from `bingAllowedDomains`, so the two bindings cannot drift apart. Set it only to make model mode diverge deliberately. **Write bare hosts, not URLs and not `www.`** — see the two notes below. |
 | `WEBIQ_LANGUAGE` | `en` | Result language hint. |
 | `WEBIQ_REGION` | `ZA` | Result region hint. |
 | `WEBIQ_USE_ENTRA` | — | Set to authenticate to Web IQ with Entra instead of an API key. |
@@ -196,11 +196,16 @@ and `bing_grounding` tools go with it — the tool surface becomes in-process Py
 >   a strict subdomain of an allowed domain when the extra labels are all
 >   non-production markers (`dev`, `staging`, `uat`, …).
 >
-> This is also where model mode is structurally weaker than agent mode: entries in
-> `bingAllowedDomains` are **path-scoped and boosted** (`/investors`, `/mtn-shares`),
-> and `site:` cannot express either. Model mode reads whole hosts where agent mode
-> reads curated sections, so web-grounded answers are not strictly comparable between
-> bindings.
+> This is also where model mode is structurally weaker than agent mode — though not
+> in *which* sources it may cite. Both bindings work from the same list: `main.bicep`
+> derives this allow-list from `bingAllowedDomains` by stripping each entry to its
+> bare host and de-duplicating (17 URLs → 13 hosts), so a source added for one
+> binding is available to both. What does not survive the trip is **precision**:
+> entries in `bingAllowedDomains` are **path-scoped and boosted** (`/investors`,
+> `/mtn-shares`), and `site:` can express neither. Model mode reads whole hosts where
+> agent mode reads curated, rank-adjusted sections — so `reuters.com` stands in for
+> `reuters.com/world/africa`. Web-grounded answers are therefore not strictly
+> comparable between bindings even though the source set matches.
 
 Model mode also owns its own answer-shaping knobs, because there is no agent to
 carry them:

@@ -53,6 +53,12 @@ ALLOWLIST_COUNT = re.compile(
 )
 # Counts the `{ domain: ... }` rows inside the `bingAllowedDomains` array in main.bicep.
 BICEP_DOMAIN = re.compile(r"^\s*\{\s*domain:", re.M)
+# Prose stating how many BARE HOSTS the Web IQ allow-list derives to. Same required-match
+# rule as ALLOWLIST_COUNT: this number is a function of bingAllowedDomains, so it drifts
+# the moment an entry is added on a host that is not already covered.
+DERIVED_HOST_COUNT = re.compile(r"\*{0,2}(\d+)\s+(?:bare\s+)?hosts")
+# Pulls the URL out of each `domain: '...'` row, for the host derivation.
+BICEP_DOMAIN_URL = re.compile(r"domain:\s*'([^']+)'")
 EDGE = re.compile(
     r"([A-Za-z][A-Za-z0-9_]*)\s*(?:<-->|-\.->|-->|---|<--|-\.-)\s*"
     r'(?:\|[^|]*\|\s*)?(?:"[^"]*"\s*(?:-->|-\.->)?\s*)?([A-Za-z][A-Za-z0-9_]*)'
@@ -200,6 +206,9 @@ def check_regions(files: list[str]) -> int:
 def check_bing_allowlist(files: list[str]) -> int:
     """Any count the docs quote for the Bing allow-list must match `infra/main.bicep`.
 
+    Guards two numbers, both functions of the same array: the entry count agent mode
+    deploys, and the bare-host count model mode's Web IQ list derives to.
+
     The bicep parameter is the thing that actually deploys, so it is the source of
     truth. This guard exists because the list grew from 7 entries to 17 while three
     separate sentences went on saying 7 — the same one-fact-many-copies drift that
@@ -235,7 +244,39 @@ def check_bing_allowlist(files: list[str]) -> int:
             "update ALLOWLIST_COUNT in scripts/test_docs.py — otherwise this check "
             "silently stops guarding anything."
         )
-    return mentions
+
+    # Model mode's Web IQ list is derived from the same array (main.bicep strips each
+    # entry to its bare host and de-duplicates), so the docs quote a second number that
+    # can drift independently. Mirror the ARM expression exactly.
+    hosts: list[str] = []
+    for url in BICEP_DOMAIN_URL.findall(array.group(1)):
+        host = url.replace("https://", "").replace("http://", "").split("/")[0]
+        if host.startswith("www."):
+            host = host[4:]
+        if host not in hosts:
+            hosts.append(host)
+
+    host_mentions = 0
+    for rel in files:
+        text = (ROOT / rel).read_text(encoding="utf-8")
+        for match in DERIVED_HOST_COUNT.finditer(text):
+            host_mentions += 1
+            claimed = int(match.group(1))
+            if claimed != len(hosts):
+                failures.append(
+                    f"stale derived-host count in {rel}: says {claimed} hosts, but "
+                    f"`bingAllowedDomains` in infra/main.bicep derives to "
+                    f"{len(hosts)} ({', '.join(hosts)})"
+                )
+
+    if not host_mentions:
+        failures.append(
+            "no doc states the derived Web IQ host count any more. If the wording "
+            "changed, update DERIVED_HOST_COUNT in scripts/test_docs.py — otherwise "
+            "this check silently stops guarding anything."
+        )
+
+    return mentions + host_mentions
 
 
 def main() -> int:

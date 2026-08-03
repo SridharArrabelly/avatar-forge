@@ -89,7 +89,7 @@ param developerMode string = 'false'
 @description('Web IQ base URL. This is the web tool in model mode, where the agent (and therefore its managed Bing grounding tool) is out of the picture. Leave empty to use the code default — the tool is switched on by webIqApiKey, not by this.')
 param webIqBaseUrl string = ''
 
-@description('Comma-separated hosts that scope Web IQ searches, e.g. "mtn.com,sashares.co.za". Web IQ has no server-side allow-list, so these are compiled into site: operators on the query. Same intent as bingAllowedDomains — an open-web tool answering to an executive should not be able to cite anywhere at all. Empty searches the open web.')
+@description('Comma-separated hosts that scope Web IQ searches, e.g. "mtn.com,sashares.co.za". Web IQ has no server-side allow-list, so these are compiled into site: operators on the query. Same intent as bingAllowedDomains — an open-web tool answering to an executive should not be able to cite anywhere at all. LEAVE EMPTY to derive the hosts from bingAllowedDomains, which is what keeps the two bindings searching the same sources; set it only to make model mode diverge deliberately.')
 param webIqAllowedDomains string = ''
 
 @description('Web IQ API key. Stored as a container-app secret, never as a plain env var. Set it with: azd env set WEBIQ_API_KEY <key>')
@@ -139,6 +139,34 @@ param bingAllowedDomains array = [
   { domain: 'https://www.moneyweb.co.za/tools-and-data', includeSubPages: true, boostLevel: 'SuperBoost' }
   { domain: 'https://sashares.co.za/mtn-shares', includeSubPages: true, boostLevel: 'SuperBoost' }
 ]
+
+// Same sources, two renderings — because the two bindings enforce them differently.
+//
+// Agent mode gets the list above verbatim: Bing Custom Search is a real server-side
+// allow-list, so it can honour a path (/investors) and a boost level. Model mode has
+// no agent and no Bing tool; backend/voice/tools.py compiles its allow-list into
+// `site:` operators, and `site:` matches a domain and its subdomains but NEVER a path
+// or a rank. So Web IQ can only be given the bare hosts those URLs sit on.
+//
+// Derived rather than hand-maintained. A second hand-typed list drifts, and this
+// particular drift is silent and unsafe in one direction: forget to widen the Web IQ
+// list and model mode simply cannot see a source; forget to set it at all and an
+// enabled Web IQ searches the entire open web while agent mode stays restricted.
+// Deriving makes bingAllowedDomains the single source of truth for "where may this
+// assistant look", and webIqAllowedDomains an explicit opt-out rather than a duty.
+//
+// Verified against a real ARM evaluation (bicep does not fold lambdas at compile
+// time): 17 URLs -> 13 hosts, www. stripped, first-occurrence order preserved.
+var bingHostsRaw = map(
+  bingAllowedDomains,
+  d => split(replace(replace(d.domain, 'https://', ''), 'http://', ''), '/')[0]
+)
+// Bare host, not www. — `site:www.jse.co.za` would exclude senspdf.jse.co.za, where
+// the JSE's SENS filings live. See the note in docs/configuration.md.
+var bingHosts = map(bingHostsRaw, h => startsWith(h, 'www.') ? substring(h, 4) : h)
+var webIqEffectiveDomains = empty(webIqAllowedDomains)
+  ? join(union(bingHosts, bingHosts), ',')
+  : webIqAllowedDomains
 
 // App runtime extras
 @description('Deployment name the Foundry agent binds to. Empty derives it: on a greenfield deploy the agent must bind to the deployment this template just created, so it follows modelDeploymentName. Set explicitly for BYO Foundry, where the deployment already exists and this template did not name it.')
@@ -265,7 +293,7 @@ module resources 'resources.bicep' = {
     voiceLiveModel: voiceLiveModel
     developerMode: developerMode
     webIqBaseUrl: webIqBaseUrl
-    webIqAllowedDomains: webIqAllowedDomains
+    webIqAllowedDomains: webIqEffectiveDomains
     webIqApiKey: webIqApiKey
     deployBingGrounding: toLower(deployBingGrounding) == 'true'
     bingSkuName: bingSkuName

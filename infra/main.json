@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.43.8.12551",
-      "templateHash": "10753839492271465539"
+      "templateHash": "6517855163691193764"
     }
   },
   "parameters": {
@@ -161,7 +161,7 @@
       "type": "string",
       "defaultValue": "",
       "metadata": {
-        "description": "Comma-separated hosts that scope Web IQ searches, e.g. \"mtn.com,sashares.co.za\". Web IQ has no server-side allow-list, so these are compiled into site: operators on the query. Same intent as bingAllowedDomains — an open-web tool answering to an executive should not be able to cite anywhere at all. Empty searches the open web."
+        "description": "Comma-separated hosts that scope Web IQ searches, e.g. \"mtn.com,sashares.co.za\". Web IQ has no server-side allow-list, so these are compiled into site: operators on the query. Same intent as bingAllowedDomains — an open-web tool answering to an executive should not be able to cite anywhere at all. LEAVE EMPTY to derive the hosts from bingAllowedDomains, which is what keeps the two bindings searching the same sources; set it only to make model mode diverge deliberately."
       }
     },
     "webIqApiKey": {
@@ -457,6 +457,9 @@
     }
   },
   "variables": {
+    "bingHostsRaw": "[map(parameters('bingAllowedDomains'), lambda('d', split(replace(replace(lambdaVariables('d').domain, 'https://', ''), 'http://', ''), '/')[0]))]",
+    "bingHosts": "[map(variables('bingHostsRaw'), lambda('h', if(startsWith(lambdaVariables('h'), 'www.'), substring(lambdaVariables('h'), 4), lambdaVariables('h'))))]",
+    "webIqEffectiveDomains": "[if(empty(parameters('webIqAllowedDomains')), join(union(variables('bingHosts'), variables('bingHosts')), ','), parameters('webIqAllowedDomains'))]",
     "resourceToken": "[toLower(uniqueString(subscription().id, parameters('environmentName'), parameters('location')))]",
     "tags": {
       "azd-env-name": "[parameters('environmentName')]",
@@ -570,7 +573,7 @@
             "value": "[parameters('webIqBaseUrl')]"
           },
           "webIqAllowedDomains": {
-            "value": "[parameters('webIqAllowedDomains')]"
+            "value": "[variables('webIqEffectiveDomains')]"
           },
           "webIqApiKey": {
             "value": "[parameters('webIqApiKey')]"
@@ -659,7 +662,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.43.8.12551",
-              "templateHash": "10797037708533948915"
+              "templateHash": "1001520684086372636"
             }
           },
           "parameters": {
@@ -2482,7 +2485,7 @@
                     "_generator": {
                       "name": "bicep",
                       "version": "0.43.8.12551",
-                      "templateHash": "959739143410093191"
+                      "templateHash": "3413366013603604989"
                     }
                   },
                   "parameters": {
@@ -2561,7 +2564,7 @@
                       "type": "string",
                       "defaultValue": "",
                       "metadata": {
-                        "description": "Comma-separated host allow-list applied to Web IQ results. Same security boundary as bingAllowedDomains: it is what makes an open-web tool safe to hand an executive assistant."
+                        "description": "Comma-separated host allow-list applied to Web IQ results. Same security boundary as bingAllowedDomains — and by default the same sources: main.bicep derives these bare hosts from bingAllowedDomains, because site: cannot express the paths and boost levels Bing Custom Search enforces."
                       }
                     },
                     "webIqApiKey": {
