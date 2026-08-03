@@ -287,14 +287,14 @@ def main() -> int:
     bp = load_builder()
     name_rules = [
         ("env name -> suffixed", {"AZURE_ENV_NAME": "avatar-agent-mode"},
-         "avatar-forge-teams-avatar-agent-mode.zip"),
-        ("no env name -> bare stem", {}, "avatar-forge-teams.zip"),
+         "teams-avatar-agent-mode.zip"),
+        ("no env name -> bare stem", {}, "teams.zip"),
         ("blank env name -> bare stem", {"AZURE_ENV_NAME": "   "},
-         "avatar-forge-teams.zip"),
+         "teams.zip"),
         ("path separators cannot escape the build dir",
-         {"AZURE_ENV_NAME": "../../etc/passwd"}, "avatar-forge-teams-etc-passwd.zip"),
+         {"AZURE_ENV_NAME": "../../etc/passwd"}, "teams-etc-passwd.zip"),
         ("spaces and unsafe chars collapse", {"AZURE_ENV_NAME": "my env (2)!"},
-         "avatar-forge-teams-my-env-2.zip"),
+         "teams-my-env-2.zip"),
     ]
     for label, values, want in name_rules:
         check(label, bp._package_filename(values), want)
@@ -302,12 +302,12 @@ def main() -> int:
     DEPLOY = {"SERVICE_APP_URI": "https://x.example.com"}
     check("a real build uses the derived name",
           built_filename([], azd={**DEPLOY, "AZURE_ENV_NAME": "avatar-model-mode"}),
-          "avatar-forge-teams-avatar-model-mode.zip")
+          "teams-avatar-model-mode.zip")
     check("two environments cannot overwrite each other",
           built_filename([], azd={**DEPLOY, "AZURE_ENV_NAME": "one"})
           != built_filename([], azd={**DEPLOY, "AZURE_ENV_NAME": "two"}), True)
     check("no azd env -> documented fallback name",
-          built_filename(HOST), "avatar-forge-teams.zip")
+          built_filename(HOST), "teams.zip")
 
     print()
     if _failures:

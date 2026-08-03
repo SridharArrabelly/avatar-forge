@@ -47,8 +47,8 @@ Inputs (precedence: CLI flag > process env / .env > selected azd environment):
                                      derived from it. See backend/avatar_identity.py for the rule.
 
 Output:
-    teams/build/avatar-forge-teams-<azd-env-name>.zip
-    (falls back to teams/build/avatar-forge-teams.zip when no azd environment is
+    teams/build/teams-<azd-env-name>.zip
+    (falls back to teams/build/teams.zip when no azd environment is
     selected, e.g. an explicit --hostname build)
 """
 from __future__ import annotations
@@ -78,7 +78,7 @@ from backend.avatar_identity import resolve_avatar_display_name  # noqa: E402
 # app, Teams package, and meeting bot all derive from a single source of truth.
 ICONS_DIR = os.path.join(os.path.dirname(HERE), "assets", "brand")
 BUILD_DIR = os.path.join(HERE, "build")
-PACKAGE_STEM = "avatar-forge-teams"
+PACKAGE_STEM = "teams"
 
 # A fixed namespace so uuid5(hostname) is stable across machines/runs.
 _APP_ID_NAMESPACE = uuid.UUID("6f6c1d2e-7a4b-5c8d-9e0f-1a2b3c4d5e6f")
