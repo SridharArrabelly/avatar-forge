@@ -41,7 +41,7 @@ Start with the tab walkthrough, then the in-call section if you're enabling chan
 | `../assets/brand/color.png` | 192×192 color app icon (canonical brand source, shared with web + meeting bot). |
 | `../assets/brand/outline.png` | 32×32 transparent outline icon (Teams recolors it). |
 | `build_package.py` | Stdlib-only script that renders the manifest and zips a sideloadable package. Embeds the icons from `assets/brand/` into the zip. |
-| `build/avatar-forge-teams.zip` | Build output (git-ignored). |
+| `build/avatar-forge-teams-<env>.zip` | Build output, one per azd environment (git-ignored). |
 
 ## Build the package
 
@@ -72,7 +72,7 @@ builder derive it instead.
 
 > **Rebuild after a redeploy:** the hostname only changes if the Container App is
 > recreated (a fresh `azd up` into a new environment). A normal `azd deploy` /
-> image push keeps the same host, so the existing `avatar-forge-teams.zip` stays
+> image push keeps the same host, so the existing zip stays
 > valid and you do **not** need to rebuild or re-sideload. Rebuild only when the
 > host changes — then re-run the command above and re-upload the new zip.
 
@@ -82,8 +82,20 @@ Optional flags (env var equivalents in parentheses):
 - `--app-id` (`TEAMS_APP_ID`) — stable app GUID. If omitted, a deterministic GUID is
   derived from the hostname so rebuilds produce the same id.
 
-Output: `teams/build/avatar-forge-teams.zip` containing `manifest.json`,
-`color.png`, and `outline.png` at the archive root.
+Output: `teams/build/avatar-forge-teams-<env>.zip` containing `manifest.json`,
+`color.png`, and `outline.png` at the archive root, where `<env>` is the selected
+azd environment (`AZURE_ENV_NAME`). Without a selected environment — an explicit
+`--hostname` build — the name falls back to `avatar-forge-teams.zip`.
+
+> **Why the filename carries the environment.** A package is not a neutral
+> artefact: the manifest bakes in that deployment's hostname, and the app id is a
+> deterministic GUID *derived from* that hostname. Two environments therefore
+> produce two genuinely different Teams apps that can be installed side by side —
+> which is exactly what you want when comparing, say, an agent-mode and a
+> model-mode deployment. Under a single fixed filename, `azd env select` followed
+> by a rebuild silently overwrote the previous environment's package and nothing
+> on disk told you which deployment a given zip pointed at. The build also prints
+> the environment it used.
 
 ## Run it in Teams (no admin access needed)
 
@@ -93,7 +105,7 @@ your tenant has custom-app upload disabled, use B.
 ### Route A — Upload a custom app (personal scope)
 
 1. In Teams, go to **Apps → Manage your apps → Upload an app → Upload a custom app**.
-2. Select `teams/build/avatar-forge-teams.zip`.
+2. Select the zip the build printed (`teams/build/avatar-forge-teams-<env>.zip`).
 3. Add the app; open the **Avatar** personal tab.
 4. When prompted, **allow microphone** (and camera if requested) for the tab.
 
@@ -108,7 +120,8 @@ policy, and is the recommended no-admin path for this prototype.
 
 1. Open the **Teams Developer Portal** — <https://dev.teams.microsoft.com> (also available
    as the **Developer Portal** app inside Teams).
-2. **Apps → Import app** and select `teams/build/avatar-forge-teams.zip`.
+2. **Apps → Import app** and select the zip the build printed
+   (`teams/build/avatar-forge-teams-<env>.zip`).
 3. Open the imported app and click **Preview in Teams** (top right). Teams opens and adds
    the app for you.
 4. Open the **Avatar** personal tab and **allow microphone** (and camera if requested).

@@ -60,6 +60,9 @@ _ENV_KEYS = (
     "IS_PHOTO_AVATAR",
     "TEAMS_ENABLE_CALLING",
     "TEAMS_ENABLE_COMPANION",
+    # Scopes the output filename. Stripped like the rest so a developer's selected
+    # azd environment cannot leak in and make the expected filename machine-dependent.
+    "AZURE_ENV_NAME",
 )
 
 HOST = ["--hostname", "example.azurecontainerapps.io"]
@@ -93,14 +96,49 @@ def build(argv: list[str], env: dict[str, str] | None = None,
         spec.loader.exec_module(bp)
         bp._AZD_VALUES = dict(azd or {})
         with tempfile.TemporaryDirectory() as tmp:
-            out = Path(tmp) / "pkg.zip"
             bp.BUILD_DIR = tmp
-            bp.OUTPUT_ZIP = str(out)
             rc = bp.main(argv)
             if rc != 0:
                 raise SystemExit(f"builder returned {rc}")
-            with zipfile.ZipFile(out) as z:
+            # The filename is derived from the azd environment, so discover it
+            # rather than reasserting the naming rule here — check_package_name
+            # covers that separately.
+            produced = sorted(Path(tmp).glob("*.zip"))
+            if len(produced) != 1:
+                raise SystemExit(f"expected exactly one zip in {tmp}, got {produced}")
+            with zipfile.ZipFile(produced[0]) as z:
                 return json.loads(z.read("manifest.json")), z.namelist()
+    finally:
+        for k, v in saved.items():
+            os.environ.pop(k, None)
+            if v is not None:
+                os.environ[k] = v
+
+
+def load_builder():
+    """Fresh module instance — argparse defaults are read at import time."""
+    spec = importlib.util.spec_from_file_location("build_package", _SCRIPT)
+    bp = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(bp)
+    return bp
+
+
+def built_filename(argv: list[str], env: dict[str, str] | None = None,
+                   azd: dict[str, str] | None = None) -> str:
+    """Name of the zip a real build writes — not just what the naming rule returns."""
+    saved = {k: os.environ.pop(k, None) for k in _ENV_KEYS}
+    try:
+        os.environ.update(env or {})
+        bp = load_builder()
+        bp._AZD_VALUES = dict(azd or {})
+        with tempfile.TemporaryDirectory() as tmp:
+            bp.BUILD_DIR = tmp
+            if bp.main(argv) != 0:
+                raise SystemExit("builder returned non-zero")
+            produced = sorted(p.name for p in Path(tmp).glob("*.zip"))
+            if len(produced) != 1:
+                raise SystemExit(f"expected exactly one zip, got {produced}")
+            return produced[0]
     finally:
         for k, v in saved.items():
             os.environ.pop(k, None)
@@ -239,6 +277,37 @@ def main() -> int:
         check("bare build without azd still errors", False, True)
     except SystemExit:
         check("bare build without azd still errors", True, True)
+
+    print("\n7. The package filename is scoped to the azd environment")
+    # A package is not a neutral artefact: the manifest bakes in the deployment's
+    # hostname and the app id is a uuid5 OF that hostname, so two environments are
+    # two different Teams apps. Under one fixed filename a rebuild after
+    # `azd env select` silently overwrote the other environment's package, and
+    # nothing on disk said which deployment a zip pointed at.
+    bp = load_builder()
+    name_rules = [
+        ("env name -> suffixed", {"AZURE_ENV_NAME": "avatar-agent-mode"},
+         "avatar-forge-teams-avatar-agent-mode.zip"),
+        ("no env name -> bare stem", {}, "avatar-forge-teams.zip"),
+        ("blank env name -> bare stem", {"AZURE_ENV_NAME": "   "},
+         "avatar-forge-teams.zip"),
+        ("path separators cannot escape the build dir",
+         {"AZURE_ENV_NAME": "../../etc/passwd"}, "avatar-forge-teams-etc-passwd.zip"),
+        ("spaces and unsafe chars collapse", {"AZURE_ENV_NAME": "my env (2)!"},
+         "avatar-forge-teams-my-env-2.zip"),
+    ]
+    for label, values, want in name_rules:
+        check(label, bp._package_filename(values), want)
+
+    DEPLOY = {"SERVICE_APP_URI": "https://x.example.com"}
+    check("a real build uses the derived name",
+          built_filename([], azd={**DEPLOY, "AZURE_ENV_NAME": "avatar-model-mode"}),
+          "avatar-forge-teams-avatar-model-mode.zip")
+    check("two environments cannot overwrite each other",
+          built_filename([], azd={**DEPLOY, "AZURE_ENV_NAME": "one"})
+          != built_filename([], azd={**DEPLOY, "AZURE_ENV_NAME": "two"}), True)
+    check("no azd env -> documented fallback name",
+          built_filename(HOST), "avatar-forge-teams.zip")
 
     print()
     if _failures:

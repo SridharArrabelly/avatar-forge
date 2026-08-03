@@ -47,7 +47,9 @@ Inputs (precedence: CLI flag > process env / .env > selected azd environment):
                                      derived from it. See backend/avatar_identity.py for the rule.
 
 Output:
-    teams/build/avatar-forge-teams.zip
+    teams/build/avatar-forge-teams-<azd-env-name>.zip
+    (falls back to teams/build/avatar-forge-teams.zip when no azd environment is
+    selected, e.g. an explicit --hostname build)
 """
 from __future__ import annotations
 
@@ -76,7 +78,7 @@ from backend.avatar_identity import resolve_avatar_display_name  # noqa: E402
 # app, Teams package, and meeting bot all derive from a single source of truth.
 ICONS_DIR = os.path.join(os.path.dirname(HERE), "assets", "brand")
 BUILD_DIR = os.path.join(HERE, "build")
-OUTPUT_ZIP = os.path.join(BUILD_DIR, "avatar-forge-teams.zip")
+PACKAGE_STEM = "avatar-forge-teams"
 
 # A fixed namespace so uuid5(hostname) is stable across machines/runs.
 _APP_ID_NAMESPACE = uuid.UUID("6f6c1d2e-7a4b-5c8d-9e0f-1a2b3c4d5e6f")
@@ -195,6 +197,27 @@ def _resolve_bot_id(raw: str | None) -> str:
         return str(uuid.UUID(bot))
     except ValueError:
         sys.exit(f"error: --bot-id must be a valid GUID, got {bot!r}")
+
+
+def _package_filename(values: Mapping[str, str]) -> str:
+    """Zip name scoped to the azd environment it was built from.
+
+    A package is not a neutral artefact: the manifest bakes in that deployment's
+    hostname, and the app id is a uuid5 OF that hostname, so two environments
+    produce two genuinely *different* Teams apps that can be installed side by
+    side. Under one fixed filename, `azd env select` followed by a rebuild
+    silently overwrote the previous environment's package, and nothing on disk
+    said which deployment a given zip pointed at — so sideloading the wrong one
+    aimed Teams at another environment's host with no visible clue.
+
+    Falls back to the bare stem when no azd environment is selected, keeping the
+    documented no-azd path (`--hostname ...`) exactly as it was.
+    """
+    raw = (values.get("AZURE_ENV_NAME") or "").strip()
+    # Defensive: an env name reaches a filesystem path here, so allow only safe
+    # characters and refuse to let it climb out of the build directory.
+    slug = re.sub(r"[^A-Za-z0-9._-]+", "-", raw).strip("-._")[:60]
+    return f"{PACKAGE_STEM}-{slug}.zip" if slug else f"{PACKAGE_STEM}.zip"
 
 
 def _json_inner(s: str) -> str:
@@ -336,14 +359,16 @@ def main(argv: list[str] | None = None) -> int:
             sys.exit(f"error: missing icon {p}")
 
     os.makedirs(BUILD_DIR, exist_ok=True)
-    with zipfile.ZipFile(OUTPUT_ZIP, "w", zipfile.ZIP_DEFLATED) as zf:
+    output_zip = os.path.join(BUILD_DIR, _package_filename(env))
+    with zipfile.ZipFile(output_zip, "w", zipfile.ZIP_DEFLATED) as zf:
         # Names are written at the archive root (no folder prefixes).
         zf.writestr("manifest.json", json.dumps(manifest, indent=2))
         zf.write(color, "color.png")
         zf.write(outline, "outline.png")
 
-    print(f"Built {OUTPUT_ZIP}")
+    print(f"Built {output_zip}")
     print(f"  name:     {names['APP_NAME']}")
+    print(f"  env:      {env.get('AZURE_ENV_NAME') or '(no azd environment selected)'}")
     print(f"  hostname: {hostname}  (from {hostname_source})")
     print(f"  version:  {version}")
     print(f"  app id:   {app_id}")
