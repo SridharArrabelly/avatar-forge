@@ -221,7 +221,8 @@ def _core_steps() -> list[Step]:
             "Grounding with Bing Custom Search for you — edit bingAllowedDomains in "
             "infra/main.bicep, or set the flag below to false to skip it. Model mode: "
             "Bing is never deployed (no agent to attach it to); set WEBIQ_API_KEY and "
-            "WEBIQ_ALLOWED_DOMAINS as bare hosts instead. Either way, skipping web "
+            "the same list is reused automatically, stripped to bare hosts, since "
+            "site: cannot match a path. Either way, skipping web "
             "search is supported — the avatar then answers from your documents alone.",
             "azd env set DEPLOY_BING_GROUNDING false   # agent mode only",
         ),

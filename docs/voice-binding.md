@@ -93,7 +93,7 @@ service. Where the widely-repeated claim differs from what we measured, both are
 | Option | Pros | Cons |
 | --- | --- | --- |
 | **1. Voice Live + Foundry agent + tools**<br/>`VOICE_BINDING=agent`<br/>*default & recommended* | • **Native RAG.** AI Search and Grounding-with-Bing-Custom-Search are managed Foundry tools — no glue code, no retrieval to maintain<br/>• **Path-scoped web sources.** 17 entries with boost levels, e.g. `mtn.com/investors` (SuperBoost). A path can be targeted<br/>• Foundry owns threads, history and the tool-calling loop<br/>• **Semantic end-of-utterance** available — worth ~200 ms/turn over silence timing<br/>• Prompt and tools live in the agent: change them without redeploying the app<br/>• Built-in governance surface | • Managed tool round trip is slower: **1.3–1.9 s** vs 0.27–1.63 s<br/>• More Azure surface: model deployment **plus quota**, agent registration, Bing account (G2 SKU)<br/>• Less control over the raw session and token-level behaviour |
-| **2. Voice Live + realtime model + tools**<br/>`VOICE_BINDING=model` | • **Tools run in-process: 0.27–1.63 s** round trip<br/>• **No model deployment and no quota request** — Voice Live manages the model itself<br/>• Fewest resources of the two supported modes: no agent, no Bing account<br/>• Direct control of session, prompt and function loop<br/>• Spoken interim cue is available, because Voice Live gives a synthesis stage to inject into | • **Semantic EOU is unavailable** — the service rejects it outright, so turn-taking falls back to a silence timer and hands back ~200 ms/turn<br/>• **We own retrieval.** Quality is ours to get right — currently weaker than agent mode (#78)<br/>• **Web scoping degrades to bare hosts.** `site:` cannot match a path, so `mtn.com/investors` becomes `mtn.com`<br/>• Prompt/tool changes need an app redeploy<br/>• **No measured latency win here** — see below |
+| **2. Voice Live + realtime model + tools**<br/>`VOICE_BINDING=model` | • **Tools run in-process: 0.27–1.63 s** round trip<br/>• **No model deployment and no quota request** — Voice Live manages the model itself<br/>• Fewest resources of the two supported modes: no agent, no Bing account<br/>• Direct control of session, prompt and function loop<br/>• Spoken interim cue is available, because Voice Live gives a synthesis stage to inject into | • **Semantic EOU is unavailable** — the service rejects it outright, so turn-taking falls back to a silence timer and hands back ~200 ms/turn<br/>• **We own retrieval.** Quality is ours to get right — currently weaker than agent mode (#78)<br/>• **Web scoping degrades to bare hosts.** The same sources are used — the host list is derived from `bingAllowedDomains` — but `site:` cannot match a path, so `mtn.com/investors` becomes `mtn.com`<br/>• Prompt/tool changes need an app redeploy<br/>• **No measured latency win here** — see below |
 | **3. Realtime model + tools, no Voice Live**<br/>**not used** | • Lowest *theoretical* speech-to-speech latency — this is where the "absolute lowest latency" claim actually comes from<br/>• Fewest moving parts; native audio straight off the model socket | • **No avatar.** Voice Live drives the TTS Avatar video and lip-sync off the synthesis stage; bound directly there is no such stage<br/>• **No custom neural voice.** A realtime model emits its own audio and bound directly the built-in voices are all you can ever get — `azure-custom` / `azure-personal` are reachable *only* because Voice Live inserts a replaceable synthesis stage<br/>• **No interim response injection** — the service returns a hard 400; with native audio there is nowhere to inject<br/>• VAD, barge-in and audio orchestration would all have to be rebuilt |
 
 **On the latency claim.** Option 3 is what "realtime models are dramatically faster"
@@ -306,11 +306,14 @@ Two further confounds, both measured rather than assumed:
   `interim_response` — the service echoed the config back in full — so the gap is
   something we withheld from agent mode, not something model mode earns. Enable it on
   both sides or neither.
-- **The two bindings search different engines.** Agent mode uses Grounding with Bing
-  Custom Search over **17 path-scoped, boost-ranked entries**; model mode uses Web IQ
-  over **bare hosts**, because `site:` cannot match a path. A web-grounded question is
-  therefore not the same question in both modes. Report web-grounded numbers
-  separately from minutes-only ones, which *are* comparable — the corpus is identical.
+- **The two bindings search different engines over the same sources.** Agent mode uses
+  Grounding with Bing Custom Search over **17 path-scoped, boost-ranked entries**;
+  model mode uses Web IQ over the **13 bare hosts those entries sit on**, derived
+  automatically from the same list because `site:` cannot match a path or a rank. The
+  source set is identical by construction; the precision is not. A web-grounded
+  question is therefore not the same question in both modes. Report web-grounded
+  numbers separately from minutes-only ones, which *are* comparable — the corpus is
+  identical.
 
 When both were pinned to the same marker and interleaved A/B/A/B, time-to-**answer**
 came out at 2.45s (agent) versus 2.42s (model) — indistinguishable, with model mode's

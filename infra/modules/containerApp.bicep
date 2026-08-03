@@ -24,7 +24,7 @@ param voiceLiveModel string = ''
 @description('Web IQ base URL used as the web tool in model mode. Empty falls back to the code default — the tool is gated on webIqApiKey, not on this.')
 param webIqBaseUrl string = ''
 
-@description('Comma-separated host allow-list applied to Web IQ results. Same security boundary as bingAllowedDomains: it is what makes an open-web tool safe to hand an executive assistant.')
+@description('Comma-separated host allow-list applied to Web IQ results. Same security boundary as bingAllowedDomains — and by default the same sources: main.bicep derives these bare hosts from bingAllowedDomains, because site: cannot express the paths and boost levels Bing Custom Search enforces.')
 param webIqAllowedDomains string = ''
 
 @description('Web IQ API key. Passed as a container-app SECRET, never as a plain env var. Empty leaves the web tool switched off.')
@@ -100,8 +100,9 @@ var voiceBindingEnv = concat([
 // tools become ours to implement, so the web source has to be ours too.
 //
 // The key is a container-app SECRET rather than a plain env var, and the
-// allow-list mirrors bingAllowedDomains: a hard host restriction is what makes
-// an open-web tool safe to hand an executive assistant.
+// allow-list mirrors bingAllowedDomains — literally, since main.bicep derives it
+// from that list rather than trusting anyone to retype it: a hard host
+// restriction is what makes an open-web tool safe to hand an executive assistant.
 var webIqConfigured = !empty(webIqApiKey)
 var webIqSecrets = webIqConfigured ? [
   {
