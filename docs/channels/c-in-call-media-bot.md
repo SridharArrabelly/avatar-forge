@@ -211,3 +211,31 @@ the resource group goes.
 
 To remove the channel entirely: delete the VM resources and set
 `MEETING_BOT_ENABLED=false`, then redeploy. Channels A–C are unaffected.
+
+### Why not AKS?
+
+Microsoft does list **Azure Kubernetes Service** as a supported host alongside
+Cloud Services, Service Fabric/VMSS and plain IaaS VMs — an Azure **web app** is
+the only named environment that is explicitly disallowed
+([hosting requirements](https://learn.microsoft.com/en-us/microsoftteams/platform/bots/calls-and-meetings/requirements-considerations-application-hosted-media-bots),
+updated 2026-07-22). Being listed is not the same as being cheaper, and for this
+workload **AKS costs more, not less.** The same page attaches conditions that
+remove the usual reasons to containerise:
+
+| Requirement | Consequence |
+| --- | --- |
+| Production must run a **Windows Server** guest OS | A Windows node pool — which in AKS also obliges you to run a Linux system node pool alongside it |
+| Each instance needs an **instance-level public IP** and an instance-mapped port | No shared ingress; per-node public addressing, the thing Kubernetes networking normally hides |
+| "Real-time media calls stay where they're created" — pinned to the instance that accepted the call | No rescheduling, no draining a node mid-call; an evicted pod drops the call |
+| ≥ 2 CPU cores, 4 vCPU minimum for non-Dv2 sizes | The worker is the same size as the VM we already run |
+
+So you would pay for a Windows worker of comparable size, **plus** a Linux system
+pool, **plus** the control plane if you want the uptime SLA — and still not scale
+to zero, because a media bot must be listening when a call arrives.
+
+**Correction:** an earlier note in this project suggested AKS might come in under
+the VM's ~$283/month. That was wrong — it assumed bin-packing and scale-to-zero
+that the pinning and per-instance-IP rules above rule out. AKS only starts to pay
+off with **many concurrent meetings** across several media nodes, where
+bin-packing and rolling upgrades matter. At one bot serving one meeting, a single
+deallocatable VM is both cheaper and simpler.
