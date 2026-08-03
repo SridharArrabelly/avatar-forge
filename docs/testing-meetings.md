@@ -13,7 +13,7 @@ meeting at the same time.
 | Brain (Voice Live + Foundry agent) | **the container app** | **the container app** |
 | Needs an **ACS resource** | **yes** (`/api/acs/token` mints the guest token) | no — joins via Graph |
 | Needs the VM running | no | **yes** (~$283/mo if left on) |
-| **Hears** | **only your machine's mic / shared audio** | **everyone in the meeting** |
+| **Hears** | **the other participants** — via the `srcObject` hook, verified live | **everyone in the meeting** |
 | Face | browser decodes fMP4 → canvas → ACS tile | Python decodes → NV12 → `VideoSocket` |
 | Status | proven in real meetings | **proven in real meetings** — joins, hears the room, answers aloud with a lip-synced tile |
 
@@ -49,10 +49,32 @@ the two rows above disagree only about the ACS resource and the VM.
 > The VM and NSG names (`avatar-meetingbot-vm`, `avatar-meetingbot-nsg`) are
 > deterministic, so those are written literally.
 
-The single most important difference is the "Hears" row. The browser joiner captures the
-*operator's* audio, so it can only answer what **you** say into your own mic. The media bot
-receives the meeting's mixed audio from Teams, so it can answer **anyone**. That is the
-whole reason the media bot exists.
+The "Hears" row used to be the decisive difference, and it no longer is. The browser
+joiner originally captured only the *operator's* microphone, so it could answer only what
+**you** said — which was the whole reason the media bot existed. That changed on
+2026-08-03: `acs-join.js` now intercepts `HTMLMediaElement.prototype.srcObject` and takes
+remote participants' audio from the DOM, because the SDK has to attach those streams to a
+media element in order to play them.
+
+Verified in a real meeting with the microphone disabled (`?mic=0`), so the only possible
+source was another participant:
+
+```text
+capture stats: maxRms=0.15861 remoteStreams=1 wiredTracks=2 remoteMeters=2
+               remoteMaxRms=0.18466 micCapture=False
+User transcript: 'Hey Simone, how are you?'
+```
+
+Two honest limits. Only **one** other human was present, so per-participant vs. mixed
+stream delivery is still unobserved; and `wiredTracks=2` against `remoteStreams=1` means
+a second stream was attached — plausibly our own outgoing audio — which the `selfTalking`
+half-duplex gate suppresses, making that gate load-bearing. See
+[d-in-call-headless.md](channels/d-in-call-headless.md) for detail.
+
+The media bot still differs in kind: it receives Teams' mixed audio through a supported
+first-party API, whereas the browser rides an SDK implementation detail. If a future SDK
+renders remote audio purely through Web Audio, `remoteMaxRms` returns to 0. `?remote=0`
+disables the hook without a redeploy.
 
 ---
 

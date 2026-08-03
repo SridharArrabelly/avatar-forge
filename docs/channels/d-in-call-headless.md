@@ -52,21 +52,51 @@ Two things this diagram implies that [channel C](c-in-call-media-bot.md) does no
 > guest (we already run this in C's browser joiner), whereas driving the real Teams web
 > client means a signed-in account and a licence.
 >
-> **Update (2026-08-03) — the ACS variant may not be a dead end after all.** This note
-> previously said the ACS Web SDK "cannot hear other participants", so D "collapses".
-> The observation behind that is real and stands: `getMediaStreamTrack()` on a
-> `RemoteAudioStream` yields nothing — measured live, `wiredTracks 0, maxRms 0`. But
-> that is a fact about **one SDK method**, not about the browser.
+> **Update (2026-08-03) — CONFIRMED WORKING.** This note previously said the ACS Web
+> SDK "cannot hear other participants", so D "collapses". The observation behind that
+> is real and stands: `getMediaStreamTrack()` on a `RemoteAudioStream` yields nothing —
+> measured live, `wiredTracks 0, maxRms 0`. But that is a fact about **one SDK method**,
+> not about the browser.
 >
 > The [ADIA reference implementation](#adia) takes the remote stream from the DOM
 > instead: it intercepts `HTMLMediaElement.prototype.srcObject`, so when the SDK
 > attaches a participant's stream to an element in order to *play* it, the page keeps a
 > reference and routes it into a capture worklet. The SDK is never asked.
 >
-> `acs-join.js` now carries that interception behind a diagnostic (`?mic=0` isolates it
-> from the microphone; `capture_stats.remoteMaxRms` is the readout). **Until that has
-> been run in a real meeting with someone else speaking, D's viability is open, not
-> settled — in either direction.**
+> `acs-join.js` now carries that interception, and it has been **run in a real meeting**.
+> With the microphone disabled (`?mic=0`), so the only possible audio source was another
+> participant:
+>
+> ```text
+> capture stats: maxRms=0.15861 remoteStreams=1 wiredTracks=2 remoteMeters=2
+>                remoteMaxRms=0.18466 micCapture=False
+> User transcript: 'Hey Simone, how are you?'
+> ```
+>
+> `micCapture=False` with `remoteMaxRms=0.18466` and a correct transcript is the whole
+> proof: **the browser leg hears the meeting, with no administrator anywhere in the
+> path.** The assistant answered aloud, and the follow-up question was picked up by the
+> 30-second follow-up window.
+>
+> **What this does and does not establish.** It proves remote participant audio reaches
+> Voice Live. It does *not* yet cover:
+>
+> - **More than one other human.** The test had a single remote participant, so whether
+>   ACS delivers one stream per participant (the hook wires each) or a single mix is
+>   still unobserved. The hook captures whatever gets attached either way, but that is
+>   inference, not measurement.
+> - **What the second wired track is.** `wiredTracks=2` against `remoteStreams=1` means
+>   something beyond the one remote participant was attached — plausibly our own
+>   outgoing audio being rendered. `remoteMaxRms` was non-zero during one
+>   `selfTalking=True` window, which is consistent with that. No feedback loop occurred
+>   because the `selfTalking` half-duplex gate suppresses capture while the avatar
+>   speaks, but that gate is now load-bearing rather than belt-and-braces. Logging track
+>   ids would settle it.
+>
+> The standing caveat still applies: this rides an implementation detail, not a
+> contract. If a future SDK renders remote audio purely through Web Audio, the hook
+> stops firing and `remoteMaxRms` returns to 0 — which is exactly how the regression
+> announces itself. `?remote=0` disables the hook without a redeploy.
 
 ## <a id="adia"></a>Prior art — the ADIA implementation
 
@@ -125,8 +155,8 @@ add or drop criteria afterwards.
 
 | Criterion | C — Graph media bot | D — headless browser |
 | --- | --- | --- |
-| **Admin dependency** *(decisive)* | Entra admin consent for `Calls.*.All` (the Teams access policy is only needed for short `/meet/` links) | Hypothesis: none |
-| Hears the whole room | Yes | ? — see the `srcObject` note above |
+| **Admin dependency** *(decisive)* | Entra admin consent for `Calls.*.All` (the Teams access policy is only needed for short `/meet/` links) | **None — verified.** Joined, heard a participant and answered aloud with no consent of any kind |
+| Hears the whole room | Yes | **Yes** — verified in a real meeting via the `srcObject` hook (single remote participant so far) |
 | Publishes a camera tile (the face) | Yes | Yes — already built in `acs-join.js` |
 | Added latency over the Voice Live budget | ~125 ms transport | ? |
 | Audio fidelity | Verified clean | ? |

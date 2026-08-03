@@ -355,8 +355,16 @@ existed.
   `AudioSocket`/`VideoSocket`.
 - **Application-hosted media** — the bot processes media itself (vs. service-hosted), which
   is what lets it access the room's raw audio.
-- **Client isolation** — Teams' rule that a web/client leg only receives its own mic; the
-  reason the browser path can't hear the room.
+- **Client isolation** — originally recorded here as "Teams' rule that a web/client leg
+  only receives its own mic, the reason the browser path can't hear the room."
+  **That was wrong**, and it is worth keeping the correction visible: it conflated *the
+  ACS SDK declining to hand you a track* (`getMediaStreamTrack()` returns nothing) with
+  *the client not receiving the audio at all*. The client plainly does receive it — that
+  is how the call is audible — and intercepting `HTMLMediaElement.prototype.srcObject`
+  reaches it. Verified live; see
+  [d-in-call-headless.md](./d-in-call-headless.md). The media bot's real advantage is
+  that it reads the room through a **supported API** rather than an implementation
+  detail.
 
 ---
 

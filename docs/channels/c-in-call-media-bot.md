@@ -57,8 +57,8 @@ flowchart LR
     MED <-- "wss · PCM16 up<br/>PCM16 + NV12 down" --> WSA
     VH <--> CORE
 
-    BRJ["<b>Browser joiner</b> — acs-join.html<br/><i>fallback: no VM, no Teams policy</i><br/><b>hears only the operator's mic</b>"]
-    MT -. "operator's mic only" .-> BRJ
+    BRJ["<b>Browser joiner</b> — acs-join.html<br/><i>no VM, no admin consent</i><br/><b>hears participants via the srcObject hook</b>"]
+    MT -. "remote participant audio" .-> BRJ
     BRJ <-. "wss · PCM16 + fMP4" .-> WSB
 ```
 
@@ -74,11 +74,14 @@ Two join paths, sharing one brain:
 
 | Path | Hears | Use it for |
 | --- | --- | --- |
-| **Browser joiner** (`acs-join.html`) | Only the operator's microphone | Quick demos, no VM, no Teams policy |
-| **Media bot** (Windows VM) | **The whole room** | The real capability |
+| **Browser joiner** (`acs-join.html`) | Remote participants, via the `srcObject` hook — [verified live](d-in-call-headless.md) | No VM, no administrator |
+| **Media bot** (Windows VM) | **The whole room**, through a first-party API | The supported path |
 
-The media bot is the definition of done. The browser joiner is a genuinely useful
-fallback when the admin path is blocked — it ships value with no VM at all.
+Both hear the meeting. They differ in *standing*: the media bot uses a documented
+Microsoft media API, while the browser joiner relies on the ACS Web SDK attaching remote
+streams to a media element in order to play them — real, measured, but an implementation
+detail rather than a contract. Pick by which risk you prefer: an administrator
+dependency plus a VM, or a technique that could break on an SDK upgrade.
 
 ## 3. What deploys
 
