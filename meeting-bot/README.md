@@ -30,6 +30,35 @@ VMSS, IaaS VM, or AKS Windows node pool). It **cannot** run on Linux/macOS or an
 Azure Web App / Linux Container App. You may *edit* the C# anywhere; you must
 *build & host* on Windows (`RuntimeIdentifier=win-x64`).
 
+## ⏳ The SDK pin expires — check it before every deployment
+
+Microsoft requires an application-hosted media bot to run either the newest
+`Microsoft.Graph.Communications.Calls.Media` package **or one no more than three
+months old**, and states plainly that ["older versions of the library are
+deprecated and don't work after a few months"][rtm-req].
+
+This is the rare failure that is **time-based, not code-based**. Nothing in the
+repo changes, no test turns red, and the bot simply stops working in a meeting
+one day. "It worked last week" is not evidence against it — that is exactly the
+symptom. It was found here at **27 months past** the window.
+
+```powershell
+uv run python scripts/check_media_sdk_age.py   # exit 1 once the pin is >90 days
+```
+
+Run it before any deployment, and on a schedule if you can. When it fails, bump
+**all four** `Microsoft.Graph.Communications.*` packages together in
+`MeetingBot.csproj` — they are compiled against each other, and the checker
+fails on a version skew for that reason. Do **not** add an explicit
+`Microsoft.Skype.Bots.Media` reference: it arrives transitively, pinned to an
+exact build carrying the matching native stack.
+
+Because there is [no server-side ACS route into a Teams meeting](../docs/channels/c-in-call-media-bot.md),
+this upgrade treadmill is a **permanent operating cost of this channel**, not a
+one-off chore.
+
+[rtm-req]: https://learn.microsoft.com/en-us/microsoftteams/platform/bots/calls-and-meetings/requirements-considerations-application-hosted-media-bots
+
 ## Architecture
 
 ```mermaid

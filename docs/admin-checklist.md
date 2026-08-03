@@ -61,13 +61,35 @@ without the policy.
 | # | Step | Who | Notes |
 | --- | --- | --- | --- |
 | 1 | Entra app registration + client secret | You / Entra admin | **Must be its own app**, not shared with any other Azure Bot resource. One Entra app can back only one bot; reusing an existing one fails with `MsaAppId is already in use` |
-| 2 | Graph **application** permissions: `Calls.JoinGroupCall.All`, `Calls.JoinGroupCallAsGuest.All`, **`Calls.AccessMedia.All`**, `OnlineMeetings.Read.All` | Entra admin to add | `Calls.AccessMedia.All` is what unlocks the room audio |
+| 2 | Graph **application** permissions: `Calls.JoinGroupCall.All`, `Calls.JoinGroupCallAsGuest.All`, **`Calls.AccessMedia.All`** | Entra admin to add | `Calls.AccessMedia.All` is what unlocks the room audio. `OnlineMeetings.Read.All` is needed **only** if you want to join by short `/meet/<id>` link — see step 5 |
 | 3 | **Admin consent** for all of the above | **Entra admin** | One-time. Nothing works without it |
 | 4 | Azure Bot resource with **calling enabled**, calling webhook → the VM's public HTTPS FQDN | You (bicep + portal) | The webhook URL cannot be known until the VM has its DNS label |
-| 5 | **Teams application access policy** — `New-CsApplicationAccessPolicy` then `Grant-CsApplicationAccessPolicy` | **Teams administrator** | **Hard blocker.** No workaround. Grant is per-user or tenant-wide |
+| 5 | **Teams application access policy** — `New-CsApplicationAccessPolicy` then `Grant-CsApplicationAccessPolicy` | **Teams administrator** | **Only needed to join by short `/meet/<id>` link.** Not required for a classic `/l/meetup-join/` link — see below |
 | 6 | TLS certificate covering the VM FQDN, installed on the host | You | The media platform requires a real certificate; self-signed will not do |
 | 7 | Open ports **9441** (control API) and **8445** (media/signalling) | You (NSG, in bicep) | — |
 | 8 | Install/refresh the bot service on the VM | You (`meeting-bot/scripts/setup-host.ps1`) | Semi-automatable via VM extension |
+
+> **⚠ Step 5 is narrower than it looks — it is not a hard blocker.** An earlier
+> version of this page called it one, with "no workaround". That was wrong, and
+> it matters because it is the only step here needing a *Teams* administrator,
+> which is the rights level people are least likely to have.
+>
+> The policy governs the **`OnlineMeetings.*`** Graph permissions, not
+> `Calls.JoinGroupCall.All` or `Calls.AccessMedia.All`. The bot only touches
+> `OnlineMeetings` when it has to **resolve a short `/meet/<id>` link** into
+> meeting coordinates, because that link carries no thread id. A classic
+> `/l/meetup-join/...` link already contains them, so `JoinInfo.ParseJoinURL`
+> parses it locally and no Graph call happens at all — see
+> `MeetingBot.cs`, where `ResolveShortLinkAsync` sits behind a short-link-only
+> branch and its own error message offers the classic link as the way out.
+>
+> **So with a classic join URL, channel C needs Entra admin consent only.**
+> Grab the classic link from the meeting invite body rather than the Share
+> button. Do step 5 if you want short links to work; skip it otherwise.
+>
+> *Verified against Microsoft's own scoping of the policy and against this
+> repo's code, but not yet exercised in a tenant that lacks the policy — treat
+> it as very likely, not proven.*
 
 > **The policy is permanent once granted.** It survives redeploys and VM
 > rebuilds, so step 5 is a one-time cost — worth saying to the administrator you
