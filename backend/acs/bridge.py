@@ -656,12 +656,16 @@ class BrowserVoiceBridge:
                                     f"selfTalking={ctrl.get('selfTalking')} "
                                     f"humanMuted={ctrl.get('humanMuted')} "
                                     f"remoteStreams={ctrl.get('remoteStreams')} "
-                                    f"wiredTracks={ctrl.get('wiredTracks')}"
+                                    f"wiredTracks={ctrl.get('wiredTracks')} "
+                                    f"remoteMeters={ctrl.get('remoteMeters')} "
+                                    f"remoteMaxRms={ctrl.get('remoteMaxRms')} "
+                                    f"micCapture={ctrl.get('micCapture')}"
                                 )
                             elif ct == "remote_wired":
                                 logger.info(
                                     f"[browser {self.client_id}] browser wired remote "
-                                    f"audio track {ctrl.get('trackId')}"
+                                    f"audio track {ctrl.get('trackId')} "
+                                    f"via={ctrl.get('via') or 'sdk'}"
                                 )
                             elif ct == "mic_wired":
                                 logger.info(

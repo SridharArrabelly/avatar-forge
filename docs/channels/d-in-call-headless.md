@@ -49,11 +49,46 @@ Two things this diagram implies that [channel C](c-in-call-media-bot.md) does no
 > **Discrepancy to resolve before building.** The reference diagram says *ACS Web SDK
 > join*, but the description above says *Teams web client*. These are different
 > mechanisms with different consequences: the ACS Web SDK joins as an anonymous interop
-> guest (we already run this in C's browser joiner, and we know it **cannot hear other
-> participants** — Teams client isolation), whereas driving the real Teams web client
-> means a signed-in account and a licence. If D is actually the ACS Web SDK, it inherits
-> C's browser-joiner limitation and the entire case for it collapses. **Settle this
-> first** — it is cheaper than any prototype.
+> guest (we already run this in C's browser joiner), whereas driving the real Teams web
+> client means a signed-in account and a licence.
+>
+> **Update (2026-08-03) — the ACS variant may not be a dead end after all.** This note
+> previously said the ACS Web SDK "cannot hear other participants", so D "collapses".
+> The observation behind that is real and stands: `getMediaStreamTrack()` on a
+> `RemoteAudioStream` yields nothing — measured live, `wiredTracks 0, maxRms 0`. But
+> that is a fact about **one SDK method**, not about the browser.
+>
+> The [ADIA reference implementation](#adia) takes the remote stream from the DOM
+> instead: it intercepts `HTMLMediaElement.prototype.srcObject`, so when the SDK
+> attaches a participant's stream to an element in order to *play* it, the page keeps a
+> reference and routes it into a capture worklet. The SDK is never asked.
+>
+> `acs-join.js` now carries that interception behind a diagnostic (`?mic=0` isolates it
+> from the microphone; `capture_stats.remoteMaxRms` is the readout). **Until that has
+> been run in a real meeting with someone else speaking, D's viability is open, not
+> settled — in either direction.**
+
+## <a id="adia"></a>Prior art — the ADIA implementation
+
+A client-built agent (`ADIA-Agent`) implements this same architecture end to end and is
+worth reading before writing any of it here:
+
+| Concern | How ADIA does it |
+| --- | --- |
+| Host | `mcr.microsoft.com/playwright/python` container, one browser context per meeting |
+| Join | ACS Web Calling SDK, `agent.join({ meetingLink })`, anonymous guest |
+| Room audio in | intercepts `HTMLMediaElement.prototype.srcObject` → capture worklet → WS |
+| Agent audio out | overrides `getUserMedia` to return a `MediaStreamDestination`, so the "microphone" *is* the agent |
+| Devices | no PulseAudio or Xvfb — `--use-fake-device-for-media-stream` plus the override |
+
+Two things it does **not** establish. Its own README says the incoming-audio path is
+preview and *"validate against a real meeting"*, and its tests cover config, prompts and
+Voice Live helpers — **nothing exercises the audio bridge or the browser**. So it is a
+credible architecture, not evidence that the capture works.
+
+Also inherited by any anonymous-guest design: the guest has **no Teams chat identity**
+(ADIA posts chat through a separate M365 service account), and each meeting costs a full
+Chromium session, so concurrency is expensive.
 
 ## Why it is worth evaluating
 

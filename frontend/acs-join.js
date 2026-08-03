@@ -24,6 +24,12 @@
  * Its two small externalised deps (@azure/communication-common, @azure/logger) are
  * loaded as ES modules and exposed as the globals the UMD factory expects.
  */
+// Diagnostic switch: ?mic=0 disables local-microphone capture so the only thing
+// that can produce signal is the intercepted remote (room) audio. Use it when
+// answering "can this leg hear the meeting?" — with the mic live, its own signal
+// masks the answer.
+const MIC_CAPTURE = new URLSearchParams(location.search).get("mic") !== "0";
+
 const CALLING_UMD = "/vendor/communication-calling-1.40.1.js";
 const COMMON_ESM = "https://esm.sh/@azure/communication-common@2.3.1";
 const LOGGER_ESM = "https://esm.sh/@azure/logger@1.1.4";
@@ -104,6 +110,11 @@ let mediaWs = null;
 let captureNode = null;         // ScriptProcessor pulling remote audio -> WS
 let captureSink = null;         // zero-gain sink so the capture node runs silently
 const wiredRemoteTracks = new Set();
+const remoteAnalysers = [];     // per-remote-stream meters (remote-only RMS)
+const pendingRemoteStreams = []; // remote streams seen before audioCtx existed
+let remoteRmsScratch = null;    // reusable buffer for analyser reads
+let remoteMaxRms = 0;           // peak remote-only RMS since last stats report
+let srcObjectHooked = false;
 const primingAudioEls = [];     // muted <audio> elements priming remote tracks
 let micStream = null;           // getUserMedia mic stream feeding the capture node
 let displayStream = null;       // getDisplayMedia stream (far-side / Teams app audio)
@@ -122,6 +133,8 @@ function setupOutboundAudio(LocalAudioStream) {
     // Nuru's synthesized speech is the call's *only* outgoing audio (no mic),
     // which also eliminates the laptop-mic echo we saw while testing.
     outboundLocalStream = new LocalAudioStream(outboundDest.stream);
+    // Any remote stream intercepted before the context existed can now be wired.
+    drainPendingRemoteStreams();
     return outboundLocalStream;
 }
 
@@ -255,6 +268,21 @@ function ensureCaptureNode() {
         const rms = Math.sqrt(sum / samples.length);
         if (rms > captureMaxRms) captureMaxRms = rms;
         captureFrames++;
+        // Remote-only level, measured independently of the mic so we can tell
+        // whether the srcObject interception is actually delivering room audio.
+        if (remoteAnalysers.length) {
+            const n = remoteAnalysers[0].fftSize;
+            if (!remoteRmsScratch || remoteRmsScratch.length !== n) {
+                remoteRmsScratch = new Float32Array(n);
+            }
+            for (let a = 0; a < remoteAnalysers.length; a++) {
+                remoteAnalysers[a].getFloatTimeDomainData(remoteRmsScratch);
+                let rsum = 0;
+                for (let i = 0; i < n; i++) rsum += remoteRmsScratch[i] * remoteRmsScratch[i];
+                const rr = Math.sqrt(rsum / n);
+                if (rr > remoteMaxRms) remoteMaxRms = rr;
+            }
+        }
         // Half-duplex gate: don't forward mic audio while Nuru is speaking, so
         // her own voice (from the Teams-client speaker) can't loop back as a
         // new question. Browser AEC can't cancel it (different app's output).
@@ -277,9 +305,13 @@ function ensureCaptureNode() {
                     remoteStreams: (call && call.remoteAudioStreams)
                         ? call.remoteAudioStreams.length : 0,
                     wiredTracks: wiredRemoteTracks.size,
+                    remoteMeters: remoteAnalysers.length,
+                    remoteMaxRms: Number(remoteMaxRms.toFixed(5)),
+                    micCapture: MIC_CAPTURE,
                 }));
             } catch (_) { /* ignore */ }
             captureMaxRms = 0;
+            remoteMaxRms = 0;
         }
         if (muted) return;
         const pcm = floatToPcm16(samples);
@@ -293,6 +325,70 @@ function ensureCaptureNode() {
     captureNode.connect(captureSink);
     captureSink.connect(audioCtx.destination);
 }
+
+// ───────── remote (room) audio via srcObject interception ─────────
+// The SDK will not hand us remote audio — getMediaStreamTrack() on a
+// RemoteAudioStream yields nothing (confirmed live: wiredTracks 0, maxRms 0,
+// see startRemoteAudioCapture below). But the SDK still has to *play* that
+// audio, and to do so it assigns the MediaStream to a media element's
+// srcObject. Intercepting that setter yields the stream the API withholds.
+// Technique taken from the ADIA reference implementation (src/web/bridge.js).
+//
+// This rides an implementation detail, not a contract. If a future SDK renders
+// remote audio purely through Web Audio, the hook stops firing and remoteRms in
+// capture_stats stays 0 — which is precisely how we detect the regression.
+function attachRemoteMediaStream(ms) {
+    try {
+        if (!ms || typeof ms.getAudioTracks !== "function") return;
+        const tracks = ms.getAudioTracks();
+        if (!tracks.length) return;
+        const id = tracks[0].id;
+        if (wiredRemoteTracks.has(id)) return;
+        // audioCtx is created in setupOutboundAudio() before join(), but a stream
+        // arriving first must not be dropped on the floor.
+        if (!audioCtx) { pendingRemoteStreams.push(ms); return; }
+        wiredRemoteTracks.add(id);
+        ensureCaptureNode();
+        const src = audioCtx.createMediaStreamSource(ms);
+        // Metered separately from the mic so the diagnostic is unambiguous.
+        const analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 2048;
+        src.connect(analyser);
+        src.connect(captureNode);
+        remoteAnalysers.push(analyser);
+        console.log("[acs-join] remote audio wired via srcObject", id);
+        if (mediaWs && mediaWs.readyState === WebSocket.OPEN) {
+            try { mediaWs.send(JSON.stringify({ type: "remote_wired", trackId: id, via: "srcObject" })); } catch (_) {}
+        }
+    } catch (e) {
+        console.warn("[acs-join] attachRemoteMediaStream failed", e);
+    }
+}
+
+function drainPendingRemoteStreams() {
+    if (!audioCtx || !pendingRemoteStreams.length) return;
+    const queued = pendingRemoteStreams.splice(0, pendingRemoteStreams.length);
+    queued.forEach(attachRemoteMediaStream);
+}
+
+function installSrcObjectHook() {
+    if (srcObjectHooked) return;
+    const desc = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, "srcObject");
+    if (!desc || !desc.set) {
+        console.warn("[acs-join] srcObject is not a configurable accessor — remote capture unavailable");
+        return;
+    }
+    Object.defineProperty(HTMLMediaElement.prototype, "srcObject", {
+        configurable: true,
+        enumerable: desc.enumerable,
+        get() { return desc.get.call(this); },
+        set(v) { attachRemoteMediaStream(v); return desc.set.call(this, v); },
+    });
+    srcObjectHooked = true;
+    console.log("[acs-join] srcObject hook installed");
+}
+// Must be in place before the SDK attaches any remote audio element.
+installSrcObjectHook();
 
 function wireRemoteAudioStream(stream) {
     try {
@@ -328,13 +424,18 @@ function wireRemoteAudioStream(stream) {
 
 function startRemoteAudioCapture() {
     ensureCaptureNode();
-    // PRIMARY capture path: the local microphone. ACS's Web SDK auto-renders
-    // remote meeting audio and does NOT expose it as a raw MediaStreamTrack
-    // (getMediaStreamTrack on RemoteAudioStream yields nothing — confirmed:
-    // wiredTracks stayed 0, maxRms 0), so we cannot capture the mixed remote
-    // audio in the browser. Instead we capture this device's mic — the
-    // executive asking the question is at this laptop. echoCancellation strips
-    // Nuru's own voice (played by the Teams client) from the captured signal.
+    // Room audio now arrives via the srcObject hook above. The mic remains a
+    // SECOND source because it is the near-field signal for whoever is at this
+    // laptop, and because the hook rides an SDK implementation detail that could
+    // stop firing. Historical note, still true of the SDK API itself:
+    // getMediaStreamTrack() on a RemoteAudioStream yields nothing (confirmed:
+    // wiredTracks stayed 0, maxRms 0), which is why the hook exists at all.
+    // echoCancellation strips Nuru's own voice (played by the Teams client).
+    if (!MIC_CAPTURE) {
+        console.log("[acs-join] mic capture disabled (?mic=0) — remote audio only");
+        log("Mic capture disabled — listening to meeting audio only.");
+        return;
+    }
     navigator.mediaDevices.getUserMedia({
         audio: {
             echoCancellation: true,
