@@ -67,8 +67,8 @@ User transcript: 'Hey Simone, how are you?'
 
 Two honest limits. Only **one** other human was present, so per-participant vs. mixed
 stream delivery is still unobserved; and `wiredTracks=2` against `remoteStreams=1` means
-a second stream was attached — plausibly our own outgoing audio — which the `selfTalking`
-half-duplex gate suppresses, making that gate load-bearing. See
+a second stream was attached — plausibly our own outgoing audio — which the room-tap gate
+in `applyCaptureGates()` holds shut while she speaks, making that gate load-bearing. See
 [d-in-call-headless.md](channels/d-in-call-headless.md) for detail.
 
 The media bot still differs in kind: it receives Teams' mixed audio through a supported
@@ -143,16 +143,37 @@ the equivalent evidence.
 
 ### Known, deliberate behaviours (not bugs)
 
-- **Only you can interrupt her.** She *hears* the other participants (the `srcObject`
-  hook, verified live), but the room tap is gated shut while she speaks, because
-  nothing echo-cancels it and her own voice would otherwise come straight back as the
-  next question. So a remote participant cannot cut her off mid-answer; the operator's
-  microphone can, with the barge-in checkbox on.
+- **Barge-in is OFF until you tick the checkbox.** With it unticked the microphone
+  gate is literally set to zero while she speaks (`applyCaptureGates()`), so nothing
+  you say can reach her mid-answer. "Barge-in doesn't work" with the box unticked is
+  the code doing exactly what it says. Tick **let me interrupt** on the join page —
+  it applies mid-call, no rejoin.
+- **Only you can interrupt her, even then.** She *hears* the other participants (the
+  `srcObject` hook, verified live), but the room tap is gated shut while she speaks,
+  because nothing echo-cancels it and her own voice would otherwise come straight back
+  as the next question. So a remote participant cannot cut her off mid-answer; the
+  operator's microphone can, because the browser has echo-cancelled it.
 - **Mute silences the voice, but the face keeps moving.** Suppression is enforced on
   the answer path; the WebRTC video track is negotiated once and runs independently of
   it. What the room actually hears is what mute controls.
 - **Keep the joiner tab visible if you can.** Backgrounded tabs get throttled; there is an
   explicit `requestFrame()` keep-alive, but a foreground tab is the safe test.
+
+### If lip-sync still looks off
+
+Settle it by measurement rather than argument. Rejoin with **`?tile=raw`** appended to
+the joiner URL: her video track goes to the meeting untouched, with no `<video>` →
+canvas → `captureStream` hop in between. Ask the same question both ways on the same
+call.
+
+- **No difference** → the compositor is exonerated; the offset is upstream (transport
+  or the avatar service), and the canvas can stay.
+- **Noticeably better** → the compositor is costing real time, and the trade against
+  losing the placard, the thinking caption and the wake hint becomes a real decision.
+
+`capture stats` reports `tile=canvas` or `tile=raw`, so the log says which run was which.
+Note that `?tile=raw` disables the overlays by design — a blank-looking tile on that run
+is the flag working, not a fault.
 
 ### Rollback (voice keeps working)
 

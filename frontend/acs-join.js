@@ -39,6 +39,13 @@ let FULL_DUPLEX = new URLSearchParams(location.search).get("duplex") === "full";
 // pre-2026-08-03 behaviour (mic-only capture). This leg is live-verified, so
 // there is a way back that does not need a redeploy.
 const REMOTE_CAPTURE = new URLSearchParams(location.search).get("remote") !== "0";
+// ?tile=raw hands ACS the avatar's WebRTC video track directly, bypassing the
+// canvas composite. It is a measurement tool: the canvas adds a <video> render
+// plus captureStream between the transport and the tile, and the honest answer
+// to "is that hurting lip-sync?" is to remove it and look, not to reason about
+// it. The cost is every overlay — placard, thinking caption, wake-phrase hint —
+// so this is a diagnostic, not a default.
+const TILE_RAW = new URLSearchParams(location.search).get("tile") === "raw";
 
 const CALLING_UMD = "/vendor/communication-calling-1.40.1.js";
 const COMMON_ESM = "https://esm.sh/@azure/communication-common@2.3.1";
@@ -94,15 +101,18 @@ let callAgent = null;
 // in ensureEnabled() so the participant name is never hardcoded.
 let avatarDisplayName = "Avatar";
 let _configReady = null;
-// Avatar face: when the server enables it, the joiner sends an
-// outgoing video tile so the avatar is a *visible* participant. The first
-// increment is a branded placard (logo + name + a "listening" pulse) drawn to a
-// canvas and sent via the ACS raw-video LocalVideoStream — the same path a live
-// animated-avatar track will use next.
+// Avatar face: when the server enables it, the joiner sends an outgoing video
+// tile so the avatar is a *visible* participant. The tile is a canvas we paint —
+// the avatar's WebRTC video frames when the transport is up, a branded placard
+// (logo + name + status pulse) before that and whenever the track goes quiet —
+// handed to ACS through the raw-video LocalVideoStream. ?tile=raw swaps the
+// composite out for the track itself; see TILE_RAW.
 let avatarVideoEnabled = false;
 let _LocalVideoStreamCtor = null; // captured from the SDK at join() time
-let localVideoStream = null;      // ACS LocalVideoStream wrapping the placard canvas
+let localVideoStream = null;      // ACS LocalVideoStream (canvas composite, or the raw track under ?tile=raw)
 let placardStream = null;         // MediaStream from canvas.captureStream()
+let rawTileStream = null;         // MediaStream wrapping the avatar track under ?tile=raw
+let tileMode = "canvas";          // reported in capture stats so the A/B is unambiguous
 let placardTimerId = null;        // canvas redraw timer (setInterval keeps frames flowing even when the tab is backgrounded)
 let placardDraw = null;           // current tile paint fn, so decoded frames can drive it
 let placardImg = null;            // brand logo image, loaded once from /brand/color.png
@@ -174,8 +184,53 @@ function noteBuildId(id) {
 // canvas we draw ourselves, so it can carry the same cue. Voice Live's built-in
 // StaticInterimResponseConfig is not an option here: it requires the model
 // binding, and the in-call session runs the Foundry agent binding for tools.
+//
+// The wording and the cadence are the web app's (app.js THINKING_*), so a change
+// to the copy lands on both surfaces. Two differences, both deliberate:
+//
+//   - Shown after 250ms rather than the web's 700ms. A brief blank on a screen is
+//     nothing; in a meeting the room hears silence and starts talking over her.
+//   - Derived from elapsed time on each frame instead of setInterval/setTimeout.
+//     Background tabs clamp timers to ~1Hz and this tab sits behind the Teams
+//     window, so timer-driven rotation would lurch. Same behaviour, no timers.
 let thinkingSince = 0;
 const THINKING_SHOW_AFTER_MS = 250;
+const THINKING_CAPTIONS = [
+    "Looking through the records…",
+    "Checking the latest information…",
+    "Pulling the details together…",
+];
+const THINKING_SLOW_CAPTION = "Just a moment — getting you a reliable answer…";
+const THINKING_ROTATE_MS = 2200;
+const THINKING_SLOW_MS = 3500;
+// Hard ceiling, mirroring the web's failsafe timer: if the "off" message is ever
+// lost the cue expires on its own instead of pulsing at the room forever.
+const THINKING_MAX_MS = 25000;
+
+// The caption to show right now, or "" when the cue is down.
+function thinkingCaption() {
+    if (!thinkingSince) return "";
+    const age = performance.now() - thinkingSince;
+    if (age < THINKING_SHOW_AFTER_MS || age > THINKING_MAX_MS) return "";
+    const shown = age - THINKING_SHOW_AFTER_MS;
+    if (shown >= THINKING_SLOW_MS) return THINKING_SLOW_CAPTION;
+    const i = Math.floor(shown / THINKING_ROTATE_MS) % THINKING_CAPTIONS.length;
+    return THINKING_CAPTIONS[i];
+}
+
+// Shrink a label until it fits, then report its width. The captions are far
+// longer than the single word this tile used to carry, and Teams crops the tile
+// horizontally on narrow layouts, so overflow is a real outcome, not a theory.
+function fitLabel(ctx, text, weight, startPx, minPx, maxWidth) {
+    let px = startPx;
+    const font = (p) => `${weight} ${p}px -apple-system, 'Segoe UI', system-ui, sans-serif`;
+    ctx.font = font(px);
+    while (ctx.measureText(text).width > maxWidth && px > minPx) {
+        px -= 1;
+        ctx.font = font(px);
+    }
+    return { px, width: ctx.measureText(text).width };
+}
 // A suppressed utterance looks exactly like a dead microphone from the room's
 // side: she heard the question, understood it, and deliberately said nothing.
 // The tile is ours to draw, so it carries the reason. Silent by design — the
@@ -552,6 +607,7 @@ function reportCaptureStats() {
             drawFps,
             vFps,
             pumpVia: framePumpVia,
+            tile: tileMode,
             build: clientBuild,
             stale: buildStale,
             hidden: document.visibilityState !== "visible",
@@ -768,9 +824,10 @@ function reportVideo(state, detail) {
     const line = detail ? `${state}: ${detail}` : state;
     console.log(`[acs-join] video ${line}`);
     if (state === "failed" || state === "unsupported") log(`Avatar video ${line}`);
-    // startPlacardVideo() runs before openMediaSocket(), so the socket may not
-    // exist yet — and is usually still CONNECTING — when the first report fires.
-    // Queue rather than drop: the error detail is the whole point, and
+    // openMediaSocket() runs first (inside startBrowserMedia, awaited just before
+    // startPlacardVideo), so the socket normally exists by the time the first video
+    // report fires — but it is still CONNECTING, and send() on a CONNECTING socket
+    // throws. Queue rather than drop: the error detail is the whole point, and
     // capture_stats only carries the bare state.
     pendingVideoReports.push({
         type: "video_status", state, detail: detail ? String(detail) : "",
@@ -783,6 +840,9 @@ let avatarPc = null;                // RTCPeerConnection carrying the avatar's m
 let avatarVideoEl = null;           // offscreen <video> fed by the WebRTC video track
 let avatarPrimeEl = null;           // muted <audio> keeping the voice track flowing
 let avatarPumpTrack = null;         // cloned video track feeding the frame pump
+let avatarVideoTrack = null;        // her received video track, kept so ?tile=raw can
+                                    // still be applied if the track lands before the
+                                    // tile exists (openMediaSocket runs first)
 let avatarVoiceSource = null;       // her voice, wired into the outgoing call audio
 let avatarAnalyser = null;          // level meter driving "she is speaking"
 let avatarLevelBuf = null;
@@ -952,14 +1012,16 @@ function attachAvatarWebRtcTrack(event) {
                 if (avatarVideoEl !== v) return;
                 avatarHasPicture = true;
                 reportVideo("face-live", `${v.videoWidth}x${v.videoHeight}`);
-                startAvatarFramePump(track, v);
+                if (!TILE_RAW) startAvatarFramePump(track, v);
             });
             v.addEventListener("error", () => {
                 const err = v.error;
                 reportVideo("failed", `video element: code=${err ? err.code : "?"}`);
             });
             avatarVideoEl = v;
+            avatarVideoTrack = track;
             v.play().catch((err) => reportVideo("failed", `play: ${(err && err.name) || err}`));
+            if (TILE_RAW) switchTileToRawTrack(track);
             return;
         }
 
@@ -993,6 +1055,40 @@ function attachAvatarWebRtcTrack(event) {
         console.log("[acs-join] avatar voice wired to the outgoing call audio");
     } catch (e) {
         reportVideo("failed", `track: ${(e && e.message) || e}`);
+    }
+}
+
+// ?tile=raw: replace the canvas composite with the avatar's own video track as
+// the outgoing tile source. Strictly an experiment — it removes the <video> →
+// canvas → captureStream hop so the two paths can be compared on the same call.
+//
+// Safe against the srcObject hook without any extra bookkeeping: the stream is
+// video-only, and attachRemoteMediaStream() returns immediately when a stream
+// carries no audio tracks. Nothing here can reach the room tap.
+function switchTileToRawTrack(track) {
+    if (!localVideoStream) {
+        // The media socket opens before the tile does, so her track can land first.
+        // startPlacardVideo() re-applies from avatarVideoTrack once the tile exists.
+        reportVideo("raw-deferred", "tile not started yet");
+        return;
+    }
+    if (typeof localVideoStream.setMediaStream !== "function") {
+        reportVideo("raw-unsupported", "LocalVideoStream.setMediaStream missing");
+        log("?tile=raw unavailable in this SDK build — staying on the canvas.");
+        return;
+    }
+    try {
+        rawTileStream = new MediaStream([track]);
+        localVideoStream.setMediaStream(rawTileStream);
+        tileMode = "raw";
+        // Stop painting. Nothing consumes the canvas now, and leaving the compositor
+        // running would leave its CPU cost in the very measurement it is here to make.
+        if (placardTimerId) { try { clearInterval(placardTimerId); } catch (_) {} placardTimerId = null; }
+        placardDraw = null;
+        reportVideo("tile-raw", "canvas bypassed");
+        log("Tile: raw avatar track — overlays are off for this comparison.");
+    } catch (e) {
+        reportVideo("failed", `raw tile: ${(e && e.message) || e}`);
     }
 }
 
@@ -1107,6 +1203,7 @@ function teardownAvatarVideo() {
     avatarPrimeEl = null;
     try { if (avatarPumpTrack) avatarPumpTrack.stop(); } catch (_) {}
     avatarPumpTrack = null;
+    avatarVideoTrack = null;
     try { if (avatarVoiceSource) avatarVoiceSource.disconnect(); } catch (_) {}
     avatarVoiceSource = null;
     avatarAnalyser = null;
@@ -1202,10 +1299,11 @@ async function startPlacardVideo() {
     }
     function drawThinking(t) {
         // Only after a short delay, so quick answers never flash a badge.
-        if (!thinkingSince || performance.now() - thinkingSince < THINKING_SHOW_AFTER_MS) return;
-        const label = "thinking";
-        ctx.font = "500 20px -apple-system, 'Segoe UI', system-ui, sans-serif";
-        const w = ctx.measureText(label).width + 62;
+        const label = thinkingCaption();
+        if (!label) return;
+        const maxW = canvas.width * 0.94 - 62;
+        const fit = fitLabel(ctx, label, "500", 20, 13, maxW);
+        const w = fit.width + 62;
         const x = (canvas.width - w) / 2;
         // Keep the badge inside the 16:9 centre crop. The tile canvas is 4:3 and
         // Teams crops to its own aspect, lopping off roughly the top and bottom
@@ -1227,7 +1325,7 @@ async function startPlacardVideo() {
             ctx.fill();
         }
         ctx.fillStyle = "rgba(255,255,255,.92)";
-        ctx.fillText(label, x + 52, y + 24);
+        ctx.fillText(label, x + 52, y + 17 + fit.px * 0.35);
     }
     function drawHint() {
         if (!hintUntil || performance.now() > hintUntil) return;
@@ -1280,20 +1378,23 @@ async function startPlacardVideo() {
         ctx.fillStyle = "#ffffff";
         ctx.font = "600 34px -apple-system, 'Segoe UI', system-ui, sans-serif";
         ctx.fillText(name, canvas.width / 2, H * 0.79);
-        // Status pulse (and frame keep-alive). On the placard the status line
-        // itself carries the cue, so no separate badge is drawn here.
-        const thinking = thinkingSince
-            && performance.now() - thinkingSince >= THINKING_SHOW_AFTER_MS;
-        const status = thinking ? "thinking" : "listening";
+        // Status line (and frame keep-alive). The placard has no face to sit
+        // under, so the caption rides here rather than in a separate badge —
+        // stacking the two in the same safe band would collide with the name.
+        // Dot and text are centred as a group so a long caption stays put.
+        const caption = thinkingCaption();
+        const thinking = !!caption;
+        const label = thinking ? caption : "listening";
+        const fit = fitLabel(ctx, label, "400", 18, 12, canvas.width * 0.9 - 24);
+        const left = (canvas.width - (24 + fit.width)) / 2;
         const r = 6 + 2 * Math.sin(t * (thinking ? 6 : 3));
         ctx.beginPath();
         ctx.fillStyle = thinking ? "#f59e0b" : "#22c55e";
-        ctx.arc(canvas.width / 2 - 64, H * 0.823, r, 0, Math.PI * 2);
+        ctx.arc(left + 8, H * 0.823, r, 0, Math.PI * 2);
         ctx.fill();
         ctx.fillStyle = "rgba(255,255,255,.75)";
-        ctx.font = "400 18px -apple-system, 'Segoe UI', system-ui, sans-serif";
         ctx.textAlign = "left";
-        ctx.fillText(status, canvas.width / 2 - 48, H * 0.84);
+        ctx.fillText(label, left + 24, H * 0.84);
         drawHint();
         keepFrameAlive();
     }
@@ -1310,6 +1411,8 @@ async function startPlacardVideo() {
     draw();
     await call.startVideo(localVideoStream);
     reportVideo("tile-on", `${canvas.width}x${canvas.height}`);
+    // Her track may already have arrived — the media socket opens before this runs.
+    if (TILE_RAW && avatarVideoTrack) switchTileToRawTrack(avatarVideoTrack);
     watchTabVisibility();
 }
 
@@ -1347,6 +1450,10 @@ function teardownPlacardVideo() {
     }
     try { if (placardStream) placardStream.getTracks().forEach((t) => t.stop()); } catch (_) {}
     placardStream = null;
+    // The raw tile shares the avatar's track; teardownAvatarVideo() owns stopping
+    // it, so only drop the wrapper here.
+    rawTileStream = null;
+    tileMode = "canvas";
 }
 
 function teardownMedia() {

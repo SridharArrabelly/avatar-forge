@@ -93,11 +93,12 @@ Two things this diagram implies that [channel C](c-in-call-media-bot.md) does no
 >   inference, not measurement.
 > - **What the second wired track is.** `wiredTracks=2` against `remoteStreams=1` means
 >   something beyond the one remote participant was attached — plausibly our own
->   outgoing audio being rendered. `remoteMaxRms` was non-zero during one
->   `selfTalking=True` window, which is consistent with that. No feedback loop occurred
->   because the `selfTalking` half-duplex gate suppresses capture while the avatar
->   speaks, but that gate is now load-bearing rather than belt-and-braces. Logging track
->   ids would settle it.
+>   outgoing audio being rendered. `remoteMaxRms` was non-zero while she was speaking,
+>   which is consistent with that. No feedback loop occurred because capture was
+>   suppressed during her speech — the gate that is now `roomGate` in
+>   `applyCaptureGates()`, which holds the room tap shut whenever she is audible.
+>   That gate is load-bearing rather than belt-and-braces. Logging track ids would
+>   settle what the track actually was.
 >
 > The standing caveat still applies: this rides an implementation detail, not a
 > contract. If a future SDK renders remote audio purely through Web Audio, the hook
@@ -131,6 +132,20 @@ those overlays are composited onto the tile. Compositing costs a frame or two of
 **constant** delay; unlike a scheduling cursor it has nothing that can accumulate,
 so it cannot drift.
 
+That claim is now falsifiable rather than asserted: `?tile=raw` hands ACS her video
+track directly and turns the compositor off, so the two can be compared on one call.
+The overlays go with it, which is the reason it is a flag and not the default.
+
+The overlay *wording* converges even though the drawing cannot. The "thinking"
+captions and their cadence are `app.js`'s `THINKING_*` constants — same three
+rotating lines, same 2.2s rotation, same escalation to the slow line after 3.5s,
+same 25s failsafe ceiling — so a change to the copy lands on both surfaces. Two
+things differ on purpose: the cue appears after 250ms rather than 700ms, because a
+brief blank on a screen is nothing but silence in a meeting invites someone to
+start talking; and the rotation is derived from elapsed time on each painted frame
+instead of `setInterval`, because background tabs clamp timers to ~1Hz and this tab
+sits behind the Teams window.
+
 The practical consequence is the point: a fix to the web app's avatar path is
 inherited here, because it *is* the same path.
 
@@ -153,6 +168,7 @@ Tunable per session, so a live call can be adjusted without a redeploy.
 | `?mic=0` | mic on | Drops the local microphone tap. Isolates the srcObject hook — the only way to prove the leg hears *other* participants rather than the operator. |
 | `?remote=0` | hook on | Disables the srcObject hook. Kill switch back to mic-only behaviour. |
 | `?duplex=full` | half | Keeps the microphone live while she speaks, so a human can cut her off mid-answer. Also a checkbox on the join page, toggleable mid-call. |
+| `?tile=raw` | canvas | Sends her WebRTC video track to the meeting **as-is**, bypassing the canvas composite. Costs every overlay (placard, thinking caption, wake hint). It exists to answer "is the compositor hurting lip-sync?" by measurement — run a turn each way on the same call and compare. |
 
 ### Why barge-in is half-duplex by default
 
