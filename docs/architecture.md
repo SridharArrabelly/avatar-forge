@@ -58,10 +58,9 @@ and routes turns through the agent so tool calls resolve server-side in Foundry.
 audio forwarding, event processing). The browser only:
 
 - captures the microphone → sends PCM16 audio over the WebSocket;
-- plays back PCM16 audio received over the WebSocket;
-- relays WebRTC signaling for the avatar video (SDP offer/answer through the backend)
-  and renders the avatar via a direct WebRTC peer connection to Azure;
-- (WebSocket video mode) receives fMP4 chunks for MediaSource Extensions playback.
+- plays back PCM16 audio received over the WebSocket, when the avatar is off;
+- relays WebRTC signaling for the avatar (SDP offer/answer through the backend) and
+  receives her face *and* voice as media tracks on a direct peer connection to Azure.
 
 The **in-call avatar** (issue #27) reuses the same Voice Live + Foundry pipeline inside a
 *live Teams meeting*. Two transports exist, and they are not equivalent:
@@ -71,12 +70,15 @@ The **in-call avatar** (issue #27) reuses the same Voice Live + Foundry pipeline
   way to receive the **mixed audio of every participant**. It forwards raw PCM16 over a
   WebSocket (`/ws/acs/audio`) to [`backend/acs/bridge.py`](../backend/acs/bridge.py)'s
   `AcsVoiceBridge`, which adapts it onto the unchanged `VoiceSessionHandler`
-  (wake-phrase turn-taking, barge-in). The avatar's face is decoded from Voice Live's
-  fragmented-MP4 avatar stream to NV12 in Python and sent back as a camera tile.
-- **Browser joiner (`frontend/acs-join.html`) — a fallback for demos.** Joins with the
-  ACS Calling Web SDK (anonymous, lobby-governed, no admin) over `/ws/acs/browser`. It
-  can only ever hear **the operator's own microphone**, because Teams isolates
-  per-client audio. Useful when you have no admin rights; not a substitute for C.
+  (wake-phrase turn-taking, barge-in). A `VideoSocket` cannot negotiate a peer
+  connection, so this leg keeps Voice Live in fragmented-MP4 mode and decodes the face
+  to NV12 in Python before sending it back as a camera tile.
+- **Browser joiner (`frontend/acs-join.html`) — no admin required.** Joins with the
+  ACS Calling Web SDK (anonymous, lobby-governed) over `/ws/acs/browser`. It hears the
+  other participants by intercepting `srcObject` as the SDK attaches their streams for
+  playback — verified live — and runs the **same capture and avatar transport as the
+  web app**, so a fix there is inherited here. It rides an implementation detail rather
+  than a contract, which is the trade against C.
 
 Both are non-recording and fully opt-in — every `/api/acs/*` route returns 503 when
 disabled. An optional Teams meeting **side-panel control panel**

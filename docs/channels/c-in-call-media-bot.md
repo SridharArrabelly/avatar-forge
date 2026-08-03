@@ -59,7 +59,7 @@ flowchart LR
 
     BRJ["<b>Browser joiner</b> — acs-join.html<br/><i>no VM, no admin consent</i><br/><b>hears participants via the srcObject hook</b>"]
     MT -. "remote participant audio" .-> BRJ
-    BRJ <-. "wss · PCM16 + fMP4" .-> WSB
+    BRJ <-. "wss · PCM16 up<br/>avatar rides its own WebRTC track" .-> WSB
 ```
 
 The two paths differ **only at the edge** — both end at the same

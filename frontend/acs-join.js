@@ -140,9 +140,7 @@ let displayStream = null;       // getDisplayMedia stream (far-side / Teams app 
 let displaySource = null;       // MediaStreamSource for the far-side audio
 let captureFrames = 0;          // ScriptProcessor callbacks (diagnostics)
 let captureMaxRms = 0;          // peak RMS since last stats report (diagnostics)
-let playCursor = 0;             // scheduling cursor for outbound playback
-let avLead = 0;                 // seconds playback is scheduled ahead of the clock
-let avResyncs = 0;              // times the drift guard had to pull it back
+let playCursor = 0;             // scheduling cursor for the no-avatar PCM path
 // Tile render health. The joiner tab generates the outgoing video, so anything
 // that throttles its rendering (backgrounding, occlusion by the Teams window,
 // GPU/power state) degrades the tile everyone else sees. Reported so a "it went
@@ -229,9 +227,10 @@ function openMediaSocket() {
                 const msg = JSON.parse(ev.data);
                 if (msg.type === "stop_playback") {
                     flushPlayback();
-                    skipAvatarToLiveEdge();
-                } else if (msg.type === "video_data") {
-                    handleAvatarChunk(msg.delta);
+                } else if (msg.type === "ice_servers") {
+                    setupAvatarWebRTC(msg.iceServers || []);
+                } else if (msg.type === "avatar_sdp_answer") {
+                    handleAvatarSdpAnswer(msg.serverSdp || "");
                 } else if (msg.type === "thinking") {
                     thinkingSince = msg.active ? performance.now() : 0;
                     if (msg.active) hintUntil = 0; // answering beats nudging
@@ -247,27 +246,22 @@ function openMediaSocket() {
 }
 
 // Voice Live PCM16 -> schedule into the outgoing call audio.
-// A small jitter buffer (lead time) absorbs network/WS timing variance so the
-// scheduled chunks play gap-free instead of underrunning into clicks/breakups.
-// It doubles as the A/V sync offset:
-// Offset between the audio we schedule and the picture MediaSource is playing.
-// These are NOT equal-length paths: video goes through MediaSource buffering,
-// decode, a canvas repaint and a WebRTC encode, while the PCM goes almost
-// straight out — so the audio has to be held back to meet it. Measured live
-// in-meeting: at 0.44s the voice trailed the lips, at 0.15s it ran ahead of
-// them, so the crossover sits between. Tunable per-join with ?lead=0.30 so it
-// can be dialled in during a call instead of needing a redeploy.
-const _leadParam = Number(new URLSearchParams(location.search).get("lead"));
-const TARGET_LEAD = (Number.isFinite(_leadParam) && _leadParam > 0 && _leadParam <= 1)
-    ? _leadParam
-    : 0.28;
-const PLAYBACK_LEAD = TARGET_LEAD; // seconds of cushion ahead of the play clock
-// Hard ceiling before we resync. Silence-shaving (below) does the routine work;
-// this only catches a burst big enough that waiting for silence would be worse.
-const MAX_PLAYBACK_LEAD = TARGET_LEAD + 0.15;
+//
+// This is the NO-AVATAR path only. With the avatar on, her voice arrives as a
+// WebRTC media track and is wired straight to outboundDest — the server stops
+// sending PCM entirely, so nothing below runs.
+//
+// It used to carry a second job: holding the audio back to meet a picture that
+// had been through MediaSource buffering, decode, a canvas repaint and an encode.
+// That reconstruction is gone, and with it the tunable lead, the drift guard and
+// the silence shaver that fought each other over where the cursor should sit.
+// What is left is an ordinary jitter buffer — enough cushion that chunks play
+// gap-free instead of underrunning into clicks.
+const PLAYBACK_LEAD = 0.12; // seconds of cushion ahead of the play clock
+const MAX_PLAYBACK_LEAD = 0.4;
 const CAPTURE_TAIL = 0.4;   // extra mic-mute time after playback drains (anti-echo)
-// Peak amplitude (0..1) above which a chunk counts as *speech* rather than the
-// avatar's idle silence. See the half-duplex note in playPcmChunk.
+// Peak amplitude (0..1) above which a chunk counts as *speech* rather than
+// digital silence. See the half-duplex note below.
 const SPEECH_PEAK = 0.01;
 function playPcmChunk(int16) {
     if (!audioCtx || !outboundDest) return;
@@ -277,47 +271,27 @@ function playPcmChunk(int16) {
         const a = f32[i] < 0 ? -f32[i] : f32[i];
         if (a > peak) peak = a;
     }
-    const now = audioCtx.currentTime;
-    // Shave the A/V lead back down during silence (see TARGET_LEAD). Dropping the
-    // chunk leaves playCursor where it is, so the clock catches up to it.
-    if (peak < SPEECH_PEAK && playCursor > now + TARGET_LEAD) {
-        avLead = playCursor - now;
-        return;
-    }
     const buf = audioCtx.createBuffer(1, f32.length, MEDIA_SAMPLE_RATE);
     buf.copyToChannel(f32, 0);
     const node = audioCtx.createBufferSource();
     node.buffer = buf;
     node.connect(outboundDest);
+    const now = audioCtx.currentTime;
     // If we've fallen behind (or this is the first chunk of a turn), rebuild the
-    // cushion rather than scheduling right at "now", which would underrun.
-    if (playCursor < now + 0.02) {
+    // cushion rather than scheduling right at "now", which would underrun. The
+    // ceiling catches a burst big enough to push playback audibly late.
+    if (playCursor < now + 0.02 || playCursor > now + MAX_PLAYBACK_LEAD) {
         playCursor = now + PLAYBACK_LEAD;
-    } else if (playCursor > now + MAX_PLAYBACK_LEAD) {
-        // A/V drift guard. playCursor only ever reset when it fell BEHIND the
-        // clock, which with the avatar enabled never happens: the muxed AAC track
-        // streams continuously for the whole session (she idles on camera between
-        // turns), so chunks never stop arriving. Every network burst schedules a
-        // clump further into the future and the lead ratchets up permanently —
-        // by minutes into a call the audio ran seconds behind the MediaSource
-        // video, which plays live. That is the "lips move, voice follows" gap.
-        // Without the avatar there are gaps between turns, the cursor falls
-        // behind and self-corrects, which is why this only showed up with video.
-        avResyncs += 1;
-        playCursor = now + TARGET_LEAD;
     }
-    avLead = playCursor - now;
     node.start(playCursor);
     playCursor += buf.duration;
-    // Half-duplex: while Nuru is speaking (and for a short tail afterwards), the
-    // mic would otherwise capture her own voice from the Teams-client speaker and
-    // feed it back as a new "question". Suppress capture until playback drains.
+    // Half-duplex: while she is speaking (and for a short tail afterwards), the
+    // mic would otherwise capture her voice from the Teams-client speaker and feed
+    // it back as a new "question". Suppress capture until playback drains.
     //
-    // Arm this on ACTUAL SPEECH, not merely on "a chunk arrived". With the avatar
-    // enabled our PCM comes from the avatar's muxed AAC track, which streams
-    // CONTINUOUSLY for the whole session (she idles on camera between turns) — so
-    // "a chunk arrived" is true forever, which pinned captureMutedUntil ahead of
-    // the clock and wedged the mic shut: she never heard a single question.
+    // Arm on ACTUAL SPEECH, never merely on "a chunk arrived" — Voice Live sends
+    // exact digital silence between turns rather than nothing at all, so "a chunk
+    // arrived" is true forever and would pin the gate shut for the whole call.
     if (peak >= SPEECH_PEAK) captureMutedUntil = playCursor + CAPTURE_TAIL;
     scheduledSources.push(node);
     node.onended = () => {
@@ -326,15 +300,18 @@ function playPcmChunk(int16) {
     };
 }
 
-// Barge-in: drop everything queued so Nuru stops mid-sentence when a human talks.
+// Barge-in. The server has already cancelled the response, so with the avatar on
+// her voice track simply stops at the source and there is nothing queued here to
+// drop — this reduces to reopening the mic. The buffer flush still matters on the
+// no-avatar path, where chunks are scheduled up to PLAYBACK_LEAD into the future.
 function flushPlayback() {
     for (const node of scheduledSources) {
         try { node.stop(); } catch (_) { /* already stopped */ }
     }
     scheduledSources = [];
     playCursor = audioCtx ? audioCtx.currentTime : 0;
-    avLead = 0;
     captureMutedUntil = 0; // playback cancelled — re-open the mic immediately
+    avatarLastAudibleMs = 0;
 }
 
 // Capture the meeting's remote audio and stream PCM16 to the server.
@@ -432,6 +409,10 @@ function applyCaptureGates() {
 
 // One captured frame (Int16 PCM, 960 samples / 40ms), whichever node produced it.
 function onCaptureFrame(buf) {
+    // Drive the "is she speaking" meter from here rather than from a rAF loop.
+    // This runs on the audio thread's cadence, which browsers do not throttle;
+    // rAF stops dead when the tab is hidden, and this tab lives behind Teams.
+    sampleAvatarSpeaking();
     // Render watchdog. setInterval is clamped to ~1Hz and requestVideoFrameCallback
     // stops entirely once the tab is hidden or fully occluded — and the joiner tab
     // normally sits behind the Teams window, so the outgoing tile can silently
@@ -562,11 +543,12 @@ function reportCaptureStats() {
             remoteMaxRms: Number(remoteMaxRms.toFixed(5)),
             remoteVia: Array.from(remoteWiredVia).join("+") || "none",
             videoState,
-            videoChunks: avatarChunksIn,
             avatarPic: avatarHasPicture,
-            avLead: Number(avLead.toFixed(3)),
-            avResyncs,
-            lead: TARGET_LEAD,
+            // ICE state of the avatar's peer connection. The picture and her
+            // voice both ride it, so "no face and no answer" and "no face only"
+            // are different faults and this is what tells them apart.
+            avatarIce: avatarPc ? avatarPc.iceConnectionState : "none",
+            avatarVoice: !!avatarAnalyser,
             drawFps,
             vFps,
             pumpVia: framePumpVia,
@@ -613,6 +595,11 @@ function attachRemoteMediaStream(ms, via) {
         if (!tracks.length) return;
         const id = tracks[0].id;
         if (wiredRemoteTracks.has(id)) return;
+        // The srcObject hook fires on EVERY media element on this page, including
+        // the two we create for the avatar. Wiring her own voice into the room tap
+        // would post it straight back to Voice Live as the next question, so she
+        // would interrupt herself on every answer.
+        if (avatarOwnTracks.has(id)) return;
         // audioCtx is created in setupOutboundAudio() before join(), but a stream
         // arriving first must not be dropped on the floor.
         if (!audioCtx) { pendingRemoteStreams.push({ ms, via }); return; }
@@ -742,19 +729,28 @@ function startRemoteAudioCapture() {
     });
 }
 
-// ───────── live avatar face (MediaSource) ─────────
-// The server runs the Voice Live session in avatar/websocket mode and relays the
-// raw fragmented-MP4 stream here as {type:"video_data", delta:<base64>}. We play
-// it MUTED in an offscreen <video> purely as a picture source: the answer AUDIO
-// still arrives separately as decoded PCM16 on the same socket, so the whole
-// turn-taking/barge-in/mute chain stays exactly where it already works. The
-// <video> is then painted onto the same canvas that already feeds the outgoing
-// ACS video tile, so the face replaces the placard without touching transport.
-const FMP4_MIME_CODEC = 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"';
+// ───────── live avatar face + voice (WebRTC) ─────────
+// The avatar arrives here exactly as it does in the web app: Voice Live
+// negotiates a peer connection and delivers the rendered face and the answer
+// audio as two tracks on it, muxed and clocked by the transport.
+//
+// This replaced a design where the server relayed a fragmented-MP4 stream and
+// this file rebuilt A/V sync by hand — MediaSource for the picture, a scheduling
+// cursor with a tunable lead for the voice, plus a drift guard and a silence
+// shaver to stop the two ratcheting apart. Every lip-sync complaint traced to
+// that reconstruction, and none of it exists any more: the voice is wired
+// straight into the outgoing call audio, and the picture is painted off a
+// <video> the transport is driving. Fix something on the web app's avatar path
+// now and this channel inherits it, because it IS the same path.
+//
+// The outgoing tile is still a canvas we composite, because a meeting has no
+// screen for the "thinking" cue or the wake-phrase hint — those overlays ride on
+// top of the face. Compositing costs a frame or two of CONSTANT delay; unlike a
+// scheduling cursor it has nothing that can accumulate, so it cannot drift.
 
-// Video has three independent ways to fail silently (startVideo rejecting,
-// MediaSource refusing the codec, addSourceBuffer throwing) and every one of them
-// used to land in console.warn — invisible to the operator running the joiner and
+// Video has several ways to fail silently (startVideo rejecting, ICE never
+// connecting, an SDP answer that will not apply) and every one of them used to
+// land in console.warn — invisible to the operator running the joiner and
 // invisible in the container logs. A face that never appears then looks identical
 // to a face that was never enabled. Report the state to BOTH the on-page log and
 // the backend so it is diagnosable without a browser console.
@@ -772,85 +768,296 @@ function reportVideo(state, detail) {
     const line = detail ? `${state}: ${detail}` : state;
     console.log(`[acs-join] video ${line}`);
     if (state === "failed" || state === "unsupported") log(`Avatar video ${line}`);
-    // startPlacardVideo() runs immediately after openMediaSocket(), so the socket
-    // is usually still CONNECTING when the first report fires. Queue rather than
-    // drop: the error detail is the whole point, and capture_stats only carries
-    // the bare state.
+    // startPlacardVideo() runs before openMediaSocket(), so the socket may not
+    // exist yet — and is usually still CONNECTING — when the first report fires.
+    // Queue rather than drop: the error detail is the whole point, and
+    // capture_stats only carries the bare state.
     pendingVideoReports.push({
         type: "video_status", state, detail: detail ? String(detail) : "",
     });
     flushVideoReports();
 }
-let avatarLiveVideo = false;      // server says the live stream is enabled
-let avatarVideoEl = null;         // offscreen <video> fed by MediaSource
-let avatarMediaSource = null;
-let avatarSourceBuffer = null;
-let avatarChunkQueue = [];
-let avatarHasPicture = false;     // first decoded frame seen -> safe to paint
-let avatarChunksIn = 0;           // fMP4 deltas received from the server
-let appendFailed = false;         // report the first appendBuffer failure only
-let avatarLastDrawMs = 0;         // last time the video actually advanced
 
-function setupAvatarVideo() {
-    if (avatarVideoEl) return;
-    if (!("MediaSource" in window) || !MediaSource.isTypeSupported(FMP4_MIME_CODEC)) {
-        reportVideo("unsupported", `MediaSource cannot play ${FMP4_MIME_CODEC}`);
-        return;
+let avatarLiveVideo = false;        // server says the live avatar stream is enabled
+let avatarPc = null;                // RTCPeerConnection carrying the avatar's media
+let avatarVideoEl = null;           // offscreen <video> fed by the WebRTC video track
+let avatarPrimeEl = null;           // muted <audio> keeping the voice track flowing
+let avatarPumpTrack = null;         // cloned video track feeding the frame pump
+let avatarVoiceSource = null;       // her voice, wired into the outgoing call audio
+let avatarAnalyser = null;          // level meter driving "she is speaking"
+let avatarLevelBuf = null;
+let avatarLastAudibleMs = 0;        // last moment her voice carried real energy
+let avatarHasPicture = false;       // first frame decoded -> safe to paint
+let avatarLastDrawMs = 0;           // last time the picture actually advanced
+// Track ids belonging to the avatar. installSrcObjectHook() intercepts EVERY
+// srcObject assignment on the page, so without this her own voice would be wired
+// into the room tap and posted back to Voice Live as a question — she would
+// interrupt herself on every single answer.
+const avatarOwnTracks = new Set();
+
+// ── ICE, ported from app.js ──
+// Read an ICE candidate's type ("host" / "srflx" / "relay"). Chromium exposes
+// `.type` directly; parse the SDP candidate line as a fallback.
+function iceCandidateType(candidate) {
+    if (!candidate) return null;
+    if (candidate.type) return candidate.type;
+    const parts = String(candidate.candidate || "").split(" ");
+    const i = parts.indexOf("typ");
+    return i >= 0 ? (parts[i + 1] || null) : null;
+}
+// A "host" candidate is a private LAN address and can never reach the Azure
+// avatar service; only srflx (NAT-reflexive) or relay (TURN) can. An offer
+// carrying nothing but a host candidate fails exactly like an empty one, so the
+// question is not "do we have a candidate?" but "do we have a reachable one?".
+function isConnectableCandidate(candidate) {
+    const t = iceCandidateType(candidate);
+    return t === "srflx" || t === "relay";
+}
+// Keep gathering briefly after the first relay candidate so its siblings land in
+// the same offer. This app does NOT trickle ICE — the offer must carry every
+// candidate it will ever have — so whatever is in it is all there will ever be.
+const ICE_RELAY_SETTLE_MS = 250;
+const ICE_GATHER_TIMEOUT_MS = 1500;
+const ICE_GATHER_MAX_WAIT_MS = 8000;
+
+// Voice Live sends its ICE servers once the session is configured; that is the
+// signal to negotiate. Built from scratch each time — app.js keeps a prewarmed
+// peer connection to shave startup off a user-facing page load, which buys
+// nothing here: the joiner negotiates once, unattended, while the operator is
+// still pasting a meeting link.
+function setupAvatarWebRTC(iceServers) {
+    if (avatarPc || !avatarLiveVideo) return;
+    reportVideo("connecting", `${(iceServers || []).length} ICE server(s)`);
+    try {
+        const iceConfig = (iceServers || []).map((s) => ({
+            urls: s.urls,
+            username: s.username || undefined,
+            credential: s.credential || undefined,
+        }));
+        const pc = new RTCPeerConnection({ iceServers: iceConfig, iceCandidatePoolSize: 4 });
+        avatarPc = pc;
+        pc.ontrack = (event) => attachAvatarWebRtcTrack(event);
+        pc.oniceconnectionstatechange = () => {
+            if (pc !== avatarPc) return;
+            const st = pc.iceConnectionState;
+            if (st === "failed" || st === "disconnected") reportVideo("failed", `ICE ${st}`);
+        };
+
+        let offerSent = false;
+        let relaySettleTimer = null;
+        let connectableCount = 0;
+        let awaitingUsable = false;
+        const sendOfferOnce = (reason) => {
+            if (offerSent) return;
+            offerSent = true;
+            clearTimeout(relaySettleTimer);
+            if (!mediaWs || mediaWs.readyState !== WebSocket.OPEN) {
+                reportVideo("failed", "media socket closed before the SDP offer");
+                return;
+            }
+            // Base64-encoded JSON in both directions — the shape Voice Live expects.
+            const sdpBase64 = btoa(JSON.stringify(pc.localDescription));
+            mediaWs.send(JSON.stringify({ type: "avatar_sdp_offer", clientSdp: sdpBase64 }));
+            console.log(`[acs-join] avatar SDP offer sent (${reason})`);
+        };
+
+        pc.onicecandidate = (event) => {
+            if (!event.candidate) { sendOfferOnce("gathering complete"); return; }
+            if (isConnectableCandidate(event.candidate)) connectableCount += 1;
+            // Degraded path: the backstop already passed with nothing reachable, so
+            // take the first connectable candidate of either kind rather than
+            // holding out for a relay that may never come.
+            if (awaitingUsable) {
+                if (connectableCount > 0 && !relaySettleTimer) {
+                    relaySettleTimer = setTimeout(
+                        () => sendOfferOnce("usable candidate after timeout"), ICE_RELAY_SETTLE_MS);
+                }
+                return;
+            }
+            if (iceCandidateType(event.candidate) === "relay" && !relaySettleTimer) {
+                relaySettleTimer = setTimeout(
+                    () => sendOfferOnce("relay candidate ready"), ICE_RELAY_SETTLE_MS);
+            }
+        };
+
+        pc.addTransceiver("video", { direction: "sendrecv" });
+        pc.addTransceiver("audio", { direction: "sendrecv" });
+        pc.addEventListener("datachannel", (event) => {
+            event.channel.onmessage = (e) => handleAvatarDataChannelMessage(e.data);
+        });
+        pc.createDataChannel("eventChannel");
+
+        pc.createOffer()
+            .then((offer) => pc.setLocalDescription(offer))
+            .then(() => {
+                // Backstop only — sendOfferOnce above should normally have fired
+                // on a relay candidate long before this.
+                setTimeout(() => {
+                    if (offerSent) return;
+                    if (connectableCount > 0) { sendOfferOnce("gathering timed out"); return; }
+                    // Nothing reachable gathered yet. Without trickle, an offer now
+                    // could never connect, so wait for a usable candidate instead
+                    // of shipping a guaranteed-dead session.
+                    awaitingUsable = true;
+                    setTimeout(() => sendOfferOnce("no usable candidates"),
+                        ICE_GATHER_MAX_WAIT_MS - ICE_GATHER_TIMEOUT_MS);
+                }, ICE_GATHER_TIMEOUT_MS);
+            })
+            .catch((err) => reportVideo("failed", `offer: ${(err && err.message) || err}`));
+    } catch (e) {
+        reportVideo("failed", `setup: ${(e && e.message) || e}`);
     }
-    const v = document.createElement("video");
-    v.autoplay = true;
-    v.playsInline = true;
-    // Muted is essential: the answer audio reaches the call through the PCM path.
-    // Letting this element play would double the voice and break the echo gate.
-    v.muted = true;
-    v.volume = 0;
-    v.addEventListener("canplay", () => v.play().catch(() => {}));
-    // The <video> reports decode failures here rather than by throwing, so a
-    // stream MediaSource accepts but cannot actually decode would otherwise be
-    // completely silent.
-    v.addEventListener("error", () => {
-        const err = v.error;
-        reportVideo("failed", `video element: code=${err ? err.code : "?"} ${err && err.message ? err.message : ""}`);
-    });
-    v.addEventListener("loadeddata", () => { avatarHasPicture = true; reportVideo("face-live"); });
-
-    avatarMediaSource = new MediaSource();
-    v.src = URL.createObjectURL(avatarMediaSource);
-    avatarMediaSource.addEventListener("sourceopen", () => {
-        try {
-            if (avatarMediaSource.readyState !== "open") return;
-            avatarSourceBuffer = avatarMediaSource.addSourceBuffer(FMP4_MIME_CODEC);
-            avatarSourceBuffer.addEventListener("updateend", drainAvatarQueue);
-            drainAvatarQueue();
-        } catch (e) {
-            reportVideo("failed", `addSourceBuffer: ${e && e.message ? e.message : e}`);
-        }
-    });
-    // Repaint the tile the instant a frame decodes, rather than resampling the
-    // stream on a fixed timer. The avatar renders at ~25fps; a 15fps timer landed
-    // between source frames, so some were shown twice and others skipped, and the
-    // uneven cadence is what read as jerky/"robotic" motion. requestVideoFrameCallback
-    // fires exactly once per decoded frame, so motion is 1:1 with the source.
-    // The interval stays as a keep-alive for the placard and backgrounded tabs.
-    pumpAvatarFrames(v);
-    avatarVideoEl = v;
 }
 
-function pumpAvatarFrames(v) {
-    // Prefer a DATA-driven clock over a timer. Measured live in-meeting: while the
-    // tab is visible the tile repaints at 55fps against a 25fps source; the instant
-    // it goes hidden, requestVideoFrameCallback stops dead (vFps 25 -> 0) and the
-    // repaint collapses to the ~6fps audio-thread watchdog. The joiner tab normally
-    // sits behind the Teams window, so that is the common case, not an edge case —
-    // and lips that move 6 times a second look broken no matter what the audio
-    // offset is. Reading decoded frames off the media pipeline is not a timer, so
-    // it keeps delivering while hidden.
+function handleAvatarSdpAnswer(serverSdpBase64) {
+    if (!avatarPc || !serverSdpBase64) return;
+    try {
+        // Base64-encoded JSON: {"type":"answer","sdp":"..."}
+        const answer = JSON.parse(atob(serverSdpBase64));
+        avatarPc.setRemoteDescription(new RTCSessionDescription(answer))
+            .then(() => console.log("[acs-join] avatar remote SDP set"))
+            .catch((err) => reportVideo("failed", `sdp answer: ${(err && err.message) || err}`));
+    } catch (e) {
+        reportVideo("failed", `sdp parse: ${(e && e.message) || e}`);
+    }
+}
+
+// One track off the avatar's peer connection: video becomes the tile's picture
+// source, audio becomes the call's outgoing voice.
+function attachAvatarWebRtcTrack(event) {
+    try {
+        const track = event.track;
+        if (!track) return;
+        // Register BEFORE any srcObject assignment below, or our own hook wires
+        // her voice into the room tap.
+        avatarOwnTracks.add(track.id);
+        // Each element gets its OWN track, never event.streams[0]. Handing a
+        // <video> a stream that also carries audio makes it "autoplay with sound",
+        // which browsers refuse on a first visit — the avatar then never starts
+        // and nothing reports why.
+        const stream = new MediaStream([track]);
+
+        if (track.kind === "video") {
+            const v = document.createElement("video");
+            v.autoplay = true;
+            v.playsInline = true;
+            // Muted, and video-only: the voice rides the separate audio track, and
+            // a muted element is the one thing every autoplay policy allows
+            // unconditionally. An element that will not start produces no frames,
+            // and a tile with no frames looks identical to a failed join.
+            v.muted = true;
+            v.srcObject = stream;
+            v.addEventListener("loadeddata", () => { avatarHasPicture = true; });
+            v.addEventListener("playing", () => {
+                if (avatarVideoEl !== v) return;
+                avatarHasPicture = true;
+                reportVideo("face-live", `${v.videoWidth}x${v.videoHeight}`);
+                startAvatarFramePump(track, v);
+            });
+            v.addEventListener("error", () => {
+                const err = v.error;
+                reportVideo("failed", `video element: code=${err ? err.code : "?"}`);
+            });
+            avatarVideoEl = v;
+            v.play().catch((err) => reportVideo("failed", `play: ${(err && err.name) || err}`));
+            return;
+        }
+
+        if (track.kind !== "audio") return;
+        if (!audioCtx || !outboundDest) {
+            reportVideo("failed", "avatar voice arrived before the audio graph existed");
+            return;
+        }
+        // Chrome only pulls samples from a REMOTE WebRTC stream through Web Audio
+        // while an HTMLMediaElement is also consuming it — the same constraint the
+        // room tap hits. Prime with a MUTED element: her voice must not leave this
+        // laptop's speakers, or the microphone would capture it and feed it back.
+        const prime = new Audio();
+        prime.muted = true;
+        prime.srcObject = stream;
+        prime.play().catch(() => { /* autoplay may defer; the track is still primed */ });
+        avatarPrimeEl = prime;
+
+        const src = audioCtx.createMediaStreamSource(stream);
+        avatarVoiceSource = src;
+        // Straight into the call's outgoing audio. No queue, no cursor, no lead:
+        // what the transport delivers is what the room hears, when it arrives.
+        src.connect(outboundDest);
+        // Tapped for level only. Deliberately NOT connected to audioCtx.destination
+        // — that would play her out of the operator's speakers.
+        avatarAnalyser = audioCtx.createAnalyser();
+        avatarAnalyser.fftSize = 512;
+        avatarAnalyser.smoothingTimeConstant = 0.3;
+        avatarLevelBuf = new Uint8Array(avatarAnalyser.fftSize);
+        src.connect(avatarAnalyser);
+        console.log("[acs-join] avatar voice wired to the outgoing call audio");
+    } catch (e) {
+        reportVideo("failed", `track: ${(e && e.message) || e}`);
+    }
+}
+
+// The avatar service brackets each spoken turn on the data channel. Used only as
+// a decaying hint that she has started — never as a latch. A latch that misses
+// its closing event wedges the capture gate shut for the rest of the call, which
+// is the failure app.js warns about and this file has already lived through once.
+function handleAvatarDataChannelMessage(data) {
+    if (typeof data !== "string") return;
+    if (data.indexOf("EVENT_TYPE_SWITCH_TO_SPEAKING") !== -1) {
+        avatarLastAudibleMs = performance.now();
+    }
+}
+
+// "Is she speaking right now?" — replaces the peak detector that used to live in
+// playPcmChunk. In avatar mode there are no PCM chunks, so the level is measured
+// off the WebRTC audio track itself, which is exactly what the room hears.
+//
+// Sampled from onCaptureFrame (the capture worklet's ~25Hz callback), NOT from
+// requestAnimationFrame. app.js can use rAF because its tab is the one you are
+// looking at; this tab sits behind the Teams window, where rAF stops entirely —
+// and a gate driven by a clock that stops is a gate that never reopens.
+const AVATAR_SPEAK_RMS = 0.01;
+const AVATAR_SPEAK_HANGOVER_MS = 400;
+function sampleAvatarSpeaking() {
+    if (!avatarAnalyser || !avatarLevelBuf || !audioCtx) return;
+    avatarAnalyser.getByteTimeDomainData(avatarLevelBuf);
+    let sumSq = 0;
+    for (let i = 0; i < avatarLevelBuf.length; i++) {
+        const s = (avatarLevelBuf[i] - 128) / 128;
+        sumSq += s * s;
+    }
+    const rms = Math.sqrt(sumSq / avatarLevelBuf.length);
+    const now = performance.now();
+    if (rms > AVATAR_SPEAK_RMS) avatarLastAudibleMs = now;
+    // Expressed in the currency applyCaptureGates() already reads, so the gate
+    // logic itself is untouched. It only ever moves forward while real energy is
+    // present, so it drains on its own — it cannot stick shut.
+    if (now - avatarLastAudibleMs < AVATAR_SPEAK_HANGOVER_MS) {
+        captureMutedUntil = audioCtx.currentTime + (AVATAR_SPEAK_HANGOVER_MS / 1000);
+    }
+}
+
+// Repaint the tile in step with decoded frames rather than resampling the stream
+// on a timer: the avatar renders at ~25fps, and a 15fps timer landing between
+// source frames showed some twice and skipped others — that uneven cadence is
+// what read as jerky, "robotic" motion.
+//
+// Prefer MediaStreamTrackProcessor, which reads decoded frames straight off the
+// media pipeline. requestVideoFrameCallback stops dead the moment the tab is
+// hidden (measured in-meeting: vFps 25 -> 0), and this tab normally sits behind
+// the Teams window, so that is the common case rather than an edge case. The
+// track is CLONED first so the processor is a second, independent sink and
+// cannot starve the <video> the canvas paints from.
+function startAvatarFramePump(track, v) {
+    const paint = () => {
+        rvfcCount += 1;
+        if (placardDraw) { try { placardDraw(); } catch (_) { /* never break the pump */ } }
+    };
     let gotFrames = false;
     try {
-        const cap = typeof v.captureStream === "function" ? v.captureStream() : null;
-        const track = cap && cap.getVideoTracks ? cap.getVideoTracks()[0] : null;
-        if (track && typeof window.MediaStreamTrackProcessor === "function") {
-            const reader = new window.MediaStreamTrackProcessor({ track })
+        if (typeof window.MediaStreamTrackProcessor === "function") {
+            const clone = track.clone();
+            avatarPumpTrack = clone;
+            const reader = new window.MediaStreamTrackProcessor({ track: clone })
                 .readable.getReader();
             framePumpVia = "frames";
             (async () => {
@@ -860,10 +1067,7 @@ function pumpAvatarFrames(v) {
                     try { value.close(); } catch (_) {}
                     if (avatarVideoEl !== v) break;
                     gotFrames = true;
-                    rvfcCount += 1;
-                    if (placardDraw) {
-                        try { placardDraw(); } catch (_) { /* never break the pump */ }
-                    }
+                    paint();
                 }
                 try { reader.cancel(); } catch (_) {}
             })();
@@ -872,111 +1076,58 @@ function pumpAvatarFrames(v) {
             setTimeout(() => {
                 if (!gotFrames && avatarVideoEl === v) {
                     reportVideo("pump-fallback", "no frames from MediaStreamTrackProcessor");
-                    startRvfcPump(v);
+                    startRvfcPump(v, paint);
                 }
             }, 2500);
             return;
         }
     } catch (e) {
-        reportVideo("pump-fallback", `trackprocessor: ${e && e.message ? e.message : e}`);
+        reportVideo("pump-fallback", `trackprocessor: ${(e && e.message) || e}`);
     }
-    startRvfcPump(v);
+    startRvfcPump(v, paint);
 }
 
-function startRvfcPump(v) {
+function startRvfcPump(v, paint) {
     if (typeof v.requestVideoFrameCallback !== "function") return;
     framePumpVia = framePumpVia === "frames" ? "frames+rvfc" : "rvfc";
     const step = () => {
         if (avatarVideoEl !== v) return; // torn down — let the loop die
-        rvfcCount += 1;
-        if (placardDraw) {
-            try { placardDraw(); } catch (_) { /* never break the frame loop */ }
-        }
+        paint();
         try { v.requestVideoFrameCallback(step); } catch (_) {}
     };
     try { v.requestVideoFrameCallback(step); } catch (_) {}
 }
 
-function handleAvatarChunk(base64Data) {
-    if (!base64Data) return;
-    avatarChunksIn += 1;
-    if (avatarChunksIn === 1) reportVideo("chunks-arriving");
-    if (!avatarVideoEl) setupAvatarVideo();
-    if (!avatarVideoEl) return;
-    try {
-        const bin = atob(base64Data);
-        const bytes = new Uint8Array(bin.length);
-        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-        avatarChunkQueue.push(bytes.buffer);
-        drainAvatarQueue();
-    } catch (e) {
-        console.error("[acs-join] bad avatar chunk", e);
-    }
-}
-
-function drainAvatarQueue() {
-    const sb = avatarSourceBuffer;
-    if (!sb || sb.updating) return;
-    if (!avatarMediaSource || avatarMediaSource.readyState !== "open") return;
-    const next = avatarChunkQueue.shift();
-    if (!next) return;
-    try {
-        sb.appendBuffer(next);
-    } catch (e) {
-        // QuotaExceeded: drop what we've already played and retry once. The tile
-        // is live video — old buffered media has no value.
-        // A codec mismatch also surfaces here (we declare avc1.42E01E/Baseline;
-        // isTypeSupported only checks the string, so a stream in a different
-        // profile passes setup and fails on the first real append), so report the
-        // first one rather than letting it repeat silently into a blank tile.
-        if (!appendFailed) {
-            appendFailed = true;
-            reportVideo("failed", `appendBuffer: ${e && e.name ? e.name : ""} ${e && e.message ? e.message : e}`);
-        }
-        try {
-            const v = avatarVideoEl;
-            if (sb.buffered.length && v) {
-                const end = Math.max(0, v.currentTime - 1);
-                if (end > sb.buffered.start(0)) sb.remove(sb.buffered.start(0), end);
-            }
-        } catch (_) { /* best effort */ }
-    }
-}
-
-// Barge-in: audio is flushed server-side, so jump the picture to the live edge
-// instead of leaving the mouth moving through speech nobody will hear.
-function skipAvatarToLiveEdge() {
-    const v = avatarVideoEl;
-    const sb = avatarSourceBuffer;
-    if (!v || !sb) return;
-    try {
-        if (sb.buffered.length) {
-            const end = sb.buffered.end(sb.buffered.length - 1);
-            if (end - v.currentTime > 0.15) v.currentTime = end - 0.05;
-        }
-    } catch (_) { /* seeking a live buffer can throw; harmless */ }
-}
-
 function teardownAvatarVideo() {
-    try { if (avatarVideoEl) { avatarVideoEl.pause(); avatarVideoEl.src = ""; } } catch (_) {}
+    try { if (avatarPc) avatarPc.close(); } catch (_) {}
+    avatarPc = null;
+    try { if (avatarVideoEl) { avatarVideoEl.pause(); avatarVideoEl.srcObject = null; } } catch (_) {}
     avatarVideoEl = null;
-    avatarMediaSource = null;
-    avatarSourceBuffer = null;
-    avatarChunkQueue = [];
+    try { if (avatarPrimeEl) { avatarPrimeEl.pause(); avatarPrimeEl.srcObject = null; } } catch (_) {}
+    avatarPrimeEl = null;
+    try { if (avatarPumpTrack) avatarPumpTrack.stop(); } catch (_) {}
+    avatarPumpTrack = null;
+    try { if (avatarVoiceSource) avatarVoiceSource.disconnect(); } catch (_) {}
+    avatarVoiceSource = null;
+    avatarAnalyser = null;
+    avatarLevelBuf = null;
+    avatarOwnTracks.clear();
     avatarHasPicture = false;
-    avatarChunksIn = 0;
-    appendFailed = false;
-    videoState = "off";
     avatarLastDrawMs = 0;
+    avatarLastAudibleMs = 0;
+    framePumpVia = "none";
+    videoState = "off";
 }
 
 // Paint the current avatar frame onto the tile canvas. Returns false when there
 // is nothing live to show, so the caller falls back to the branded placard.
 //
-// "Live" means the <video> has a picture AND its clock is still advancing: when a
-// turn ends the stream simply stops, and a frozen face staring at the room looks
-// broken. After AVATAR_IDLE_MS with no advance we fall back to the placard, which
-// doubles as the "listening" state.
+// "Live" means the <video> has a picture AND its clock is still advancing. On the
+// WebRTC transport the track is continuous, so between turns she simply sits there
+// idle and this stays true — which is what the web app shows too, and is right for
+// a meeting. The idle check therefore only fires on a genuinely dead track (peer
+// connection lost, sender stopped), where a frozen face staring at the room would
+// look broken. Kept as that safety net, not as the between-turns behaviour.
 const AVATAR_IDLE_MS = 900;
 let _avatarLastTime = -1;
 function drawAvatarFrame(ctx, canvas) {
@@ -989,7 +1140,7 @@ function drawAvatarFrame(ctx, canvas) {
         _avatarLastTime = v.currentTime;
         avatarLastDrawMs = now;
     } else if (now - avatarLastDrawMs > AVATAR_IDLE_MS) {
-        return false; // stream idle between turns -> show the placard
+        return false; // track is dead, not idle -> show the placard
     }
 
     // Contain-fit: show the WHOLE frame. The avatar renders SQUARE (512x512); the
@@ -1005,13 +1156,19 @@ function drawAvatarFrame(ctx, canvas) {
 }
 
 // ───────── outgoing video tile (avatar face) ─────────
-// Render a branded placard (logo + avatar name + a "listening" pulse) to a canvas
-// and send it as the call's outgoing video, so the avatar is a visible participant
-// tile instead of a faceless audio leg. We use the ACS Calling SDK's raw-video
-// LocalVideoStream (its constructor accepts a MediaStream), which is the exact
-// transport a live animated-avatar video track will use in the next increment.
-// The animation also guarantees the encoder keeps emitting frames (a static
-// canvas can otherwise stall the WebRTC video sender).
+// Render to a canvas and send it as the call's outgoing video, so the avatar is a
+// visible participant tile instead of a faceless audio leg. Uses the ACS Calling
+// SDK's raw-video LocalVideoStream (its constructor accepts a MediaStream).
+//
+// The canvas is kept rather than handing ACS the WebRTC video track directly,
+// because a meeting has no screen for the "thinking" cue or the wake-phrase hint —
+// those are composited onto the tile here. It costs a frame or two of CONSTANT
+// delay, which (unlike the scheduling cursor it replaced) has nothing that can
+// accumulate, so it cannot drift. The placard is the pre-connection and dead-track
+// state; once the avatar's track is live, drawAvatarFrame() paints her instead.
+//
+// The animation also guarantees the encoder keeps emitting frames (a static canvas
+// can otherwise stall the WebRTC video sender).
 function loadBrandImage() {
     if (placardImg) return placardImg;
     placardImg = new Image();
@@ -1404,7 +1561,7 @@ async function join() {
     // Defensive: clear any stale half-duplex mute / playback cursor from a prior
     // session so a fresh join always starts listening (a new audioCtx restarts the
     // clock near 0, and a leftover captureMutedUntil would otherwise wedge the mic).
-    captureMutedUntil = 0; playCursor = 0;
+    captureMutedUntil = 0; playCursor = 0; avatarLastAudibleMs = 0;
 
     try {
         // Ensure the branding name (AVATAR_DISPLAY_NAME) has loaded before we

@@ -14,7 +14,7 @@ meeting at the same time.
 | Needs an **ACS resource** | **yes** (`/api/acs/token` mints the guest token) | no — joins via Graph |
 | Needs the VM running | no | **yes** (~$283/mo if left on) |
 | **Hears** | **the other participants** — via the `srcObject` hook, verified live | **everyone in the meeting** |
-| Face | browser decodes fMP4 → canvas → ACS tile | Python decodes → NV12 → `VideoSocket` |
+| Face | WebRTC track → canvas → ACS tile | Python decodes fMP4 → NV12 → `VideoSocket` |
 | Status | proven in real meetings | **proven in real meetings** — joins, hears the room, answers aloud with a lip-synced tile |
 
 **Neither path is a self-contained system, and the VM is not a second brain.** The
@@ -123,31 +123,34 @@ curl.exe "$appUrl/api/acs/status"
 | --- | --- |
 | Roster | a participant named **Nuru** |
 | Tile | the **avatar's face**, lip-synced while she answers |
-| Between turns | tile falls back to the branded placard (this is intentional) |
+| Between turns | she stays on screen, idle — the live track keeps running |
 | Voice | she answers aloud, and stops mid-sentence if you talk over her |
 | **Mute** button | she goes silent; the face may keep moving (see below) |
 
 ### Backend log signature (a healthy turn)
 
 ```
-[browser browser-…] avatar video stream started
-[avatar] stream opened: video=h264 audio=aac -> NV12 640x360@15, PCM16 24000Hz
-[avatar] first PCM16 chunk (3136 bytes)
-…
-[avatar] decoder stopped (video=0 audio=NNNN)
+[browser browser-…] relayed avatar SDP answer
+[LATENCY] user_done->first_token=…ms, user_done->audio=…ms
+[browser browser-…] capture stats: … avatarIce=connected avatarVoice=True
 ```
 
-`video=0` is **correct** on this path — the browser decodes the picture itself, so the
-server only decodes audio.
+**No `[avatar] stream opened` line appears on this path, and that is correct.** The
+face and the voice arrive as WebRTC media tracks that never cross the bridge socket,
+so no server-side decoder is created at all — the bridge only relays `ice_servers`
+and `avatar_sdp_answer`. `avatarIce=connected` in the joiner's own capture stats is
+the equivalent evidence.
 
 ### Known, deliberate behaviours (not bugs)
 
-- **She only hears you.** Other people in the room are inaudible to her. This is the design
-  limit of the browser leg, not a fault.
-- **Mute silences the voice, not the face.** Video fragments are never dropped, because
-  MediaSource needs a byte-contiguous stream (the `ftyp`/`moov` init segment arrives once
-  per session, so dropping fragments corrupts everything after them). Silence is enforced on
-  the audio path — which is what the room actually hears.
+- **Only you can interrupt her.** She *hears* the other participants (the `srcObject`
+  hook, verified live), but the room tap is gated shut while she speaks, because
+  nothing echo-cancels it and her own voice would otherwise come straight back as the
+  next question. So a remote participant cannot cut her off mid-answer; the operator's
+  microphone can, with the barge-in checkbox on.
+- **Mute silences the voice, but the face keeps moving.** Suppression is enforced on
+  the answer path; the WebRTC video track is negotiated once and runs independently of
+  it. What the room actually hears is what mute controls.
 - **Keep the joiner tab visible if you can.** Backgrounded tabs get throttled; there is an
   explicit `requestFrame()` keep-alive, but a foreground tab is the safe test.
 

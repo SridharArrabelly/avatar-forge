@@ -104,6 +104,46 @@ Two things this diagram implies that [channel C](c-in-call-media-bot.md) does no
 > stops firing and `remoteMaxRms` returns to 0 — which is exactly how the regression
 > announces itself. `?remote=0` disables the hook without a redeploy.
 
+## The avatar rides the web app's transport
+
+The face and the voice reach this leg exactly the way they reach the web app: Voice
+Live negotiates a **WebRTC peer connection** with the joiner and delivers the
+rendered avatar as a video track and the spoken answer as an audio track on it. The
+audio track is wired straight into the ACS `LocalAudioStream`, so what the transport
+delivers is what the room hears, when it arrives.
+
+That is a deliberate convergence, and it replaced a design specific to this channel:
+the server relayed the fragmented-MP4 avatar stream and `acs-join.js` rebuilt A/V
+sync by hand — MediaSource for the picture, a scheduling cursor with a tunable
+`?lead=` offset for the voice, plus a drift guard and a silence shaver to stop the
+two ratcheting apart. Every lip-sync complaint traced to that reconstruction, and
+none of the machinery exists any more.
+
+| | web app (channel A) | joiner (this channel) |
+| --- | --- | --- |
+| avatar transport | WebRTC | **WebRTC** |
+| lip-sync | from the transport | **from the transport** |
+| presentation | `<video>` on the page | `<video>` → canvas → ACS video tile |
+
+The presentation layer stays different because Teams needs a *transmitted* track,
+and because a meeting has no screen for the "thinking" cue or the wake-phrase hint —
+those overlays are composited onto the tile. Compositing costs a frame or two of
+**constant** delay; unlike a scheduling cursor it has nothing that can accumulate,
+so it cannot drift.
+
+The practical consequence is the point: a fix to the web app's avatar path is
+inherited here, because it *is* the same path.
+
+> **The one thing this transport makes newly dangerous.** `installSrcObjectHook()`
+> intercepts every `srcObject` assignment on the page, and the avatar's own elements
+> are on that page. Without a guard her voice would be wired into the room tap and
+> posted back to Voice Live as the next question — she would interrupt herself on
+> every answer. Her track ids are registered *before* the assignment and skipped.
+
+The PCM playback path is kept for the no-avatar case, reduced to an ordinary jitter
+buffer with no tunable offset. In avatar mode the server drops PCM entirely, because
+a stray frame would play on top of the WebRTC track and double her voice.
+
 ## Joiner URL flags
 
 Tunable per session, so a live call can be adjusted without a redeploy.
@@ -113,7 +153,6 @@ Tunable per session, so a live call can be adjusted without a redeploy.
 | `?mic=0` | mic on | Drops the local microphone tap. Isolates the srcObject hook — the only way to prove the leg hears *other* participants rather than the operator. |
 | `?remote=0` | hook on | Disables the srcObject hook. Kill switch back to mic-only behaviour. |
 | `?duplex=full` | half | Keeps the microphone live while she speaks, so a human can cut her off mid-answer. Also a checkbox on the join page, toggleable mid-call. |
-| `?lead=<seconds>` | `0.28` | Audio-ahead-of-video offset for lip-sync. |
 
 ### Why barge-in is half-duplex by default
 
