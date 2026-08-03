@@ -132,9 +132,9 @@ those overlays are composited onto the tile. Compositing costs a frame or two of
 **constant** delay; unlike a scheduling cursor it has nothing that can accumulate,
 so it cannot drift.
 
-That claim is now falsifiable rather than asserted: `?tile=raw` hands ACS her video
-track directly and turns the compositor off, so the two can be compared on one call.
-The overlays go with it, which is the reason it is a flag and not the default.
+That claim is now falsifiable rather than asserted — and it was tested. The lip-sync
+complaints that drove this port disappeared once the transport changed, so the
+compositor is not the thing that was costing time.
 
 The overlay *wording* converges even though the drawing cannot. The "thinking"
 captions and their cadence are `app.js`'s `THINKING_*` constants — same three
@@ -167,10 +167,8 @@ Tunable per session, so a live call can be adjusted without a redeploy.
 | --- | --- | --- |
 | `?mic=0` | mic on | Drops the local microphone tap. Isolates the srcObject hook — the only way to prove the leg hears *other* participants rather than the operator. |
 | `?remote=0` | hook on | Disables the srcObject hook. Kill switch back to mic-only behaviour. |
-| `?duplex=full` | half | Keeps the microphone live while she speaks, so a human can cut her off mid-answer. Also a checkbox on the join page, toggleable mid-call. |
-| `?tile=raw` | canvas | Sends her WebRTC video track to the meeting **as-is**, bypassing the canvas composite. Costs every overlay (placard, thinking caption, wake hint). It exists to answer "is the compositor hurting lip-sync?" by measurement — run a turn each way on the same call and compare. |
 
-### Why barge-in is half-duplex by default
+### Barge-in: the mic is never gated
 
 This leg runs the **same capture pipeline as the web app** — same `getUserMedia`
 constraints, the same `pcm16-processor` AudioWorklet at 960 samples / 40 ms, and the
@@ -186,28 +184,45 @@ noise-suppressed. This leg sums three — that microphone, the raw room tap, and
 optional display capture. The extra two are unprocessed, no echo canceller sees
 them, and the room tap carries the call's own mix.
 
-That is why simply opening the mic during her answer was, in testing, "a disaster":
-it opened the room tap too, her own voice came straight back, and she interrupted
-herself continuously. The gates are therefore **per source**:
+That distinction is the whole design. Opening *everything* during her answer was, in
+testing, "a disaster" — the room tap fed her own voice back and she interrupted
+herself continuously. Closing everything was just as bad in the opposite direction.
+So the gates are **per source**:
 
 | Source | While she is speaking | Rationale |
 | --- | --- | --- |
-| Microphone | open in full duplex, closed in half | Browser AEC + NS already applied; this is the web app's own policy |
-| Room tap | **always closed** | A feedback path, not a barge-in path — nothing cancels it |
-| Display capture | **always closed** | Same: it carries whatever the Teams window is playing |
+| Microphone | **open** | Browser AEC + NS already applied; this is the web app's own policy |
+| Room tap | **closed** | A feedback path, not a barge-in path — nothing cancels it |
+| Display capture | **closed** | Same: it carries whatever the Teams window is playing |
+
+`roomSpeakRms` in the capture stats is the measurement behind the middle row: it is
+the peak room-tap level sampled **while she is speaking**. Non-zero means the tap is
+indeed carrying her voice back.
 
 The cost is that only the operator's microphone can interrupt her; a *remote*
 participant cannot. That is a real limitation of this leg and the price of not
 having an echo canceller on the room tap.
 
-`roomSpeakRms` in the capture stats is the measurement behind this: it is the peak
-room-tap level sampled **while she is speaking**. Non-zero means the tap is indeed
-carrying her voice back.
+> **There was a half-duplex mode. It is gone.** For a while the microphone was gated
+> shut during her answer too, exposed as `?duplex=` and a "let me interrupt her"
+> checkbox. Live testing on 2026-08-03 settled it. With the gate on, a question took
+> *three* attempts to register, because the gate ate the front of each utterance and
+> the server VAD never saw a turn begin. Toggling it mid-answer was worse still — she
+> stopped dead and reacted to every sound in the room. Joining with the mic simply
+> left open gave immediate barge-in and no false triggers at all.
+>
+> The web app never had this gate. Adding it here was the divergence; deleting it is
+> the fix, and there is no flag to bring it back, because a flag would only preserve
+> the path that lost.
 
-**On headphones there is no loop at all**, so full duplex reduces to exactly the web
-app's topology. `?duplex=full` turns it on, as does the **"Let me interrupt her
-mid-answer"** checkbox on the join page, which applies immediately without
-rejoining. Leave it off on a speakerphone or laptop speakers.
+### A note on speakers
+
+Her voice reaches the operator through the **Teams client**, a different application,
+so the browser's echo canceller has no reference signal for it and cannot subtract it
+from the microphone. On headphones this is moot. On laptop speakers the microphone can
+pick her up; server-side echo cancellation and semantic VAD are what stand between
+that and a false turn, and in testing they held. If a speakerphone ever does produce
+self-triggering, that is the mechanism — not the removed gate.
 
 ## Silence is ambiguous — the wake-phrase hint
 

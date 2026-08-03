@@ -19,9 +19,9 @@ bypass the resampler. Output is forwarded as-is.
 Turn-taking (so she never talks over the room): outbound speech is gated on a
 **wake phrase** appearing in the triggering user utterance (``ACS_REQUIRE_WAKE_
 PHRASE``). When an utterance is not addressed to her, the bridge cancels the
-in-flight Voice Live response and drops its audio. This is a first, tunable slice
-of half-duplex turn-taking; finer barge-in tuning over live room audio is 2b
-follow-up work (the bridge owns this policy so the handler stays generic).
+in-flight Voice Live response and drops its audio. Addressing, not duplex, is the
+policy here — the browser leg leaves its microphone open at all times, so barge-in
+is always available (the bridge owns this policy so the handler stays generic).
 """
 
 from __future__ import annotations
@@ -693,7 +693,6 @@ class BrowserVoiceBridge:
                                     f"roomSpeakRms={ctrl.get('roomSpeakRms')} "
                                     f"humanMuted={ctrl.get('humanMuted')} "
                                     f"parts={ctrl.get('parts')} "
-                                    f"duplex={ctrl.get('duplex')} "
                                     f"remoteStreams={ctrl.get('remoteStreams')} "
                                     f"wiredTracks={ctrl.get('wiredTracks')} "
                                     f"remoteMeters={ctrl.get('remoteMeters')} "

@@ -268,11 +268,11 @@ Three details that are load-bearing:
   every `srcObject` assignment on the page, including the avatar's; without an explicit
   registry her voice would be routed back to Voice Live as the next question.
 - **"She is speaking" is measured, not latched.** There are no PCM chunks to peak-detect
-  in WebRTC mode, so the half-duplex gate is driven by an `AnalyserNode` on her audio
+  in WebRTC mode, so the room-tap gate is driven by an `AnalyserNode` on her audio
   track, sampled from the capture worklet's callback — not `requestAnimationFrame`,
   which stops dead in a backgrounded tab, and this tab lives behind the Teams window.
   The data-channel SPEAKING/IDLE events are only a decaying hint: a missed IDLE would
-  wedge the microphone shut for the rest of the call.
+  wedge the room tap shut for the rest of the call.
 
 The server drops PCM entirely while the avatar is on, so a stray frame cannot play on
 top of the WebRTC track and double her voice.

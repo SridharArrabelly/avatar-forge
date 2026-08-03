@@ -404,7 +404,7 @@ it serves the media bot **without** provisioning an ACS resource. See
 | `ACS_CALLBACK_BASE_URL` | — | Public HTTPS base URL ACS uses for call-event callbacks and the media WebSocket. Defaults to the app's own external ingress; set for local dev behind a Dev Tunnel/ngrok. |
 | `ACS_AUDIO_SAMPLE_RATE` | `24000` | PCM sample rate (Hz) for the ACS↔Voice Live bridge. `24000` matches Voice Live (no resample); `16000` also valid. |
 | `ACS_WAKE_PHRASES` | *(derived from the persona name)* | Comma-separated, case-insensitive phrases that invoke a spoken answer (turn-taking, so it never talks over the room). Defaults to `hey <name>,<name>` lower-cased, where `<name>` is the resolved persona name — so you say "hey Simone" to the avatar shown as Simone. Set this only to override. |
-| `ACS_REQUIRE_WAKE_PHRASE` | `true` | Require a wake phrase before answering (half-duplex). Set `false` in a 1:1 test meeting to answer every turn. |
+| `ACS_REQUIRE_WAKE_PHRASE` | `true` | Require a wake phrase before answering, so she stays quiet unless addressed. Set `false` in a 1:1 test meeting to answer every turn. |
 | `ACS_IDLE_TIMEOUT_S` | `0` | Leave the call after N seconds of inactivity (`0` disables). |
 | `ACS_FOLLOWUP_WINDOW_S` | `90` | Seconds after an answer during which a follow-up needs **no** wake phrase, so a real back-and-forth doesn't require saying the name every turn. Raised from 30s after live testing: questions plainly aimed at her landed 35-40s after the previous answer and were met with silence, which reads as being ignored. |
 

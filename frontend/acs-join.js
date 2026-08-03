@@ -29,23 +29,10 @@
 // answering "can this leg hear the meeting?" — with the mic live, its own signal
 // masks the answer.
 const MIC_CAPTURE = new URLSearchParams(location.search).get("mic") !== "0";
-// Full duplex: keep listening while she speaks, so a human can cut her off
-// mid-answer. Off by default because the half-duplex gate is what stops her own
-// voice (played by the Teams client, which browser AEC cannot cancel — it is a
-// different app's output) looping back in as a new question. On headphones there
-// is no such loop, and barge-in matters more, so ?duplex=full turns the gate off.
-let FULL_DUPLEX = new URLSearchParams(location.search).get("duplex") === "full";
 // ?remote=0 disables the srcObject interception entirely, restoring the exact
 // pre-2026-08-03 behaviour (mic-only capture). This leg is live-verified, so
 // there is a way back that does not need a redeploy.
 const REMOTE_CAPTURE = new URLSearchParams(location.search).get("remote") !== "0";
-// ?tile=raw hands ACS the avatar's WebRTC video track directly, bypassing the
-// canvas composite. It is a measurement tool: the canvas adds a <video> render
-// plus captureStream between the transport and the tile, and the honest answer
-// to "is that hurting lip-sync?" is to remove it and look, not to reason about
-// it. The cost is every overlay — placard, thinking caption, wake-phrase hint —
-// so this is a diagnostic, not a default.
-const TILE_RAW = new URLSearchParams(location.search).get("tile") === "raw";
 
 const CALLING_UMD = "/vendor/communication-calling-1.40.1.js";
 const COMMON_ESM = "https://esm.sh/@azure/communication-common@2.3.1";
@@ -105,14 +92,13 @@ let _configReady = null;
 // tile so the avatar is a *visible* participant. The tile is a canvas we paint —
 // the avatar's WebRTC video frames when the transport is up, a branded placard
 // (logo + name + status pulse) before that and whenever the track goes quiet —
-// handed to ACS through the raw-video LocalVideoStream. ?tile=raw swaps the
-// composite out for the track itself; see TILE_RAW.
+// handed to ACS through the raw-video LocalVideoStream. The composite is also
+// what carries the thinking caption and the wake-phrase hint, which a meeting has
+// no other screen for.
 let avatarVideoEnabled = false;
 let _LocalVideoStreamCtor = null; // captured from the SDK at join() time
-let localVideoStream = null;      // ACS LocalVideoStream (canvas composite, or the raw track under ?tile=raw)
+let localVideoStream = null;      // ACS LocalVideoStream wrapping the tile canvas
 let placardStream = null;         // MediaStream from canvas.captureStream()
-let rawTileStream = null;         // MediaStream wrapping the avatar track under ?tile=raw
-let tileMode = "canvas";          // reported in capture stats so the A/B is unambiguous
 let placardTimerId = null;        // canvas redraw timer (setInterval keeps frames flowing even when the tab is backgrounded)
 let placardDraw = null;           // current tile paint fn, so decoded frames can drive it
 let placardImg = null;            // brand logo image, loaded once from /brand/color.png
@@ -239,7 +225,7 @@ let hintText = "";
 let hintUntil = 0;
 const HINT_MS = 4000;
 let scheduledSources = [];      // active outbound buffer sources (for barge-in flush)
-let captureMutedUntil = 0;      // half-duplex: drop mic capture until this ctx time
+let captureMutedUntil = 0;      // room tap: hold it shut until this ctx time
 
 function setupOutboundAudio(LocalAudioStream) {
     audioCtx = new (window.AudioContext || window.webkitAudioContext)({
@@ -314,9 +300,9 @@ function openMediaSocket() {
 // gap-free instead of underrunning into clicks.
 const PLAYBACK_LEAD = 0.12; // seconds of cushion ahead of the play clock
 const MAX_PLAYBACK_LEAD = 0.4;
-const CAPTURE_TAIL = 0.4;   // extra mic-mute time after playback drains (anti-echo)
+const CAPTURE_TAIL = 0.4;   // extra room-tap mute time after playback drains (anti-echo)
 // Peak amplitude (0..1) above which a chunk counts as *speech* rather than
-// digital silence. See the half-duplex note below.
+// digital silence. See the room-tap note below.
 const SPEECH_PEAK = 0.01;
 function playPcmChunk(int16) {
     if (!audioCtx || !outboundDest) return;
@@ -340,9 +326,11 @@ function playPcmChunk(int16) {
     }
     node.start(playCursor);
     playCursor += buf.duration;
-    // Half-duplex: while she is speaking (and for a short tail afterwards), the
-    // mic would otherwise capture her voice from the Teams-client speaker and feed
-    // it back as a new "question". Suppress capture until playback drains.
+    // While she is speaking (and for a short tail afterwards) the raw room tap
+    // carries her own voice back from the call mix, and nothing echo-cancels it —
+    // so that tap is held shut. The microphone is NOT: the browser has already
+    // echo-cancelled it, and closing it is what used to eat the front of a
+    // question and cost three attempts to be heard.
     //
     // Arm on ACTUAL SPEECH, never merely on "a chunk arrived" — Voice Live sends
     // exact digital silence between turns rather than nothing at all, so "a chunk
@@ -357,15 +345,17 @@ function playPcmChunk(int16) {
 
 // Barge-in. The server has already cancelled the response, so with the avatar on
 // her voice track simply stops at the source and there is nothing queued here to
-// drop — this reduces to reopening the mic. The buffer flush still matters on the
-// no-avatar path, where chunks are scheduled up to PLAYBACK_LEAD into the future.
+// drop — this reduces to reopening the room tap. The buffer flush still matters on
+// the no-avatar path, where chunks are scheduled up to PLAYBACK_LEAD into the future.
 function flushPlayback() {
     for (const node of scheduledSources) {
         try { node.stop(); } catch (_) { /* already stopped */ }
     }
     scheduledSources = [];
     playCursor = audioCtx ? audioCtx.currentTime : 0;
-    captureMutedUntil = 0; // playback cancelled — re-open the mic immediately
+    // She has stopped, so the room tap is no longer a feedback path. The microphone
+    // needs nothing done to it — it was never closed.
+    captureMutedUntil = 0;
     avatarLastAudibleMs = 0;
 }
 
@@ -445,8 +435,15 @@ registerProcessor('pcm16-processor', PCM16Processor);
 // she interrupted herself continuously.
 //
 // So the gates are per-source rather than one global drop:
-//   mic  — treated exactly as the web app treats it (see applyCaptureGates)
+//   mic  — always open, exactly as the web app leaves it
 //   room — never open while she speaks; it is a feedback path, not a barge-in path
+//
+// There is deliberately no half-duplex mode. This channel once closed the mic while
+// she spoke, and live testing (2026-08-03) was unambiguous: with it on she took three
+// attempts to hear a question, because the gate ate the front of every utterance and
+// the server VAD never saw a turn start. With the mic simply left open, barge-in was
+// immediate and the room did not trigger her once. The web app never had this gate;
+// adding it here was the divergence, and removing it is the fix.
 function applyCaptureGates() {
     const speaking = !!(audioCtx && audioCtx.currentTime < captureMutedUntil);
     const humanMuted = allHumansMuted();
@@ -454,9 +451,8 @@ function applyCaptureGates() {
     // comment calls that fragile, since one missed response_done sticks the gate
     // and drops the mic for good. Echo-driven false turns are handled instead by
     // browser AEC + server echo cancellation + barge-in/interrupt in lock-step.
-    // Full duplex adopts that policy wholesale. Half duplex keeps the mic closed
-    // while she speaks, which is what makes it safe on a speakerphone.
-    micOpenNow = !humanMuted && (FULL_DUPLEX || !speaking);
+    // Same policy here now.
+    micOpenNow = !humanMuted;
     roomOpenNow = !humanMuted && !speaking;
     if (micGate) micGate.gain.value = micOpenNow ? 1 : 0;
     if (roomGate) roomGate.gain.value = roomOpenNow ? 1 : 0;
@@ -585,12 +581,12 @@ function reportCaptureStats() {
             roomOpen: roomOpenNow,
             // Peak room-tap level measured WHILE she was speaking. If this is
             // non-zero the room tap is carrying her own voice back from the call
-            // mix, which is the feedback path that made full duplex unusable.
+            // mix, which is why that tap — and only that tap — closes while she
+            // speaks. The microphone stays open; it is echo-cancelled.
             roomSpeakRms: Number(roomSpeakRms.toFixed(5)),
             humanMuted: !micOpenNow && !roomOpenNow,
             parts: (call && call.remoteParticipants)
                 ? call.remoteParticipants.length : -1,
-            duplex: FULL_DUPLEX ? "full" : "half",
             remoteStreams: (call && call.remoteAudioStreams)
                 ? call.remoteAudioStreams.length : 0,
             wiredTracks: wiredRemoteTracks.size,
@@ -607,7 +603,6 @@ function reportCaptureStats() {
             drawFps,
             vFps,
             pumpVia: framePumpVia,
-            tile: tileMode,
             build: clientBuild,
             stale: buildStale,
             hidden: document.visibilityState !== "visible",
@@ -840,9 +835,6 @@ let avatarPc = null;                // RTCPeerConnection carrying the avatar's m
 let avatarVideoEl = null;           // offscreen <video> fed by the WebRTC video track
 let avatarPrimeEl = null;           // muted <audio> keeping the voice track flowing
 let avatarPumpTrack = null;         // cloned video track feeding the frame pump
-let avatarVideoTrack = null;        // her received video track, kept so ?tile=raw can
-                                    // still be applied if the track lands before the
-                                    // tile exists (openMediaSocket runs first)
 let avatarVoiceSource = null;       // her voice, wired into the outgoing call audio
 let avatarAnalyser = null;          // level meter driving "she is speaking"
 let avatarLevelBuf = null;
@@ -1012,16 +1004,14 @@ function attachAvatarWebRtcTrack(event) {
                 if (avatarVideoEl !== v) return;
                 avatarHasPicture = true;
                 reportVideo("face-live", `${v.videoWidth}x${v.videoHeight}`);
-                if (!TILE_RAW) startAvatarFramePump(track, v);
+                startAvatarFramePump(track, v);
             });
             v.addEventListener("error", () => {
                 const err = v.error;
                 reportVideo("failed", `video element: code=${err ? err.code : "?"}`);
             });
             avatarVideoEl = v;
-            avatarVideoTrack = track;
             v.play().catch((err) => reportVideo("failed", `play: ${(err && err.name) || err}`));
-            if (TILE_RAW) switchTileToRawTrack(track);
             return;
         }
 
@@ -1055,40 +1045,6 @@ function attachAvatarWebRtcTrack(event) {
         console.log("[acs-join] avatar voice wired to the outgoing call audio");
     } catch (e) {
         reportVideo("failed", `track: ${(e && e.message) || e}`);
-    }
-}
-
-// ?tile=raw: replace the canvas composite with the avatar's own video track as
-// the outgoing tile source. Strictly an experiment — it removes the <video> →
-// canvas → captureStream hop so the two paths can be compared on the same call.
-//
-// Safe against the srcObject hook without any extra bookkeeping: the stream is
-// video-only, and attachRemoteMediaStream() returns immediately when a stream
-// carries no audio tracks. Nothing here can reach the room tap.
-function switchTileToRawTrack(track) {
-    if (!localVideoStream) {
-        // The media socket opens before the tile does, so her track can land first.
-        // startPlacardVideo() re-applies from avatarVideoTrack once the tile exists.
-        reportVideo("raw-deferred", "tile not started yet");
-        return;
-    }
-    if (typeof localVideoStream.setMediaStream !== "function") {
-        reportVideo("raw-unsupported", "LocalVideoStream.setMediaStream missing");
-        log("?tile=raw unavailable in this SDK build — staying on the canvas.");
-        return;
-    }
-    try {
-        rawTileStream = new MediaStream([track]);
-        localVideoStream.setMediaStream(rawTileStream);
-        tileMode = "raw";
-        // Stop painting. Nothing consumes the canvas now, and leaving the compositor
-        // running would leave its CPU cost in the very measurement it is here to make.
-        if (placardTimerId) { try { clearInterval(placardTimerId); } catch (_) {} placardTimerId = null; }
-        placardDraw = null;
-        reportVideo("tile-raw", "canvas bypassed");
-        log("Tile: raw avatar track — overlays are off for this comparison.");
-    } catch (e) {
-        reportVideo("failed", `raw tile: ${(e && e.message) || e}`);
     }
 }
 
@@ -1203,7 +1159,6 @@ function teardownAvatarVideo() {
     avatarPrimeEl = null;
     try { if (avatarPumpTrack) avatarPumpTrack.stop(); } catch (_) {}
     avatarPumpTrack = null;
-    avatarVideoTrack = null;
     try { if (avatarVoiceSource) avatarVoiceSource.disconnect(); } catch (_) {}
     avatarVoiceSource = null;
     avatarAnalyser = null;
@@ -1411,8 +1366,6 @@ async function startPlacardVideo() {
     draw();
     await call.startVideo(localVideoStream);
     reportVideo("tile-on", `${canvas.width}x${canvas.height}`);
-    // Her track may already have arrived — the media socket opens before this runs.
-    if (TILE_RAW && avatarVideoTrack) switchTileToRawTrack(avatarVideoTrack);
     watchTabVisibility();
 }
 
@@ -1450,10 +1403,6 @@ function teardownPlacardVideo() {
     }
     try { if (placardStream) placardStream.getTracks().forEach((t) => t.stop()); } catch (_) {}
     placardStream = null;
-    // The raw tile shares the avatar's track; teardownAvatarVideo() owns stopping
-    // it, so only drop the wrapper here.
-    rawTileStream = null;
-    tileMode = "canvas";
 }
 
 function teardownMedia() {
@@ -1665,9 +1614,9 @@ async function join() {
         return;
     }
     joinBtn.disabled = true;
-    // Defensive: clear any stale half-duplex mute / playback cursor from a prior
+    // Defensive: clear any stale room-tap mute / playback cursor from a prior
     // session so a fresh join always starts listening (a new audioCtx restarts the
-    // clock near 0, and a leftover captureMutedUntil would otherwise wedge the mic).
+    // clock near 0, and a leftover captureMutedUntil would otherwise wedge the tap).
     captureMutedUntil = 0; playCursor = 0; avatarLastAudibleMs = 0;
 
     try {
@@ -1861,20 +1810,6 @@ leaveBtn.addEventListener("click", leave);
 muteNuruBtn.addEventListener("click", muteNuru);
 unmuteNuruBtn.addEventListener("click", unmuteNuru);
 farSideBtn.addEventListener("click", startFarSideCapture);
-
-// Barge-in is a live toggle, not a reload: whether echo is possible depends on
-// whether the operator is wearing headphones, which can change mid-meeting.
-const duplexChk = $("duplexChk");
-if (duplexChk) {
-    duplexChk.checked = FULL_DUPLEX;
-    duplexChk.addEventListener("change", () => {
-        FULL_DUPLEX = duplexChk.checked;
-        if (FULL_DUPLEX) captureMutedUntil = 0; // reopen immediately
-        log(FULL_DUPLEX
-            ? `Interruption on — talk over ${avatarDisplayName} to cut her off. Use headphones, or she will hear herself.`
-            : `Interruption off — ${avatarDisplayName}'s mic tap closes while she speaks.`);
-    });
-}
 
 // The Companion control panel (companion.html, opened in a separate window so the
 // ACS Calling leg runs OUTSIDE the Teams meeting webview) hands the meeting link
