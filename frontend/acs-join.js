@@ -123,7 +123,13 @@ let micOpenNow = true;          // last applied gate states (diagnostics)
 let roomOpenNow = true;
 let roomSpeakRms = 0;           // peak room-tap RMS measured WHILE she speaks
 const wiredRemoteTracks = new Set();
-const remoteAnalysers = [];     // per-remote-stream meters (remote-only RMS)
+// One record per wired remote audio track, metered and gated INDIVIDUALLY:
+//   { id, label, via, analyser, gain, peak, peakSpeak, peakIdle, nSpeak, nIdle }
+// "The room tap carries her voice back" has only ever been measured across the
+// whole tap at once, which cannot tell an echoing track apart from a human who
+// happens to be talking. Per-track levels, split by whether she was speaking,
+// can. That distinction decides whether the room gate is protection or damage.
+const remoteTracks = [];
 const remoteWiredVia = new Set(); // which path(s) delivered remote audio: sdk / srcObject
 const pendingRemoteStreams = []; // remote streams seen before audioCtx existed
 let remoteRmsScratch = null;    // reusable buffer for analyser reads
@@ -490,18 +496,31 @@ function onCaptureFrame(buf) {
     // sampled during her own speech, whether the room tap really does carry her
     // voice back (roomSpeakRms). That is the measurement behind gating it.
     const speaking = !!(audioCtx && audioCtx.currentTime < captureMutedUntil);
-    if (remoteAnalysers.length) {
-        const n = remoteAnalysers[0].fftSize;
+    if (remoteTracks.length) {
+        const n = remoteTracks[0].analyser.fftSize;
         if (!remoteRmsScratch || remoteRmsScratch.length !== n) {
             remoteRmsScratch = new Float32Array(n);
         }
-        for (let a = 0; a < remoteAnalysers.length; a++) {
-            remoteAnalysers[a].getFloatTimeDomainData(remoteRmsScratch);
+        for (let a = 0; a < remoteTracks.length; a++) {
+            const rec = remoteTracks[a];
+            rec.analyser.getFloatTimeDomainData(remoteRmsScratch);
             let rsum = 0;
             for (let i = 0; i < n; i++) rsum += remoteRmsScratch[i] * remoteRmsScratch[i];
             const rr = Math.sqrt(rsum / n);
             if (rr > remoteMaxRms) remoteMaxRms = rr;
-            if (speaking && rr > roomSpeakRms) roomSpeakRms = rr;
+            if (rr > rec.peak) rec.peak = rr;
+            // Split by whether SHE was talking at the time. A track loud only while
+            // she talks is our own audio returning; a track with energy while she is
+            // silent is a human who could be interrupting. No aggregate can separate
+            // those two, which is why the old single roomSpeakRms could not settle it.
+            if (speaking) {
+                rec.nSpeak++;
+                if (rr > rec.peakSpeak) rec.peakSpeak = rr;
+                if (rr > roomSpeakRms) roomSpeakRms = rr;
+            } else {
+                rec.nIdle++;
+                if (rr > rec.peakIdle) rec.peakIdle = rr;
+            }
         }
     }
     // 125 frames = ~5s at 40ms.
@@ -590,9 +609,22 @@ function reportCaptureStats() {
             remoteStreams: (call && call.remoteAudioStreams)
                 ? call.remoteAudioStreams.length : 0,
             wiredTracks: wiredRemoteTracks.size,
-            remoteMeters: remoteAnalysers.length,
+            remoteMeters: remoteTracks.length,
             remoteMaxRms: Number(remoteMaxRms.toFixed(5)),
             remoteVia: Array.from(remoteWiredVia).join("+") || "none",
+            // Per-track breakdown so the logs say WHICH track carries her voice,
+            // not merely that something does. spk/idl are this window's peaks while
+            // she was / was not speaking; nS/nI are the frame counts behind them, so
+            // a peak of 0 from 2 samples is not mistaken for a silent track.
+            tracks: remoteTracks.map((r) => ({
+                id: r.id.slice(0, 8),
+                via: r.via,
+                lbl: (r.label || "").slice(0, 24),
+                spk: Number(r.peakSpeak.toFixed(4)),
+                idl: Number(r.peakIdle.toFixed(4)),
+                nS: r.nSpeak,
+                nI: r.nIdle,
+            })),
             videoState,
             avatarPic: avatarHasPicture,
             // ICE state of the avatar's peer connection. The picture and her
@@ -612,6 +644,10 @@ function reportCaptureStats() {
     captureMaxRms = 0;
     remoteMaxRms = 0;
     roomSpeakRms = 0;
+    for (let a = 0; a < remoteTracks.length; a++) {
+        const r = remoteTracks[a];
+        r.peak = 0; r.peakSpeak = 0; r.peakIdle = 0; r.nSpeak = 0; r.nIdle = 0;
+    }
 }
 
 // ───────── remote (room) audio ─────────
@@ -639,6 +675,18 @@ function reportCaptureStats() {
 // insurance; if a future SDK renders remote audio purely through Web Audio, the
 // hook stops firing and remoteMaxRms returns to 0 — how the regression announces
 // itself.
+// Track ids we hand to ACS as our outgoing audio. If the SDK ever rendered one
+// back into a media element, the srcObject hook would wire her own voice into the
+// capture path and she would answer herself.
+function isOwnOutboundTrack(id) {
+    try {
+        if (!outboundDest || !outboundDest.stream) return false;
+        return outboundDest.stream.getAudioTracks().some((t) => t.id === id);
+    } catch (_) {
+        return false;
+    }
+}
+
 function attachRemoteMediaStream(ms, via) {
     try {
         if (!ms || typeof ms.getAudioTracks !== "function") return;
@@ -651,18 +699,35 @@ function attachRemoteMediaStream(ms, via) {
         // would post it straight back to Voice Live as the next question, so she
         // would interrupt herself on every answer.
         if (avatarOwnTracks.has(id)) return;
+        // Our own OUTGOING call audio, if the SDK ever renders it locally. Same
+        // hazard as avatarOwnTracks, but checked by identity against the stream we
+        // actually handed to ACS rather than relying on a registration winning a race.
+        if (isOwnOutboundTrack(id)) return;
         // audioCtx is created in setupOutboundAudio() before join(), but a stream
         // arriving first must not be dropped on the floor.
         if (!audioCtx) { pendingRemoteStreams.push({ ms, via }); return; }
         wiredRemoteTracks.add(id);
         ensureCaptureNode();
         const src = audioCtx.createMediaStreamSource(ms);
-        // Metered separately from the mic so the diagnostic is unambiguous.
+        // Metered separately from the mic so the diagnostic is unambiguous. The
+        // analyser sits BEFORE the gain, so it keeps reading the true level even
+        // while this track is gated shut — otherwise closing the gate would erase
+        // the very evidence needed to judge whether closing it was right.
         const analyser = audioCtx.createAnalyser();
         analyser.fftSize = 2048;
+        const trackGain = audioCtx.createGain();
+        trackGain.gain.value = 1;
         src.connect(analyser);
-        src.connect(roomGate);
-        remoteAnalysers.push(analyser);
+        src.connect(trackGain);
+        trackGain.connect(roomGate);
+        remoteTracks.push({
+            id,
+            label: tracks[0].label || "",
+            via: via || "srcObject",
+            analyser,
+            gain: trackGain,
+            peak: 0, peakSpeak: 0, peakIdle: 0, nSpeak: 0, nIdle: 0,
+        });
         remoteWiredVia.add(via || "srcObject");
         console.log(`[acs-join] remote audio wired via ${via || "srcObject"}`, id);
         if (mediaWs && mediaWs.readyState === WebSocket.OPEN) {
@@ -1430,7 +1495,7 @@ function teardownMedia() {
     // These outlived the audioCtx before: stale analysers from a closed context
     // stay readable and keep inflating remoteMeters while always reporting 0,
     // which would make the remote-audio diagnostic lie after a rejoin.
-    remoteAnalysers.length = 0;
+    remoteTracks.length = 0;
     remoteWiredVia.clear();
     pendingRemoteStreams.length = 0;
     remoteMaxRms = 0;

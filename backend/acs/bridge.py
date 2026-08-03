@@ -49,6 +49,31 @@ from .avatar_stream import AvatarStreamDecoder
 
 logger = logging.getLogger(__name__)
 
+
+def _fmt_tracks(tracks) -> str:
+    """Render the browser's per-remote-track meters as one compact log token.
+
+    Each entry is ``id/via spk=<peak while she spoke> idl=<peak while she was
+    silent> n=<speak frames>/<idle frames>``. The split is the point: a track with
+    energy only in ``spk`` is our own audio coming back, whereas energy in ``idl``
+    is a human. The frame counts guard against reading a peak of 0 that came from
+    two samples as evidence of a silent track.
+    """
+    if not isinstance(tracks, list) or not tracks:
+        return "none"
+    parts = []
+    for t in tracks:
+        if not isinstance(t, dict):
+            continue
+        lbl = t.get("lbl") or ""
+        parts.append(
+            f"{t.get('id')}/{t.get('via')}"
+            + (f"({lbl})" if lbl else "")
+            + f" spk={t.get('spk')} idl={t.get('idl')}"
+            f" n={t.get('nS')}/{t.get('nI')}"
+        )
+    return "[" + " | ".join(parts) + "]" if parts else "none"
+
 # Per-section Q values for a 6th-order Butterworth response (3 cascaded biquads).
 _BUTTERWORTH_Q6 = (0.51763809, 0.70710678, 1.93185165)
 
@@ -708,7 +733,8 @@ class BrowserVoiceBridge:
                                     f"build={ctrl.get('build')} "
                                     f"stale={ctrl.get('stale')} "
                                     f"hidden={ctrl.get('hidden')} "
-                                    f"micCapture={ctrl.get('micCapture')}"
+                                    f"micCapture={ctrl.get('micCapture')} "
+                                    f"tracks={_fmt_tracks(ctrl.get('tracks'))}"
                                 )
                             elif ct == "remote_wired":
                                 logger.info(
