@@ -140,6 +140,25 @@ let rvfcCount = 0;              // decoded avatar frames since the last report
 let lastDrawMs = 0;
 let statsLastMs = 0;
 let framePumpVia = "none";      // which clock is driving the repaints
+// Fingerprint of the joiner script the server is serving, captured the first time
+// we ask. A tab left open across a deploy keeps running its old JS in memory no
+// matter what the cache headers say — that happened here and silently invalidated
+// a live test round, because the telemetry described a build that was no longer
+// deployed. Compare on every config fetch and say so loudly.
+let clientBuild = "";
+let buildStale = false;
+function noteBuildId(id) {
+    if (!id) return;
+    if (!clientBuild) {
+        clientBuild = id;
+        console.log(`[acs-join] build ${id}`);
+        return;
+    }
+    if (id !== clientBuild && !buildStale) {
+        buildStale = true;
+        log("This page is running an OLD build — reload (F5) before testing.");
+    }
+}
 // The web stage covers the wait for the first token with an on-screen "thinking"
 // indicator. In a meeting there is no screen — but the avatar's video tile is a
 // canvas we draw ourselves, so it can carry the same cue. Voice Live's built-in
@@ -398,6 +417,8 @@ function ensureCaptureNode() {
                     drawFps,
                     vFps,
                     pumpVia: framePumpVia,
+                    build: clientBuild,
+                    stale: buildStale,
                     hidden: document.visibilityState !== "visible",
                     micCapture: MIC_CAPTURE,
                 }));
@@ -980,6 +1001,14 @@ function watchTabVisibility() {
         // it just looks like the avatar broke.
         log("Tab hidden — keep this tab visible, or the avatar's video degrades.");
     });
+    // Re-check the served build so a tab left open across a deploy announces
+    // itself instead of quietly reporting telemetry for code that is no longer live.
+    setInterval(async () => {
+        try {
+            const r = await fetch("/api/acs/config", { cache: "no-store" });
+            noteBuildId((await r.json()).buildId);
+        } catch (_) { /* transient — try again next tick */ }
+    }, 60000);
 }
 
 function teardownPlacardVideo() {
@@ -1138,6 +1167,7 @@ async function ensureEnabled() {
     avatarVideoEnabled = !!cfg.avatarVideoEnabled;
     avatarLiveVideo = !!cfg.avatarLiveVideo;
     if (avatarLiveVideo) console.log("[acs-join] live avatar video enabled");
+    noteBuildId(cfg.buildId);
     return true;
 }
 

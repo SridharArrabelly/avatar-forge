@@ -694,6 +694,8 @@ class BrowserVoiceBridge:
                                     f"drawFps={ctrl.get('drawFps')} "
                                     f"vFps={ctrl.get('vFps')} "
                                     f"pumpVia={ctrl.get('pumpVia')} "
+                                    f"build={ctrl.get('build')} "
+                                    f"stale={ctrl.get('stale')} "
                                     f"hidden={ctrl.get('hidden')} "
                                     f"micCapture={ctrl.get('micCapture')}"
                                 )

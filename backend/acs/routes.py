@@ -20,7 +20,9 @@ Endpoints:
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
+import os
 
 from fastapi import APIRouter, Request, WebSocket
 from fastapi.responses import JSONResponse
@@ -127,6 +129,20 @@ def _public_base(request: Request) -> str:
     return f"{proto}://{host}".rstrip("/")
 
 
+def _joiner_build_id() -> str:
+    """Short fingerprint of the joiner script currently on disk."""
+    path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+        "frontend",
+        "acs-join.js",
+    )
+    try:
+        st = os.stat(path)
+        return hashlib.sha1(f"{st.st_mtime_ns}:{st.st_size}".encode()).hexdigest()[:12]
+    except OSError:
+        return "unknown"
+
+
 def build_acs_router() -> APIRouter:
     """Return an APIRouter exposing the ACS in-call media endpoints."""
     router = APIRouter()
@@ -145,6 +161,13 @@ def build_acs_router() -> APIRouter:
             # ...and when THIS is true that tile carries the live lip-synced
             # avatar (streamed over the media socket) instead of the placard.
             "avatarLiveVideo": ACS_AVATAR_VIDEO_ENABLED and BROWSER_JOIN_VIDEO_ENABLED,
+            # Fingerprint of the joiner script actually on disk. The page records
+            # this at load and re-checks it; if it changes, the open tab is running
+            # code from before the last deploy. That silently invalidated several
+            # live test rounds — a tab kept open across a deploy keeps its old JS
+            # in memory no matter what the cache headers say, and the telemetry
+            # then describes a build that is no longer deployed.
+            "buildId": _joiner_build_id(),
         }
 
     @router.get("/api/acs/status")
