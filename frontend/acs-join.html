@@ -69,11 +69,13 @@
         </label>
     </div>
     <p class="notice">
-        While {{AVATAR_NAME}} speaks, her microphone tap is normally closed. Her voice
-        is played by <em>Teams</em>, a different application, so the browser cannot echo-cancel
-        it — left open, she hears herself and answers her own words. That gate is also why
-        talking over her does nothing. On <strong>headphones</strong> there is no echo path,
-        so tick the box above to interrupt her freely. Leave it clear on speakers.
+        This runs the <strong>same capture pipeline as the web app</strong> — same microphone
+        settings, same 40&nbsp;ms AudioWorklet, same Voice&nbsp;Live turn detection. The one
+        difference is that a meeting also needs a <em>room tap</em> to hear other participants,
+        and nothing echo-cancels that tap. While {{AVATAR_NAME}} speaks it carries her own
+        voice back, so it stays closed either way. Ticking the box keeps only the
+        <em>microphone</em> open, which is exactly what the web app does. Use headphones —
+        on speakers her voice returns through the mic instead.
     </p>
 
     <div id="status">Idle.</div>

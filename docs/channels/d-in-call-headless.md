@@ -117,22 +117,42 @@ Tunable per session, so a live call can be adjusted without a redeploy.
 
 ### Why barge-in is half-duplex by default
 
-While the avatar speaks, the joiner mutes its own microphone (`captureMutedUntil`,
-plus a short tail). That is deliberate: her voice is played by the **Teams client**,
-a different application, and browser echo cancellation cannot cancel another app's
-output. Without the gate her own speech is re-captured by the operator's microphone
-and arrives back as a new question.
+This leg runs the **same capture pipeline as the web app** — same `getUserMedia`
+constraints, the same `pcm16-processor` AudioWorklet at 960 samples / 40 ms, and the
+same policy of never cutting the stream (gates attenuate the signal to silence
+rather than stopping it, because a stream that stops mid-utterance orphans the
+server VAD: it fires `speech_started`, never sees `speech_stopped`, and the turn
+hangs forever). The Voice Live session config is identical too — semantic VAD,
+semantic end-of-utterance, `azure_deep_noise_suppression`, `server_echo_cancellation`.
 
-The cost is that **barge-in cannot work while she is talking** — the mic is shut, so
-the interruption never reaches Voice Live. This is the honest explanation for
-"sometimes barge-in doesn't work": it works in the gaps between phrases and not
-during them.
+The one thing that is **not** the same is the number of inputs. The web app has
+exactly one: a microphone the browser has already echo-cancelled and
+noise-suppressed. This leg sums three — that microphone, the raw room tap, and the
+optional display capture. The extra two are unprocessed, no echo canceller sees
+them, and the room tap carries the call's own mix.
 
-**On headphones there is no loop**, so the gate buys nothing and only costs
-responsiveness. `?duplex=full` turns it off and gives true barge-in — as does the
-**"Let me interrupt her mid-answer"** checkbox on the join page, which applies
-immediately without rejoining. Use it for headset demos; leave it off on a
-speakerphone or laptop speakers.
+That is why simply opening the mic during her answer was, in testing, "a disaster":
+it opened the room tap too, her own voice came straight back, and she interrupted
+herself continuously. The gates are therefore **per source**:
+
+| Source | While she is speaking | Rationale |
+| --- | --- | --- |
+| Microphone | open in full duplex, closed in half | Browser AEC + NS already applied; this is the web app's own policy |
+| Room tap | **always closed** | A feedback path, not a barge-in path — nothing cancels it |
+| Display capture | **always closed** | Same: it carries whatever the Teams window is playing |
+
+The cost is that only the operator's microphone can interrupt her; a *remote*
+participant cannot. That is a real limitation of this leg and the price of not
+having an echo canceller on the room tap.
+
+`roomSpeakRms` in the capture stats is the measurement behind this: it is the peak
+room-tap level sampled **while she is speaking**. Non-zero means the tap is indeed
+carrying her voice back.
+
+**On headphones there is no loop at all**, so full duplex reduces to exactly the web
+app's topology. `?duplex=full` turns it on, as does the **"Let me interrupt her
+mid-answer"** checkbox on the join page, which applies immediately without
+rejoining. Leave it off on a speakerphone or laptop speakers.
 
 ## Silence is ambiguous — the wake-phrase hint
 

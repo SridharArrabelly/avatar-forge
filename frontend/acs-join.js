@@ -118,8 +118,14 @@ let audioCtx = null;
 let outboundDest = null;        // MediaStreamDestination -> the call's outgoing audio
 let outboundLocalStream = null; // ACS LocalAudioStream wrapping outboundDest.stream
 let mediaWs = null;
-let captureNode = null;         // ScriptProcessor pulling remote audio -> WS
+let captureNode = null;         // capture node feeding PCM16 -> WS (worklet, or SP fallback)
 let captureSink = null;         // zero-gain sink so the capture node runs silently
+let micGate = null;             // GainNode on the microphone path
+let roomGate = null;            // GainNode on the room/display taps
+let captureVia = "none";        // "worklet" | "scriptprocessor" (diagnostics)
+let micOpenNow = true;          // last applied gate states (diagnostics)
+let roomOpenNow = true;
+let roomSpeakRms = 0;           // peak room-tap RMS measured WHILE she speaks
 const wiredRemoteTracks = new Set();
 const remoteAnalysers = [];     // per-remote-stream meters (remote-only RMS)
 const remoteWiredVia = new Set(); // which path(s) delivered remote audio: sdk / srcObject
@@ -352,119 +358,227 @@ function allHumansMuted() {
     }
 }
 
+// The web app's capture processor, copied verbatim from app.js. That pipeline is
+// the one that has been tuned over many rounds until barge-in and turn detection
+// "work like a champion", so this leg runs the same code rather than a second
+// implementation that would have to be tuned all over again.
+const PCM16_WORKLET_SRC = `
+class PCM16Processor extends AudioWorkletProcessor {
+    constructor() {
+        super();
+        // 40ms at 24kHz = 960 samples. Smaller buffers give tighter
+        // barge-in/interruption latency than the previous 100ms.
+        this.bufferSize = 960;
+        this.buffer = new Float32Array(this.bufferSize);
+        this.offset = 0;
+        this.silence = new Float32Array(128); // one render quantum
+    }
+    process(inputs) {
+        const input = inputs[0];
+        // app.js returns early when there is no input, because it has exactly one
+        // always-live microphone source and so never sees that case. This leg
+        // gates its sources with GainNodes, and a fully attenuated graph can hand
+        // us an empty input — at which point returning early would STOP the
+        // stream, which is precisely the failure app.js documents (the server VAD
+        // fires speech_started, never sees speech_stopped, and the turn hangs
+        // forever). Substituting silence keeps the same invariant it relies on.
+        const data = (input && input[0]) ? input[0] : this.silence;
+        for (let i = 0; i < data.length; i++) {
+            this.buffer[this.offset++] = data[i];
+            if (this.offset >= this.bufferSize) {
+                const pcm16 = new Int16Array(this.bufferSize);
+                for (let j = 0; j < this.bufferSize; j++) {
+                    const s = Math.max(-1, Math.min(1, this.buffer[j]));
+                    pcm16[j] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+                }
+                this.port.postMessage(pcm16.buffer, [pcm16.buffer]);
+                this.buffer = new Float32Array(this.bufferSize);
+                this.offset = 0;
+            }
+        }
+        return true;
+    }
+}
+registerProcessor('pcm16-processor', PCM16Processor);
+`;
+
+// Per-source gates.
+//
+// The web app has exactly one input: a microphone that the browser has already
+// echo-cancelled and noise-suppressed. This leg has three summed into one node —
+// that microphone PLUS the raw room tap PLUS the optional display capture. The
+// extra two are the entire difference, and they are unprocessed: no echo
+// canceller sees them, and the room tap carries the call's own mix, which is how
+// opening the mic during her answer fed her voice straight back to Voice Live and
+// she interrupted herself continuously.
+//
+// So the gates are per-source rather than one global drop:
+//   mic  — treated exactly as the web app treats it (see applyCaptureGates)
+//   room — never open while she speaks; it is a feedback path, not a barge-in path
+function applyCaptureGates() {
+    const speaking = !!(audioCtx && audioCtx.currentTime < captureMutedUntil);
+    const humanMuted = allHumansMuted();
+    // The web app deliberately does NOT gate the mic on playback state — its own
+    // comment calls that fragile, since one missed response_done sticks the gate
+    // and drops the mic for good. Echo-driven false turns are handled instead by
+    // browser AEC + server echo cancellation + barge-in/interrupt in lock-step.
+    // Full duplex adopts that policy wholesale. Half duplex keeps the mic closed
+    // while she speaks, which is what makes it safe on a speakerphone.
+    micOpenNow = !humanMuted && (FULL_DUPLEX || !speaking);
+    roomOpenNow = !humanMuted && !speaking;
+    if (micGate) micGate.gain.value = micOpenNow ? 1 : 0;
+    if (roomGate) roomGate.gain.value = roomOpenNow ? 1 : 0;
+}
+
+// One captured frame (Int16 PCM, 960 samples / 40ms), whichever node produced it.
+function onCaptureFrame(buf) {
+    // Render watchdog. setInterval is clamped to ~1Hz and requestVideoFrameCallback
+    // stops entirely once the tab is hidden or fully occluded — and the joiner tab
+    // normally sits behind the Teams window, so the outgoing tile can silently
+    // collapse to a slideshow. Audio keeps flowing regardless, so drive a repaint
+    // from here whenever the normal painters have gone quiet.
+    if (placardDraw && performance.now() - lastDrawMs > 120) {
+        try { placardDraw(); } catch (_) { /* never break capture */ }
+    }
+    if (!mediaWs || mediaWs.readyState !== WebSocket.OPEN) return;
+    applyCaptureGates();
+    const pcm = new Int16Array(buf);
+    // Track signal level so we can tell (from server logs) whether the captured
+    // meeting audio is real or all-zero/silent.
+    let sum = 0;
+    for (let i = 0; i < pcm.length; i++) {
+        const s = pcm[i] / 32768;
+        sum += s * s;
+    }
+    const rms = Math.sqrt(sum / pcm.length);
+    if (rms > captureMaxRms) captureMaxRms = rms;
+    captureFrames++;
+    // Remote-only level, measured independently of the mic so we can tell whether
+    // the srcObject interception is actually delivering room audio — and, when
+    // sampled during her own speech, whether the room tap really does carry her
+    // voice back (roomSpeakRms). That is the measurement behind gating it.
+    const speaking = !!(audioCtx && audioCtx.currentTime < captureMutedUntil);
+    if (remoteAnalysers.length) {
+        const n = remoteAnalysers[0].fftSize;
+        if (!remoteRmsScratch || remoteRmsScratch.length !== n) {
+            remoteRmsScratch = new Float32Array(n);
+        }
+        for (let a = 0; a < remoteAnalysers.length; a++) {
+            remoteAnalysers[a].getFloatTimeDomainData(remoteRmsScratch);
+            let rsum = 0;
+            for (let i = 0; i < n; i++) rsum += remoteRmsScratch[i] * remoteRmsScratch[i];
+            const rr = Math.sqrt(rsum / n);
+            if (rr > remoteMaxRms) remoteMaxRms = rr;
+            if (speaking && rr > roomSpeakRms) roomSpeakRms = rr;
+        }
+    }
+    // 125 frames = ~5s at 40ms.
+    if (captureFrames % 125 === 0) reportCaptureStats();
+    // Always send, even when a gate is shut — the gates zero the SIGNAL, they do
+    // not stop the STREAM. app.js documents why this matters: cutting the stream
+    // mid-utterance orphans the server VAD, which fires speech_started and then
+    // never sees speech_stopped, so the turn hangs forever. Continuous silence
+    // always lets the server close the turn.
+    mediaWs.send(buf);
+}
+
 function ensureCaptureNode() {
-    if (captureNode) return;
-    // NOTE (perf, deliberate): this is a main-thread ScriptProcessor, while the
-    // web app (app.js) captures via an AudioWorklet at 960 samples / 40 ms. At
-    // 24 kHz, 4096 samples is 170 ms of buffering before a sample leaves the
-    // browser, and app.js carries a comment recording that smaller buffers gave
-    // it tighter barge-in latency. So this leg is ~130 ms behind the web app on
-    // the question path, and shares a thread with the avatar canvas + MediaSource.
-    // Left as-is on purpose: this is the no-admin FALLBACK leg (the Graph media
-    // bot is the real one) and the half-duplex gate below took several live
-    // sessions to stabilise. Porting it to an AudioWorklet is worthwhile but is
-    // a change to a live-verified media path and wants its own live test round.
-    captureNode = audioCtx.createScriptProcessor(4096, 1, 1);
-    captureNode.onaudioprocess = (e) => {
-        // Render watchdog. setInterval is clamped to ~1Hz and requestVideoFrameCallback
-        // stops entirely once the tab is hidden or fully occluded — and the joiner tab
-        // normally sits behind the Teams window, so the outgoing tile can silently
-        // collapse to a slideshow. The audio thread is never throttled, so drive a
-        // repaint from here whenever the normal painters have gone quiet. It only
-        // restores ~6fps (this callback is 4096 samples / 170ms), but that is the
-        // difference between a moving tile and a frozen one.
-        if (placardDraw && performance.now() - lastDrawMs > 120) {
-            try { placardDraw(); } catch (_) { /* never break capture */ }
-        }
-        if (!mediaWs || mediaWs.readyState !== WebSocket.OPEN) return;
-        const samples = e.inputBuffer.getChannelData(0);
-        // Track signal level so we can tell (from server logs) whether the
-        // captured meeting audio is real or all-zero/silent.
-        let sum = 0;
-        for (let i = 0; i < samples.length; i++) sum += samples[i] * samples[i];
-        const rms = Math.sqrt(sum / samples.length);
-        if (rms > captureMaxRms) captureMaxRms = rms;
-        captureFrames++;
-        // Remote-only level, measured independently of the mic so we can tell
-        // whether the srcObject interception is actually delivering room audio.
-        if (remoteAnalysers.length) {
-            const n = remoteAnalysers[0].fftSize;
-            if (!remoteRmsScratch || remoteRmsScratch.length !== n) {
-                remoteRmsScratch = new Float32Array(n);
-            }
-            for (let a = 0; a < remoteAnalysers.length; a++) {
-                remoteAnalysers[a].getFloatTimeDomainData(remoteRmsScratch);
-                let rsum = 0;
-                for (let i = 0; i < n; i++) rsum += remoteRmsScratch[i] * remoteRmsScratch[i];
-                const rr = Math.sqrt(rsum / n);
-                if (rr > remoteMaxRms) remoteMaxRms = rr;
-            }
-        }
-        // Half-duplex gate: don't forward mic audio while Nuru is speaking, so
-        // her own voice (from the Teams-client speaker) can't loop back as a
-        // new question. Browser AEC can't cancel it (different app's output).
-        const selfTalking = !FULL_DUPLEX
-            && !!(audioCtx && audioCtx.currentTime < captureMutedUntil);
-        // Privacy gate: Nuru taps the local mic directly, which is independent
-        // of the Teams client's mute. But from Nuru's leg the human is a *remote*
-        // participant, so we honour their Teams mute — if every human is muted,
-        // nothing is legitimately being said to the meeting, so stop listening.
-        const humanMuted = allHumansMuted();
-        const muted = selfTalking || humanMuted;
-        if (captureFrames % 25 === 0) {
-            const _nowMs = performance.now();
-            const _dt = statsLastMs ? (_nowMs - statsLastMs) / 1000 : 0;
-            statsLastMs = _nowMs;
-            const drawFps = _dt > 0 ? Math.round(drawCount / _dt) : 0;
-            const vFps = _dt > 0 ? Math.round(rvfcCount / _dt) : 0;
-            drawCount = 0;
-            rvfcCount = 0;
-            try {
-                mediaWs.send(JSON.stringify({
-                    type: "capture_stats",
-                    frames: captureFrames,
-                    maxRms: Number(captureMaxRms.toFixed(5)),
-                    ctxRate: audioCtx ? audioCtx.sampleRate : 0,
-                    selfTalking,
-                    humanMuted,
-                    parts: (call && call.remoteParticipants)
-                        ? call.remoteParticipants.length : -1,
-                    duplex: FULL_DUPLEX ? "full" : "half",
-                    remoteStreams: (call && call.remoteAudioStreams)
-                        ? call.remoteAudioStreams.length : 0,
-                    wiredTracks: wiredRemoteTracks.size,
-                    remoteMeters: remoteAnalysers.length,
-                    remoteMaxRms: Number(remoteMaxRms.toFixed(5)),
-                    remoteVia: Array.from(remoteWiredVia).join("+") || "none",
-                    videoState,
-                    videoChunks: avatarChunksIn,
-                    avatarPic: avatarHasPicture,
-                    avLead: Number(avLead.toFixed(3)),
-                    avResyncs,
-                    lead: TARGET_LEAD,
-                    drawFps,
-                    vFps,
-                    pumpVia: framePumpVia,
-                    build: clientBuild,
-                    stale: buildStale,
-                    hidden: document.visibilityState !== "visible",
-                    micCapture: MIC_CAPTURE,
-                }));
-            } catch (_) { /* ignore */ }
-            captureMaxRms = 0;
-            remoteMaxRms = 0;
-        }
-        if (muted) return;
-        const pcm = floatToPcm16(samples);
-        mediaWs.send(pcm.buffer);
-    };
-    // A ScriptProcessor only runs while connected to the destination; route it
+    if (micGate) return; // gates exist -> callers can wire into them immediately
+    // Gates are created synchronously so sources can connect right away, while
+    // the worklet module loads asynchronously behind them.
+    micGate = audioCtx.createGain();
+    roomGate = audioCtx.createGain();
+    micGate.gain.value = 1;
+    roomGate.gain.value = 1;
+    startCaptureWorklet();
+}
+
+async function startCaptureWorklet() {
+    try {
+        const blob = new Blob([PCM16_WORKLET_SRC], { type: "application/javascript" });
+        const url = URL.createObjectURL(blob);
+        await audioCtx.audioWorklet.addModule(url);
+        URL.revokeObjectURL(url);
+        const node = new AudioWorkletNode(audioCtx, "pcm16-processor");
+        node.port.onmessage = (e) => onCaptureFrame(e.data);
+        wireCaptureNode(node, "worklet");
+    } catch (e) {
+        console.warn("[acs-join] AudioWorklet unavailable — ScriptProcessor fallback", e);
+        const node = audioCtx.createScriptProcessor(4096, 1, 1);
+        node.onaudioprocess = (ev) => {
+            onCaptureFrame(floatToPcm16(ev.inputBuffer.getChannelData(0)).buffer);
+        };
+        wireCaptureNode(node, "scriptprocessor");
+    }
+}
+
+function wireCaptureNode(node, via) {
+    captureNode = node;
+    captureVia = via;
+    micGate.connect(node);
+    roomGate.connect(node);
+    // A capture node only runs while connected to the destination; route it
     // through a zero-gain node so it processes without playing remote audio
     // locally (ACS already renders the meeting audio for us).
     captureSink = audioCtx.createGain();
     captureSink.gain.value = 0;
-    captureNode.connect(captureSink);
+    node.connect(captureSink);
     captureSink.connect(audioCtx.destination);
+    console.log(`[acs-join] capture via ${via}`);
+    if (mediaWs && mediaWs.readyState === WebSocket.OPEN) {
+        try { mediaWs.send(JSON.stringify({ type: "capture_wired", via })); } catch (_) {}
+    }
+}
+
+function reportCaptureStats() {
+    const _nowMs = performance.now();
+    const _dt = statsLastMs ? (_nowMs - statsLastMs) / 1000 : 0;
+    statsLastMs = _nowMs;
+    const drawFps = _dt > 0 ? Math.round(drawCount / _dt) : 0;
+    const vFps = _dt > 0 ? Math.round(rvfcCount / _dt) : 0;
+    drawCount = 0;
+    rvfcCount = 0;
+    try {
+        mediaWs.send(JSON.stringify({
+            type: "capture_stats",
+            frames: captureFrames,
+            maxRms: Number(captureMaxRms.toFixed(5)),
+            ctxRate: audioCtx ? audioCtx.sampleRate : 0,
+            capVia: captureVia,
+            micOpen: micOpenNow,
+            roomOpen: roomOpenNow,
+            // Peak room-tap level measured WHILE she was speaking. If this is
+            // non-zero the room tap is carrying her own voice back from the call
+            // mix, which is the feedback path that made full duplex unusable.
+            roomSpeakRms: Number(roomSpeakRms.toFixed(5)),
+            humanMuted: !micOpenNow && !roomOpenNow,
+            parts: (call && call.remoteParticipants)
+                ? call.remoteParticipants.length : -1,
+            duplex: FULL_DUPLEX ? "full" : "half",
+            remoteStreams: (call && call.remoteAudioStreams)
+                ? call.remoteAudioStreams.length : 0,
+            wiredTracks: wiredRemoteTracks.size,
+            remoteMeters: remoteAnalysers.length,
+            remoteMaxRms: Number(remoteMaxRms.toFixed(5)),
+            remoteVia: Array.from(remoteWiredVia).join("+") || "none",
+            videoState,
+            videoChunks: avatarChunksIn,
+            avatarPic: avatarHasPicture,
+            avLead: Number(avLead.toFixed(3)),
+            avResyncs,
+            lead: TARGET_LEAD,
+            drawFps,
+            vFps,
+            pumpVia: framePumpVia,
+            build: clientBuild,
+            stale: buildStale,
+            hidden: document.visibilityState !== "visible",
+            micCapture: MIC_CAPTURE,
+        }));
+    } catch (_) { /* ignore */ }
+    captureMaxRms = 0;
+    remoteMaxRms = 0;
+    roomSpeakRms = 0;
 }
 
 // ───────── remote (room) audio ─────────
@@ -509,7 +623,7 @@ function attachRemoteMediaStream(ms, via) {
         const analyser = audioCtx.createAnalyser();
         analyser.fftSize = 2048;
         src.connect(analyser);
-        src.connect(captureNode);
+        src.connect(roomGate);
         remoteAnalysers.push(analyser);
         remoteWiredVia.add(via || "srcObject");
         console.log(`[acs-join] remote audio wired via ${via || "srcObject"}`, id);
@@ -617,7 +731,7 @@ function startRemoteAudioCapture() {
     }).then((stream) => {
         micStream = stream;
         const src = audioCtx.createMediaStreamSource(stream);
-        src.connect(captureNode);
+        src.connect(micGate);
         console.log("[acs-join] mic capture wired ->", stream.getAudioTracks().length, "track(s)");
         if (mediaWs && mediaWs.readyState === WebSocket.OPEN) {
             try { mediaWs.send(JSON.stringify({ type: "mic_wired", tracks: stream.getAudioTracks().length })); } catch (_) {}
@@ -1084,6 +1198,8 @@ function teardownMedia() {
     if (remoteScanTimer) { clearInterval(remoteScanTimer); remoteScanTimer = null; }
     try { if (mediaWs) mediaWs.close(); } catch (_) {}
     try { if (captureNode) captureNode.disconnect(); } catch (_) {}
+    try { if (micGate) micGate.disconnect(); } catch (_) {}
+    try { if (roomGate) roomGate.disconnect(); } catch (_) {}
     try { if (captureSink) captureSink.disconnect(); } catch (_) {}
     try { if (micStream) micStream.getTracks().forEach((t) => t.stop()); } catch (_) {}
     try { if (displaySource) displaySource.disconnect(); } catch (_) {}
@@ -1094,6 +1210,7 @@ function teardownMedia() {
     }
     primingAudioEls.length = 0;
     mediaWs = null; captureNode = null; captureSink = null; audioCtx = null; micStream = null;
+    micGate = null; roomGate = null; captureVia = "none";
     displayStream = null; displaySource = null;
     outboundDest = null; outboundLocalStream = null;
     wiredRemoteTracks.clear(); scheduledSources = []; playCursor = 0;
@@ -1104,22 +1221,27 @@ function teardownMedia() {
     remoteWiredVia.clear();
     pendingRemoteStreams.length = 0;
     remoteMaxRms = 0;
-    // Reset the half-duplex mute clock. teardownMedia() closes the audioCtx, so the
+    // Reset the "she is speaking" clock. teardownMedia() closes the audioCtx, so the
     // next join() creates a fresh context whose clock restarts near 0. If we leave a
     // stale (large) captureMutedUntil from the previous context here, the new context's
-    // currentTime stays below it for a very long time and selfTalking gets wedged True
-    // — silently dropping the mic so the avatar never hears questions after a rejoin.
+    // currentTime stays below it for a very long time and the capture gates stay shut
+    // — silently dropping audio so the avatar never hears questions after a rejoin.
     captureMutedUntil = 0;
 }
 
-// Far-side audio (hear remote participants). The ACS/WebRTC client only exposes
-// THIS device's mic — Teams isolates per-client audio by design, so we cannot tap
-// other participants' streams from the browser. The supported production path is a
-// server-side Teams meeting bot (Graph + Real-Time Media), which needs Graph
-// permissions + tenant admin consent. As a no-admin workaround, capture the Teams
-// app's *output* audio at the OS level via getDisplayMedia (the user shares the
-// Teams window/tab WITH audio) and mix it into the same capture node as the mic.
-// Must be triggered by a user gesture.
+// Far-side audio (hear remote participants), FALLBACK path.
+//
+// This is no longer the primary way to hear the room: installSrcObjectHook() taps
+// the remote streams the SDK hands to its own <audio> elements, which is verified
+// live (micCapture=False with a non-zero remoteMaxRms and a correct transcript).
+// Note what the old comment here got wrong — the SDK's getMediaStreamTrack()
+// returning nothing is a fact about ONE METHOD, not evidence that the browser
+// cannot receive other participants' audio. It plainly does; that is how the call
+// is audible.
+//
+// Keep this as the fallback for when the hook does not engage (an SDK that renders
+// audio some other way). The user shares the Teams window/tab WITH audio and we mix
+// its output into the room gate. Must be triggered by a user gesture.
 async function startFarSideCapture() {
     if (!audioCtx) { log("Join the meeting first, then capture far-side audio."); return; }
     try {
@@ -1134,11 +1256,12 @@ async function startFarSideCapture() {
         stream.getVideoTracks().forEach((t) => t.stop());
         displayStream = stream;
         ensureCaptureNode();
-        // Route the shared (far-side) audio into the same capture node as the mic;
-        // the half-duplex + human-mute gates already apply to the mixed signal.
+        // Shared (far-side) audio is a room tap like the SDK's own: unprocessed,
+        // and it carries whatever the Teams window is playing — including her.
+        // So it rides the room gate, not the mic gate.
         const audioOnly = new MediaStream(audioTracks);
         displaySource = audioCtx.createMediaStreamSource(audioOnly);
-        displaySource.connect(captureNode);
+        displaySource.connect(roomGate);
         // If the user stops sharing via the browser bar, clean up.
         audioTracks[0].addEventListener("ended", () => {
             try { if (displaySource) displaySource.disconnect(); } catch (_) {}
