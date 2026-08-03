@@ -163,7 +163,7 @@ function openMediaSocket() {
     const wsUrl = `${location.origin.replace(/^http/, "ws")}/ws/acs/browser`;
     mediaWs = new WebSocket(wsUrl);
     mediaWs.binaryType = "arraybuffer";
-    mediaWs.onopen = () => console.log("[acs-join] media WS open");
+    mediaWs.onopen = () => { console.log("[acs-join] media WS open"); flushVideoReports(); };
     mediaWs.onclose = () => console.log("[acs-join] media WS closed");
     mediaWs.onerror = (e) => console.warn("[acs-join] media WS error", e);
     mediaWs.onmessage = (ev) => {
@@ -314,6 +314,9 @@ function ensureCaptureNode() {
                     remoteMeters: remoteAnalysers.length,
                     remoteMaxRms: Number(remoteMaxRms.toFixed(5)),
                     remoteVia: Array.from(remoteWiredVia).join("+") || "none",
+                    videoState,
+                    videoChunks: avatarChunksIn,
+                    avatarPic: avatarHasPicture,
                     micCapture: MIC_CAPTURE,
                 }));
             } catch (_) { /* ignore */ }
@@ -503,18 +506,49 @@ function startRemoteAudioCapture() {
 // <video> is then painted onto the same canvas that already feeds the outgoing
 // ACS video tile, so the face replaces the placard without touching transport.
 const FMP4_MIME_CODEC = 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"';
+
+// Video has three independent ways to fail silently (startVideo rejecting,
+// MediaSource refusing the codec, addSourceBuffer throwing) and every one of them
+// used to land in console.warn — invisible to the operator running the joiner and
+// invisible in the container logs. A face that never appears then looks identical
+// to a face that was never enabled. Report the state to BOTH the on-page log and
+// the backend so it is diagnosable without a browser console.
+let videoState = "off";
+const pendingVideoReports = [];
+function flushVideoReports() {
+    if (!mediaWs || mediaWs.readyState !== WebSocket.OPEN) return;
+    while (pendingVideoReports.length) {
+        try { mediaWs.send(JSON.stringify(pendingVideoReports.shift())); }
+        catch (_) { return; }
+    }
+}
+function reportVideo(state, detail) {
+    videoState = state;
+    const line = detail ? `${state}: ${detail}` : state;
+    console.log(`[acs-join] video ${line}`);
+    if (state === "failed" || state === "unsupported") log(`Avatar video ${line}`);
+    // startPlacardVideo() runs immediately after openMediaSocket(), so the socket
+    // is usually still CONNECTING when the first report fires. Queue rather than
+    // drop: the error detail is the whole point, and capture_stats only carries
+    // the bare state.
+    pendingVideoReports.push({
+        type: "video_status", state, detail: detail ? String(detail) : "",
+    });
+    flushVideoReports();
+}
 let avatarLiveVideo = false;      // server says the live stream is enabled
 let avatarVideoEl = null;         // offscreen <video> fed by MediaSource
 let avatarMediaSource = null;
 let avatarSourceBuffer = null;
 let avatarChunkQueue = [];
 let avatarHasPicture = false;     // first decoded frame seen -> safe to paint
+let avatarChunksIn = 0;           // fMP4 deltas received from the server
 let avatarLastDrawMs = 0;         // last time the video actually advanced
 
 function setupAvatarVideo() {
     if (avatarVideoEl) return;
     if (!("MediaSource" in window) || !MediaSource.isTypeSupported(FMP4_MIME_CODEC)) {
-        console.warn("[acs-join] fMP4 MediaSource unsupported — keeping placard");
+        reportVideo("unsupported", `MediaSource cannot play ${FMP4_MIME_CODEC}`);
         return;
     }
     const v = document.createElement("video");
@@ -525,7 +559,7 @@ function setupAvatarVideo() {
     v.muted = true;
     v.volume = 0;
     v.addEventListener("canplay", () => v.play().catch(() => {}));
-    v.addEventListener("loadeddata", () => { avatarHasPicture = true; });
+    v.addEventListener("loadeddata", () => { avatarHasPicture = true; reportVideo("face-live"); });
 
     avatarMediaSource = new MediaSource();
     v.src = URL.createObjectURL(avatarMediaSource);
@@ -536,7 +570,7 @@ function setupAvatarVideo() {
             avatarSourceBuffer.addEventListener("updateend", drainAvatarQueue);
             drainAvatarQueue();
         } catch (e) {
-            console.error("[acs-join] addSourceBuffer failed", e);
+            reportVideo("failed", `addSourceBuffer: ${e && e.message ? e.message : e}`);
         }
     });
     avatarVideoEl = v;
@@ -544,6 +578,8 @@ function setupAvatarVideo() {
 
 function handleAvatarChunk(base64Data) {
     if (!base64Data) return;
+    avatarChunksIn += 1;
+    if (avatarChunksIn === 1) reportVideo("chunks-arriving");
     if (!avatarVideoEl) setupAvatarVideo();
     if (!avatarVideoEl) return;
     try {
@@ -600,6 +636,8 @@ function teardownAvatarVideo() {
     avatarSourceBuffer = null;
     avatarChunkQueue = [];
     avatarHasPicture = false;
+    avatarChunksIn = 0;
+    videoState = "off";
     avatarLastDrawMs = 0;
 }
 
@@ -721,7 +759,7 @@ async function startPlacardVideo() {
     placardTimerId = setInterval(draw, 66);
     draw();
     await call.startVideo(localVideoStream);
-    console.log("[acs-join] placard video started");
+    reportVideo("tile-on", `${canvas.width}x${canvas.height}`);
 }
 
 function teardownPlacardVideo() {
@@ -1017,9 +1055,10 @@ async function join() {
             if (call.state === "Connected") {
                 await startBrowserMedia();
                 if (avatarVideoEnabled) {
-                    // Best-effort: a video failure must never break the audio leg.
+                    // Best-effort: a video failure must never break the audio leg — but it
+                    // must be VISIBLE, or "no face" is indistinguishable from "not enabled".
                     try { await startPlacardVideo(); }
-                    catch (e) { console.warn("[acs-join] placard video failed", e); }
+                    catch (e) { reportVideo("failed", `startVideo: ${e && e.message ? e.message : e}`); }
                 }
             }
             if (call.state === "Disconnected") {

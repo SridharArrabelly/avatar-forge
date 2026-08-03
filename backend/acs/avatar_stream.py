@@ -135,6 +135,11 @@ class AvatarStreamDecoder:
         self._next_video_t = 0.0
         self.video_frames = 0
         self.audio_frames = 0
+        # Counted BEFORE the decode_video skip, so it answers a question the
+        # decoded-frame counter cannot: did Voice Live put a video track in the
+        # fMP4 at all? With decode_video=False, video_frames is 0 by construction
+        # and says nothing about the stream.
+        self.video_packets = 0
 
     # ───────── feeding ─────────
 
@@ -197,6 +202,8 @@ class AvatarStreamDecoder:
                 if packet.dts is None:
                     continue
                 is_video = packet.stream.type == "video"
+                if is_video:
+                    self.video_packets += 1
                 if is_video and not self._decode_video:
                     continue
                 try:
@@ -219,7 +226,8 @@ class AvatarStreamDecoder:
                 pass
             logger.info(
                 f"[avatar] decoder stopped "
-                f"(video={self.video_frames} audio={self.audio_frames})"
+                f"(video={self.video_frames} audio={self.audio_frames} "
+                f"videoPackets={self.video_packets})"
             )
 
     # ───────── per-frame handling ─────────

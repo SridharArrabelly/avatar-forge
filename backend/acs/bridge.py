@@ -660,6 +660,9 @@ class BrowserVoiceBridge:
                                     f"remoteMeters={ctrl.get('remoteMeters')} "
                                     f"remoteMaxRms={ctrl.get('remoteMaxRms')} "
                                     f"remoteVia={ctrl.get('remoteVia')} "
+                                    f"videoState={ctrl.get('videoState')} "
+                                    f"videoChunks={ctrl.get('videoChunks')} "
+                                    f"avatarPic={ctrl.get('avatarPic')} "
                                     f"micCapture={ctrl.get('micCapture')}"
                                 )
                             elif ct == "remote_wired":
@@ -668,6 +671,17 @@ class BrowserVoiceBridge:
                                     f"audio track {ctrl.get('trackId')} "
                                     f"via={ctrl.get('via') or 'sdk'}"
                                 )
+                            elif ct == "video_status":
+                                state = ctrl.get("state")
+                                detail = ctrl.get("detail") or ""
+                                msg = (
+                                    f"[browser {self.client_id}] avatar video "
+                                    f"{state}" + (f" — {detail}" if detail else "")
+                                )
+                                if state in ("failed", "unsupported"):
+                                    logger.warning(msg)
+                                else:
+                                    logger.info(msg)
                             elif ct == "mic_wired":
                                 logger.info(
                                     f"[browser {self.client_id}] browser wired mic capture "
