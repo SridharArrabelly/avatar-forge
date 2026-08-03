@@ -53,19 +53,25 @@ Two things this diagram implies that [channel C](c-in-call-media-bot.md) does no
 > client means a signed-in account and a licence.
 >
 > **Update (2026-08-03) — CONFIRMED WORKING.** This note previously said the ACS Web
-> SDK "cannot hear other participants", so D "collapses". The observation behind that
-> is real and stands: `getMediaStreamTrack()` on a `RemoteAudioStream` yields nothing —
-> measured live, `wiredTracks 0, maxRms 0`. But that is a fact about **one SDK method**,
-> not about the browser.
+> SDK "cannot hear other participants", so D "collapses". That conclusion was wrong,
+> and so was the observation it rested on.
+>
+> The measurement (`wiredTracks 0, maxRms 0`) was real, but it was **not evidence about
+> the platform**. The code called `getMediaStreamTrack()`, which is not a member of
+> `RemoteAudioStream` — the interface exposes `getMediaStream(): Promise<MediaStream>`
+> and `getVolume()`. Worse, the function containing that call had **no caller**. So the
+> SDK was never actually asked for the stream, and the zero was our own bug.
 >
 > The [ADIA reference implementation](#adia) takes the remote stream from the DOM
 > instead: it intercepts `HTMLMediaElement.prototype.srcObject`, so when the SDK
 > attaches a participant's stream to an element in order to *play* it, the page keeps a
 > reference and routes it into a capture worklet. The SDK is never asked.
 >
-> `acs-join.js` now carries that interception, and it has been **run in a real meeting**.
-> With the microphone disabled (`?mic=0`), so the only possible audio source was another
-> participant:
+> `acs-join.js` now tries the **documented** `getMediaStream()` first and keeps the
+> interception as a fallback, reporting which one delivered as `remoteVia=sdk` or
+> `remoteVia=srcObject` in `capture_stats`. The interception is the path that has been
+> **run in a real meeting**. With the microphone disabled (`?mic=0`), so the only
+> possible audio source was another participant:
 >
 > ```text
 > capture stats: maxRms=0.15861 remoteStreams=1 wiredTracks=2 remoteMeters=2
@@ -173,7 +179,7 @@ that works, and the two fail in *different directions*:
 | | C — Graph media bot | D — headless browser |
 | --- | --- | --- |
 | Authorisation | admin consent once, then **any** meeting from a link | none — but the tenant must permit anonymous guest join |
-| Platform standing | supported, first-party API | rides an SDK **implementation detail** (`srcObject`), not a contract |
+| Platform standing | supported, first-party API | tries the documented `getMediaStream()` first, falls back to the `srcObject` **implementation detail** — the fallback is the path proven live |
 | Breaks when | no administrator is available | the SDK changes how it renders remote audio, or anonymous join is disabled |
 
 That makes them complementary rather than redundant: C is the robust path wherever an

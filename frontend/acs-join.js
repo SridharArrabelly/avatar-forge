@@ -115,10 +115,12 @@ let captureNode = null;         // ScriptProcessor pulling remote audio -> WS
 let captureSink = null;         // zero-gain sink so the capture node runs silently
 const wiredRemoteTracks = new Set();
 const remoteAnalysers = [];     // per-remote-stream meters (remote-only RMS)
+const remoteWiredVia = new Set(); // which path(s) delivered remote audio: sdk / srcObject
 const pendingRemoteStreams = []; // remote streams seen before audioCtx existed
 let remoteRmsScratch = null;    // reusable buffer for analyser reads
 let remoteMaxRms = 0;           // peak remote-only RMS since last stats report
 let srcObjectHooked = false;
+let remoteScanTimer = null;     // periodic sweep of call.remoteAudioStreams
 const primingAudioEls = [];     // muted <audio> elements priming remote tracks
 let micStream = null;           // getUserMedia mic stream feeding the capture node
 let displayStream = null;       // getDisplayMedia stream (far-side / Teams app audio)
@@ -311,6 +313,7 @@ function ensureCaptureNode() {
                     wiredTracks: wiredRemoteTracks.size,
                     remoteMeters: remoteAnalysers.length,
                     remoteMaxRms: Number(remoteMaxRms.toFixed(5)),
+                    remoteVia: Array.from(remoteWiredVia).join("+") || "none",
                     micCapture: MIC_CAPTURE,
                 }));
             } catch (_) { /* ignore */ }
@@ -330,18 +333,32 @@ function ensureCaptureNode() {
     captureSink.connect(audioCtx.destination);
 }
 
-// ───────── remote (room) audio via srcObject interception ─────────
-// The SDK will not hand us remote audio — getMediaStreamTrack() on a
-// RemoteAudioStream yields nothing (confirmed live: wiredTracks 0, maxRms 0,
-// see startRemoteAudioCapture below). But the SDK still has to *play* that
-// audio, and to do so it assigns the MediaStream to a media element's
-// srcObject. Intercepting that setter yields the stream the API withholds.
-// Technique taken from the ADIA reference implementation (src/web/bridge.js).
+// ───────── remote (room) audio ─────────
+// Two paths, deliberately both present.
 //
-// This rides an implementation detail, not a contract. If a future SDK renders
-// remote audio purely through Web Audio, the hook stops firing and remoteRms in
-// capture_stats stays 0 — which is precisely how we detect the regression.
-function attachRemoteMediaStream(ms) {
+// 1. DOCUMENTED: RemoteAudioStream.getMediaStream() -> Promise<MediaStream>.
+//    This is the supported API and is tried first.
+//
+//    An earlier version of this file claimed the SDK "will not hand us remote
+//    audio", citing a live measurement of wiredTracks 0 / maxRms 0. That
+//    measurement was real but the conclusion drawn from it was wrong twice over:
+//    the code called getMediaStreamTrack(), which is NOT a member of
+//    RemoteAudioStream (the interface exposes getMediaStream() and getVolume()),
+//    and the function containing that call was never invoked by anything. So the
+//    SDK was never actually asked.
+//
+// 2. FALLBACK: intercept HTMLMediaElement.prototype.srcObject. The SDK has to
+//    *play* remote audio, so it assigns the MediaStream to a media element.
+//    Technique taken from the ADIA reference implementation (src/web/bridge.js).
+//    This is proven to work in a real meeting, but it rides an implementation
+//    detail rather than a contract, which is why it is second choice.
+//
+// capture_stats reports `via` so the logs say which path actually delivered the
+// audio. If the documented path works, `via=sdk` and the hook is redundant
+// insurance; if a future SDK renders remote audio purely through Web Audio, the
+// hook stops firing and remoteMaxRms returns to 0 — how the regression announces
+// itself.
+function attachRemoteMediaStream(ms, via) {
     try {
         if (!ms || typeof ms.getAudioTracks !== "function") return;
         const tracks = ms.getAudioTracks();
@@ -350,7 +367,7 @@ function attachRemoteMediaStream(ms) {
         if (wiredRemoteTracks.has(id)) return;
         // audioCtx is created in setupOutboundAudio() before join(), but a stream
         // arriving first must not be dropped on the floor.
-        if (!audioCtx) { pendingRemoteStreams.push(ms); return; }
+        if (!audioCtx) { pendingRemoteStreams.push({ ms, via }); return; }
         wiredRemoteTracks.add(id);
         ensureCaptureNode();
         const src = audioCtx.createMediaStreamSource(ms);
@@ -360,9 +377,10 @@ function attachRemoteMediaStream(ms) {
         src.connect(analyser);
         src.connect(captureNode);
         remoteAnalysers.push(analyser);
-        console.log("[acs-join] remote audio wired via srcObject", id);
+        remoteWiredVia.add(via || "srcObject");
+        console.log(`[acs-join] remote audio wired via ${via || "srcObject"}`, id);
         if (mediaWs && mediaWs.readyState === WebSocket.OPEN) {
-            try { mediaWs.send(JSON.stringify({ type: "remote_wired", trackId: id, via: "srcObject" })); } catch (_) {}
+            try { mediaWs.send(JSON.stringify({ type: "remote_wired", trackId: id, via: via || "srcObject" })); } catch (_) {}
         }
     } catch (e) {
         console.warn("[acs-join] attachRemoteMediaStream failed", e);
@@ -372,7 +390,7 @@ function attachRemoteMediaStream(ms) {
 function drainPendingRemoteStreams() {
     if (!audioCtx || !pendingRemoteStreams.length) return;
     const queued = pendingRemoteStreams.splice(0, pendingRemoteStreams.length);
-    queued.forEach(attachRemoteMediaStream);
+    queued.forEach((q) => attachRemoteMediaStream(q.ms, q.via));
 }
 
 function installSrcObjectHook() {
@@ -390,7 +408,7 @@ function installSrcObjectHook() {
         configurable: true,
         enumerable: desc.enumerable,
         get() { return desc.get.call(this); },
-        set(v) { attachRemoteMediaStream(v); return desc.set.call(this, v); },
+        set(v) { attachRemoteMediaStream(v, "srcObject"); return desc.set.call(this, v); },
     });
     srcObjectHooked = true;
     console.log("[acs-join] srcObject hook installed");
@@ -400,45 +418,56 @@ installSrcObjectHook();
 
 function wireRemoteAudioStream(stream) {
     try {
-        if (!stream || (stream.mediaStreamType && stream.mediaStreamType !== "Audio")) return;
-        const track = typeof stream.getMediaStreamTrack === "function"
-            ? stream.getMediaStreamTrack()
-            : null;
-        Promise.resolve(track).then((t) => {
-            if (!t || wiredRemoteTracks.has(t.id)) return;
-            wiredRemoteTracks.add(t.id);
-            ensureCaptureNode();
-            const ms = new MediaStream([t]);
-            // Chrome/Edge only pull samples from a *remote* WebRTC MediaStream
-            // through Web Audio if the stream is also consumed by a playing
-            // HTMLMediaElement. Prime it with a muted <audio> element so the
-            // ScriptProcessor actually receives the meeting audio.
+        if (!stream) return;
+        if (stream.mediaStreamType && stream.mediaStreamType !== "Audio") return;
+        // The documented member of RemoteAudioStream. getMediaStreamTrack(), which
+        // this used to call, does not exist on the interface.
+        if (typeof stream.getMediaStream !== "function") return;
+        if (stream.isAvailable === false) return;
+        Promise.resolve(stream.getMediaStream()).then((ms) => {
+            if (!ms) return;
+            // Attach BEFORE priming: assigning srcObject below trips our own hook,
+            // and whichever call lands first owns the `via` label. The documented
+            // path must win that race or the diagnostic would always read
+            // "srcObject" and we would never learn whether the SDK path works.
+            attachRemoteMediaStream(ms, "sdk");
+            // Chrome only pulls samples from a *remote* WebRTC MediaStream through
+            // Web Audio while an HTMLMediaElement is also consuming it. The SDK
+            // plays its own element, but muteIncomingAudio() (the echo guard in
+            // startBrowserMedia) may stop that, so prime one here rather than
+            // depend on the SDK's.
             const el = new Audio();
             el.muted = true;
             el.srcObject = ms;
             el.play().catch(() => { /* autoplay may defer; track still primed */ });
             primingAudioEls.push(el);
-            const src = audioCtx.createMediaStreamSource(ms);
-            src.connect(captureNode);
-            console.log("[acs-join] wired remote audio track", t.id);
-            if (mediaWs && mediaWs.readyState === WebSocket.OPEN) {
-                try { mediaWs.send(JSON.stringify({ type: "remote_wired", trackId: t.id })); } catch (_) {}
-            }
-        }).catch((e) => console.warn("[acs-join] getMediaStreamTrack failed", e));
+        }).catch((e) => console.warn("[acs-join] getMediaStream failed", e));
     } catch (e) {
         console.warn("[acs-join] wireRemoteAudioStream failed", e);
     }
 }
 
+// Nothing ever called wireRemoteAudioStream before, which is the other half of
+// why the SDK path looked dead. Sweep the call's remote audio streams on connect
+// and on a timer so participants who join later are picked up too; wiring is
+// idempotent (deduped by track id), so re-scanning is free.
+function scanRemoteAudioStreams() {
+    try {
+        const streams = (call && call.remoteAudioStreams) ? call.remoteAudioStreams : [];
+        for (const s of streams) wireRemoteAudioStream(s);
+    } catch (e) {
+        console.warn("[acs-join] scanRemoteAudioStreams failed", e);
+    }
+}
+
 function startRemoteAudioCapture() {
     ensureCaptureNode();
-    // Room audio now arrives via the srcObject hook above. The mic remains a
-    // SECOND source because it is the near-field signal for whoever is at this
-    // laptop, and because the hook rides an SDK implementation detail that could
-    // stop firing. Historical note, still true of the SDK API itself:
-    // getMediaStreamTrack() on a RemoteAudioStream yields nothing (confirmed:
-    // wiredTracks stayed 0, maxRms 0), which is why the hook exists at all.
-    // echoCancellation strips Nuru's own voice (played by the Teams client).
+    // Room audio arrives via wireRemoteAudioStream (documented getMediaStream())
+    // with the srcObject hook as a second path — see the block above. The mic
+    // remains a SEPARATE source because it is the near-field signal for whoever
+    // is at this laptop, and because it is the only one that survives if both
+    // remote paths fail. echoCancellation strips Nuru's own voice (played by the
+    // Teams client) out of that near-field capture.
     if (!MIC_CAPTURE) {
         console.log("[acs-join] mic capture disabled (?mic=0) — remote audio only");
         log("Mic capture disabled — listening to meeting audio only.");
@@ -712,6 +741,7 @@ function teardownPlacardVideo() {
 function teardownMedia() {
     teardownPlacardVideo();
     teardownAvatarVideo();
+    if (remoteScanTimer) { clearInterval(remoteScanTimer); remoteScanTimer = null; }
     try { if (mediaWs) mediaWs.close(); } catch (_) {}
     try { if (captureNode) captureNode.disconnect(); } catch (_) {}
     try { if (captureSink) captureSink.disconnect(); } catch (_) {}
@@ -727,6 +757,13 @@ function teardownMedia() {
     displayStream = null; displaySource = null;
     outboundDest = null; outboundLocalStream = null;
     wiredRemoteTracks.clear(); scheduledSources = []; playCursor = 0;
+    // These outlived the audioCtx before: stale analysers from a closed context
+    // stay readable and keep inflating remoteMeters while always reporting 0,
+    // which would make the remote-audio diagnostic lie after a rejoin.
+    remoteAnalysers.length = 0;
+    remoteWiredVia.clear();
+    pendingRemoteStreams.length = 0;
+    remoteMaxRms = 0;
     // Reset the half-duplex mute clock. teardownMedia() closes the audioCtx, so the
     // next join() creates a fresh context whose clock restarts near 0. If we leave a
     // stale (large) captureMutedUntil from the previous context here, the new context's
@@ -1007,6 +1044,12 @@ async function startBrowserMedia() {
         log(`Connected. Bridging meeting audio to ${avatarDisplayName}…`);
         openMediaSocket();
         startRemoteAudioCapture();
+        // Ask the SDK for the room audio (documented path). Re-scan on a timer so
+        // participants who join after us are picked up; wiring is deduped by track
+        // id, so repeat scans are no-ops.
+        scanRemoteAudioStreams();
+        if (remoteScanTimer) clearInterval(remoteScanTimer);
+        remoteScanTimer = setInterval(scanRemoteAudioStreams, 3000);
         // Stop the SDK from rendering the meeting's incoming audio out the local
         // speaker. We capture it for Voice Live via Web Audio (muted <audio>
         // priming keeps the WebRTC track flowing), so local rendering is pure

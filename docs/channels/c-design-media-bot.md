@@ -358,13 +358,14 @@ existed.
 - **Client isolation** — originally recorded here as "Teams' rule that a web/client leg
   only receives its own mic, the reason the browser path can't hear the room."
   **That was wrong**, and it is worth keeping the correction visible: it conflated *the
-  ACS SDK declining to hand you a track* (`getMediaStreamTrack()` returns nothing) with
-  *the client not receiving the audio at all*. The client plainly does receive it — that
-  is how the call is audible — and intercepting `HTMLMediaElement.prototype.srcObject`
-  reaches it. Verified live; see
-  [d-in-call-headless.md](./d-in-call-headless.md). The media bot's real advantage is
-  that it reads the room through a **supported API** rather than an implementation
-  detail.
+  ACS SDK apparently declining to hand you a track* with *the client not receiving the
+  audio at all*. The client plainly does receive it — that is how the call is audible —
+  and intercepting `HTMLMediaElement.prototype.srcObject` reaches it. Verified live; see
+  [d-in-call-headless.md](./d-in-call-headless.md). Note the "declining" half was also
+  wrong: the code called `getMediaStreamTrack()`, which is not a member of
+  `RemoteAudioStream` (it exposes `getMediaStream()`), from a function nothing called —
+  so the SDK was never asked. The media bot's real advantage is that it reads the room
+  through a **supported API** rather than an implementation detail.
 
 ---
 

@@ -659,6 +659,7 @@ class BrowserVoiceBridge:
                                     f"wiredTracks={ctrl.get('wiredTracks')} "
                                     f"remoteMeters={ctrl.get('remoteMeters')} "
                                     f"remoteMaxRms={ctrl.get('remoteMaxRms')} "
+                                    f"remoteVia={ctrl.get('remoteVia')} "
                                     f"micCapture={ctrl.get('micCapture')}"
                                 )
                             elif ct == "remote_wired":
