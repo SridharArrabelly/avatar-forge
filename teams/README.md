@@ -41,7 +41,7 @@ Start with the tab walkthrough, then the in-call section if you're enabling chan
 | `../assets/brand/color.png` | 192×192 color app icon (canonical brand source, shared with web + meeting bot). |
 | `../assets/brand/outline.png` | 32×32 transparent outline icon (Teams recolors it). |
 | `build_package.py` | Stdlib-only script that renders the manifest and zips a sideloadable package. Embeds the icons from `assets/brand/` into the zip. |
-| `build/avatar-forge-teams-<env>.zip` | Build output, one per azd environment (git-ignored). |
+| `build/teams-<env>.zip` | Build output, one per azd environment (git-ignored). |
 
 ## Build the package
 
@@ -82,10 +82,10 @@ Optional flags (env var equivalents in parentheses):
 - `--app-id` (`TEAMS_APP_ID`) — stable app GUID. If omitted, a deterministic GUID is
   derived from the hostname so rebuilds produce the same id.
 
-Output: `teams/build/avatar-forge-teams-<env>.zip` containing `manifest.json`,
+Output: `teams/build/teams-<env>.zip` containing `manifest.json`,
 `color.png`, and `outline.png` at the archive root, where `<env>` is the selected
 azd environment (`AZURE_ENV_NAME`). Without a selected environment — an explicit
-`--hostname` build — the name falls back to `avatar-forge-teams.zip`.
+`--hostname` build — the name falls back to `teams.zip`.
 
 > **Why the filename carries the environment.** A package is not a neutral
 > artefact: the manifest bakes in that deployment's hostname, and the app id is a
@@ -105,7 +105,7 @@ your tenant has custom-app upload disabled, use B.
 ### Route A — Upload a custom app (personal scope)
 
 1. In Teams, go to **Apps → Manage your apps → Upload an app → Upload a custom app**.
-2. Select the zip the build printed (`teams/build/avatar-forge-teams-<env>.zip`).
+2. Select the zip the build printed (`teams/build/teams-<env>.zip`).
 3. Add the app; open the **Avatar** personal tab.
 4. When prompted, **allow microphone** (and camera if requested) for the tab.
 
@@ -121,7 +121,7 @@ policy, and is the recommended no-admin path for this prototype.
 1. Open the **Teams Developer Portal** — <https://dev.teams.microsoft.com> (also available
    as the **Developer Portal** app inside Teams).
 2. **Apps → Import app** and select the zip the build printed
-   (`teams/build/avatar-forge-teams-<env>.zip`).
+   (`teams/build/teams-<env>.zip`).
 3. Open the imported app and click **Preview in Teams** (top right). Teams opens and adds
    the app for you.
 4. Open the **Avatar** personal tab and **allow microphone** (and camera if requested).
