@@ -42,17 +42,46 @@
   <ItemGroup>
     <!--
       Graph Communications Calling + Real-Time Media SDK.
-      NOTE on versions: these are the 1.2.0.x calling/media packages. Restore
-      them on a Windows machine with NuGet access. The Calls, Media, Client and
-      Common packages must stay version-aligned — bump them together.
-    -->
-    <PackageReference Include="Microsoft.Graph.Communications.Calls" Version="1.2.0.10563" />
-    <PackageReference Include="Microsoft.Graph.Communications.Calls.Media" Version="1.2.0.10563" />
-    <PackageReference Include="Microsoft.Graph.Communications.Client" Version="1.2.0.10563" />
-    <PackageReference Include="Microsoft.Graph.Communications.Common" Version="1.2.0.10563" />
 
-    <!-- Auth for acquiring the Graph app token used by the calling client. -->
-    <PackageReference Include="Microsoft.Identity.Client" Version="4.61.3" />
+      ⚠ THESE VERSIONS EXPIRE. Microsoft requires the newest Calls.Media package
+      "or a version that isn't more than three months old", and states plainly:
+      "Older versions of the library are deprecated and don't work after a few
+      months." A bot that worked last month can therefore start failing with no
+      code change. See:
+      https://learn.microsoft.com/en-us/microsoftteams/platform/bots/calls-and-meetings/requirements-considerations-application-hosted-media-bots
+
+      Check https://www.nuget.org/packages/Microsoft.Graph.Communications.Calls.Media/
+      before each deployment; scripts/check_media_sdk_age.py fails the build once
+      this pin is older than 90 days. The Calls, Media, Client and Common packages
+      must stay version-aligned — bump them together. Restore on a Windows machine.
+
+      Do NOT add an explicit Microsoft.Skype.Bots.Media reference. It arrives
+      transitively and Calls.Media pins an exact build of it (1.2.0.17950 ->
+      1.31.0.225-preview); that package carries the native media stack
+      (NativeMedia.dll, skypert.dll, RtmCodecs.dll) which must match the managed
+      wrapper it was compiled against. Overriding the pin risks an ABI mismatch
+      that only surfaces at runtime, on a Windows host, mid-meeting.
+
+      KNOWN DEPRECATION (builds today, will not forever): this bump surfaced
+      CS0618 on CommunicationsClientBuilder.SetAuthenticationProvider, which
+      says "use SetAuthentication(appId, tokenProvider) instead. This method
+      will be removed in a future version." It still works, so it was left
+      alone deliberately rather than changed blind in the same commit as a
+      version bump — it rewires authentication, which cannot be verified
+      without a Windows host, an Entra app and a live meeting. Fix it as its
+      own change, with one variable moving at a time.
+    -->
+    <PackageReference Include="Microsoft.Graph.Communications.Calls" Version="1.2.0.17950" />
+    <PackageReference Include="Microsoft.Graph.Communications.Calls.Media" Version="1.2.0.17950" />
+    <PackageReference Include="Microsoft.Graph.Communications.Client" Version="1.2.0.17950" />
+    <PackageReference Include="Microsoft.Graph.Communications.Common" Version="1.2.0.17950" />
+
+    <!--
+      Auth for acquiring the Graph app token used by the calling client. 4.83.1 is
+      what Calls.Media 1.2.0.17950 itself depends on — keep them in step so NuGet
+      does not silently resolve a different build.
+    -->
+    <PackageReference Include="Microsoft.Identity.Client" Version="4.83.1" />
 
     <!-- Lets the host run as a Windows service under the SCM (Start-Service). -->
     <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="8.0.1" />
