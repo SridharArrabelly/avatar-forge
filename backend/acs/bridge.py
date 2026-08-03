@@ -680,6 +680,8 @@ class BrowserVoiceBridge:
                                     f"ctxRate={ctrl.get('ctxRate')} "
                                     f"selfTalking={ctrl.get('selfTalking')} "
                                     f"humanMuted={ctrl.get('humanMuted')} "
+                                    f"parts={ctrl.get('parts')} "
+                                    f"duplex={ctrl.get('duplex')} "
                                     f"remoteStreams={ctrl.get('remoteStreams')} "
                                     f"wiredTracks={ctrl.get('wiredTracks')} "
                                     f"remoteMeters={ctrl.get('remoteMeters')} "

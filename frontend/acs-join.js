@@ -29,6 +29,12 @@
 // answering "can this leg hear the meeting?" — with the mic live, its own signal
 // masks the answer.
 const MIC_CAPTURE = new URLSearchParams(location.search).get("mic") !== "0";
+// Full duplex: keep listening while she speaks, so a human can cut her off
+// mid-answer. Off by default because the half-duplex gate is what stops her own
+// voice (played by the Teams client, which browser AEC cannot cancel — it is a
+// different app's output) looping back in as a new question. On headphones there
+// is no such loop, and barge-in matters more, so ?duplex=full turns the gate off.
+const FULL_DUPLEX = new URLSearchParams(location.search).get("duplex") === "full";
 // ?remote=0 disables the srcObject interception entirely, restoring the exact
 // pre-2026-08-03 behaviour (mic-only capture). This leg is live-verified, so
 // there is a way back that does not need a redeploy.
@@ -165,7 +171,7 @@ function noteBuildId(id) {
 // StaticInterimResponseConfig is not an option here: it requires the model
 // binding, and the in-call session runs the Foundry agent binding for tools.
 let thinkingSince = 0;
-const THINKING_SHOW_AFTER_MS = 600;
+const THINKING_SHOW_AFTER_MS = 250;
 let scheduledSources = [];      // active outbound buffer sources (for barge-in flush)
 let captureMutedUntil = 0;      // half-duplex: drop mic capture until this ctx time
 
@@ -318,10 +324,17 @@ function flushPlayback() {
 function allHumansMuted() {
     // From Nuru's leg, the humans are remote participants. If at least one is
     // explicitly unmuted, someone may be talking to the meeting -> listen.
-    // If there are none yet, or all are muted, suppress capture.
+    //
+    // An EMPTY list means we know nothing, not that everyone is muted. This SDK
+    // demonstrably under-reports on Teams interop — capture stats have shown
+    // remoteStreams=0 while wiredTracks=2 carried real audio — so treating
+    // "no participants visible" as "all muted" silently deafens her mid-meeting
+    // and the question just vanishes. That was one cause of "sometimes she does
+    // not respond". Listen when we cannot tell; only stay quiet when we can
+    // actually see every human muted.
     try {
         const parts = (call && call.remoteParticipants) ? call.remoteParticipants : [];
-        if (!parts.length) return true;
+        if (!parts.length) return false;
         return !parts.some((p) => p && p.isMuted === false);
     } catch (_) {
         return false; // never hard-fail capture on an inspection error
@@ -379,7 +392,8 @@ function ensureCaptureNode() {
         // Half-duplex gate: don't forward mic audio while Nuru is speaking, so
         // her own voice (from the Teams-client speaker) can't loop back as a
         // new question. Browser AEC can't cancel it (different app's output).
-        const selfTalking = !!(audioCtx && audioCtx.currentTime < captureMutedUntil);
+        const selfTalking = !FULL_DUPLEX
+            && !!(audioCtx && audioCtx.currentTime < captureMutedUntil);
         // Privacy gate: Nuru taps the local mic directly, which is independent
         // of the Teams client's mute. But from Nuru's leg the human is a *remote*
         // participant, so we honour their Teams mute — if every human is muted,
@@ -402,6 +416,9 @@ function ensureCaptureNode() {
                     ctxRate: audioCtx ? audioCtx.sampleRate : 0,
                     selfTalking,
                     humanMuted,
+                    parts: (call && call.remoteParticipants)
+                        ? call.remoteParticipants.length : -1,
+                    duplex: FULL_DUPLEX ? "full" : "half",
                     remoteStreams: (call && call.remoteAudioStreams)
                         ? call.remoteAudioStreams.length : 0,
                     wiredTracks: wiredRemoteTracks.size,

@@ -104,6 +104,34 @@ Two things this diagram implies that [channel C](c-in-call-media-bot.md) does no
 > stops firing and `remoteMaxRms` returns to 0 — which is exactly how the regression
 > announces itself. `?remote=0` disables the hook without a redeploy.
 
+## Joiner URL flags
+
+Tunable per session, so a live call can be adjusted without a redeploy.
+
+| Flag | Default | Effect |
+| --- | --- | --- |
+| `?mic=0` | mic on | Drops the local microphone tap. Isolates the srcObject hook — the only way to prove the leg hears *other* participants rather than the operator. |
+| `?remote=0` | hook on | Disables the srcObject hook. Kill switch back to mic-only behaviour. |
+| `?duplex=full` | half | Keeps the microphone live while she speaks, so a human can cut her off mid-answer. |
+| `?lead=<seconds>` | `0.28` | Audio-ahead-of-video offset for lip-sync. |
+
+### Why barge-in is half-duplex by default
+
+While the avatar speaks, the joiner mutes its own microphone (`captureMutedUntil`,
+plus a short tail). That is deliberate: her voice is played by the **Teams client**,
+a different application, and browser echo cancellation cannot cancel another app's
+output. Without the gate her own speech is re-captured by the operator's microphone
+and arrives back as a new question.
+
+The cost is that **barge-in cannot work while she is talking** — the mic is shut, so
+the interruption never reaches Voice Live. This is the honest explanation for
+"sometimes barge-in doesn't work": it works in the gaps between phrases and not
+during them.
+
+**On headphones there is no loop**, so the gate buys nothing and only costs
+responsiveness. `?duplex=full` turns it off and gives true barge-in. Use it for
+headset demos; leave it off on a speakerphone or laptop speakers.
+
 ## <a id="adia"></a>Prior art — the ADIA implementation
 
 A client-built agent (`ADIA-Agent`) implements this same architecture end to end and is
