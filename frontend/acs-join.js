@@ -29,6 +29,10 @@
 // answering "can this leg hear the meeting?" — with the mic live, its own signal
 // masks the answer.
 const MIC_CAPTURE = new URLSearchParams(location.search).get("mic") !== "0";
+// ?remote=0 disables the srcObject interception entirely, restoring the exact
+// pre-2026-08-03 behaviour (mic-only capture). This leg is live-verified, so
+// there is a way back that does not need a redeploy.
+const REMOTE_CAPTURE = new URLSearchParams(location.search).get("remote") !== "0";
 
 const CALLING_UMD = "/vendor/communication-calling-1.40.1.js";
 const COMMON_ESM = "https://esm.sh/@azure/communication-common@2.3.1";
@@ -373,6 +377,10 @@ function drainPendingRemoteStreams() {
 
 function installSrcObjectHook() {
     if (srcObjectHooked) return;
+    if (!REMOTE_CAPTURE) {
+        console.log("[acs-join] srcObject hook disabled (?remote=0) — mic-only capture");
+        return;
+    }
     const desc = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, "srcObject");
     if (!desc || !desc.set) {
         console.warn("[acs-join] srcObject is not a configurable accessor — remote capture unavailable");
