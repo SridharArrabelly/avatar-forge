@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.43.8.12551",
-      "templateHash": "18367724207691146042"
+      "templateHash": "12126610585998438323"
     }
   },
   "parameters": {
@@ -459,8 +459,8 @@
       ]
     },
     "modelCapacity": {
-      "type": "int",
-      "defaultValue": 50
+      "type": "string",
+      "defaultValue": "250"
     }
   },
   "variables": {
@@ -475,6 +475,7 @@
     "createFoundry": "[or(or(empty(parameters('foundryAccountName')), empty(parameters('foundryResourceGroup'))), empty(parameters('foundryProjectEndpoint')))]",
     "createSearch": "[or(empty(parameters('searchServiceName')), empty(parameters('searchResourceGroup')))]",
     "resolvedAgentModel": "[if(not(empty(parameters('agentModel'))), parameters('agentModel'), if(variables('createFoundry'), parameters('modelDeploymentName'), 'gpt-5.4'))]",
+    "resolvedModelCapacity": "[int(if(not(empty(parameters('modelCapacity'))), parameters('modelCapacity'), '250'))]",
     "profileInCall": "[equals(toLower(parameters('deployProfile')), 'in-call')]",
     "wantMeetingBotBridge": "[or(variables('profileInCall'), equals(toLower(parameters('meetingBotEnabled')), 'true'))]",
     "wantMeetingBotHost": "[or(variables('profileInCall'), equals(toLower(parameters('deployMeetingBotHost')), 'true'))]",
@@ -607,7 +608,7 @@
             "value": "[parameters('modelSkuName')]"
           },
           "modelCapacity": {
-            "value": "[parameters('modelCapacity')]"
+            "value": "[variables('resolvedModelCapacity')]"
           },
           "agentModel": {
             "value": "[variables('resolvedAgentModel')]"
@@ -672,7 +673,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.43.8.12551",
-              "templateHash": "18095248767759794082"
+              "templateHash": "6673048578718943267"
             }
           },
           "parameters": {
@@ -2505,7 +2506,7 @@
                     "_generator": {
                       "name": "bicep",
                       "version": "0.43.8.12551",
-                      "templateHash": "2419480000213089037"
+                      "templateHash": "12555570511420734749"
                     }
                   },
                   "parameters": {
@@ -2788,8 +2789,8 @@
                               "name": "web",
                               "image": "[parameters('containerImage')]",
                               "resources": {
-                                "cpu": "[json('1.0')]",
-                                "memory": "2.0Gi"
+                                "cpu": "[json('2.0')]",
+                                "memory": "4.0Gi"
                               },
                               "env": "[concat(createArray(createObject('name', 'PORT', 'value', '3000'), createObject('name', 'AZURE_CLIENT_ID', 'value', parameters('uamiClientId')), createObject('name', 'DEVELOPER_MODE', 'value', parameters('developerMode')), createObject('name', 'AZURE_VOICELIVE_ENDPOINT', 'value', parameters('voiceliveEndpoint')), createObject('name', 'PROJECT_ENDPOINT', 'value', parameters('projectEndpoint')), createObject('name', 'AGENT_NAME', 'value', parameters('agentName')), createObject('name', 'AGENT_PROJECT_NAME', 'value', parameters('agentProjectName')), createObject('name', 'AGENT_MODEL', 'value', parameters('agentModel')), createObject('name', 'EMBEDDING_DEPLOYMENT', 'value', parameters('embeddingDeployment')), createObject('name', 'AZURE_SEARCH_ENDPOINT', 'value', parameters('searchEndpoint')), createObject('name', 'SEARCH_CONNECTION_NAME', 'value', parameters('searchConnectionName')), createObject('name', 'SEARCH_INDEX_NAME', 'value', parameters('searchIndexName')), createObject('name', 'VOICELIVE_VOICE', 'value', parameters('voiceLiveVoice')), createObject('name', 'BING_CONNECTION_NAME', 'value', parameters('bingConnectionName')), createObject('name', 'BING_CUSTOM_CONFIG_NAME', 'value', parameters('bingCustomConfigName')), createObject('name', 'AVATAR_NAME', 'value', parameters('avatarName')), createObject('name', 'CUSTOM_AVATAR_NAME', 'value', parameters('customAvatarName')), createObject('name', 'AVATAR_DISPLAY_NAME', 'value', parameters('avatarDisplayName')), createObject('name', 'AVATAR_TAGLINE', 'value', parameters('avatarTagline')), createObject('name', 'PHOTO_AVATAR_NAME', 'value', parameters('photoAvatarName')), createObject('name', 'IS_PHOTO_AVATAR', 'value', parameters('isPhotoAvatar')), createObject('name', 'IS_CUSTOM_AVATAR', 'value', parameters('isCustomAvatar')), createObject('name', 'AVATAR_BACKGROUND_IMAGE_URL', 'value', parameters('avatarBackgroundImageUrl')), createObject('name', 'SR_MODEL', 'value', parameters('srModel')), createObject('name', 'RECOGNITION_LANGUAGE', 'value', parameters('recognitionLanguage')), createObject('name', 'APPLICATIONINSIGHTS_CONNECTION_STRING', 'value', parameters('appInsightsConnectionString'))), concat(variables('acsEnv'), variables('meetingBotEnv'), variables('voiceBindingEnv'), variables('webIqEnv')))]",
                               "probes": [

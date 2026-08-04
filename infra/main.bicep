@@ -228,7 +228,14 @@ param modelVersion string = '2026-03-05'
 param modelDeploymentName string = 'gpt-5.4'
 @allowed([ 'GlobalStandard', 'Standard', 'DataZoneStandard' ])
 param modelSkuName string = 'GlobalStandard'
-param modelCapacity int = 50
+// TPM capacity in thousands, so '250' is 250K tokens/minute. Typed as a string,
+// not an int, because azd substitutes MODEL_CAPACITY textually and ARM refuses a
+// JSON string for an int parameter -- the same reason enableAcs is a string.
+// On GlobalStandard this is a rate ceiling, not a reservation: billing is per token
+// consumed, so raising it costs nothing and only buys headroom against 429s. Every
+// turn resends the full agent prompt plus retrieved chunks, so 50 was easy to trip.
+// Bounded by regional quota: az cognitiveservices usage list -l <region>
+param modelCapacity string = '250'
 
 var resourceToken = toLower(uniqueString(subscription().id, environmentName, location))
 var tags = {
@@ -245,6 +252,10 @@ var createSearch  = empty(searchServiceName) || empty(searchResourceGroup)
 // could never find, so greenfield derives it. BYO keeps the old default because the
 // deployment lives in an account this template did not create and cannot inspect.
 var resolvedAgentModel = !empty(agentModel) ? agentModel : (createFoundry ? modelDeploymentName : 'gpt-5.4')
+
+// Guard the empty case: `azd env set MODEL_CAPACITY ""` reaches the template as an
+// empty string, and int('') fails at deploy time rather than falling back.
+var resolvedModelCapacity = int(!empty(modelCapacity) ? modelCapacity : '250')
 
 // ───────── Profile derivation ─────────
 // The profile RAISES capability; it never lowers it. Explicit flags still work
@@ -304,7 +315,7 @@ module resources 'resources.bicep' = {
     modelVersion: modelVersion
     modelDeploymentName: modelDeploymentName
     modelSkuName: modelSkuName
-    modelCapacity: modelCapacity
+    modelCapacity: resolvedModelCapacity
     agentModel: resolvedAgentModel
     embeddingDeployment: embeddingDeployment
     avatarName: avatarName

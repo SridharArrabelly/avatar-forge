@@ -52,7 +52,7 @@
     "modelVersion":        { "value": "${MODEL_VERSION=2026-03-05}" },
     "modelDeploymentName": { "value": "${MODEL_DEPLOYMENT_NAME=gpt-5.4}" },
     "modelSkuName":        { "value": "${MODEL_SKU_NAME=GlobalStandard}" },
-    "modelCapacity":       { "value": 50 },
+    "modelCapacity":       { "value": "${MODEL_CAPACITY=250}" },
 
     "enableAcs":       { "value": "${ENABLE_ACS=false}" },
     "acsDataLocation": { "value": "${ACS_DATA_LOCATION=United States}" },

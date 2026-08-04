@@ -126,7 +126,7 @@ deployment.
 | `MODEL_VERSION` | `2026-03-05` | Model version (must match `MODEL_NAME`). |
 | `MODEL_DEPLOYMENT_NAME` | `gpt-5.4` | What to **call** that deployment. |
 | `MODEL_SKU_NAME` | `GlobalStandard` | Deployment SKU. |
-| `MODEL_CAPACITY` | `50` | TPM (thousands) capacity. |
+| `MODEL_CAPACITY` | `250` | TPM (thousands) capacity, so `250` is 250K tokens/minute. On `GlobalStandard` this is a **rate ceiling, not a reservation** — billing is per token consumed, so raising it costs nothing and only buys headroom against 429s. Every turn resends the full agent prompt plus retrieved chunks, so the old `50` was easy to trip under demo load. Your regional ceiling: `az cognitiveservices usage list -l <region>`. |
 
 ### Why `MODEL_NAME` and `MODEL_DEPLOYMENT_NAME` are both needed
 

@@ -170,8 +170,15 @@ resource app 'Microsoft.App/containerApps@2024-10-02-preview' = {
           name: 'web'
           image: containerImage
           resources: {
-            cpu: json('1.0')
-            memory: '2.0Gi'
+            // ACA Consumption requires an exact 1 vCPU : 2 GiB ratio, so these two
+            // move together; raising cpu alone fails validation. This is also the
+            // per-replica ceiling: the environment has no workloadProfiles, so it is
+            // Consumption-only and caps at 2 vCPU / 4 GiB. Going higher means adding
+            // a dedicated workload profile to containerAppsEnvironment.bicep first.
+            // Headroom for concurrent Voice Live sessions, each of which bridges
+            // audio in the app process.
+            cpu: json('2.0')
+            memory: '4.0Gi'
           }
           env: concat([
             { name: 'PORT', value: '3000' }
