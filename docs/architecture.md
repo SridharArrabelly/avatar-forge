@@ -108,7 +108,7 @@ Search** (a single hosted Bing call instead of an open-ended web tool) and pinni
 the model lifted first-tool accuracy to **~93.5%** on the original `gpt-4.1-mini`
 baseline and cut fan-out to ≈3%. The **current production model is `gpt-5.4` with
 `AGENT_REASONING_EFFORT=none`**, which scores **30/30** on the routing harness
-([`prompts/agent/routing-test-questions.md`](../prompts/agent/routing-test-questions.md))
+([`prompts/routing-test-questions.md`](../prompts/routing-test-questions.md))
 with cleaner numeric synthesis; `gpt-5.4-mini` is a faster, cheaper fallback and
 `gpt-4.1-mini` remains the documented baseline.
 

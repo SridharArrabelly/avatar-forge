@@ -9,13 +9,12 @@ chasing string literals across the codebase.
 ```
 prompts/
 ├── README.md                          # this file
+├── routing-test-questions.md          # shared checklist: does each question hit the right tool?
 ├── agent/                             # used when VOICE_BINDING=agent
 │   ├── description.md                 # one-line agent description (UI / catalog)
-│   ├── instructions.md                # system instructions — the only agent prompt
-│   └── routing-test-questions.md      # manual checklist: does each question hit the right tool?
+│   └── instructions.md                # system instructions — the only agent prompt
 └── realtime/                          # used when VOICE_BINDING=model
-    ├── instructions.md                # system instructions, gpt-realtime family
-    └── instructions01.md              # DRAFT — loaded by nothing, see below
+    └── instructions.md                # system instructions, gpt-realtime family
 ```
 
 ## Which prompt is used, and when
@@ -61,52 +60,59 @@ described.
 The agent prompt carries the voice-first output rules, the silent meeting
 catalogue contract, and the `bing_custom_search` query-style-by-intent block.
 
-### `realtime/instructions01.md` is a draft — no code path loads it
+### A rejected draft, and what measuring it taught us
 
-`prompts/realtime/` still contains an `instructions01.md`: a 5,811-byte prompt
-written to serve **both** bindings, on the theory that a shorter, less ambiguous
-brief would make tool decisions faster. Nothing loads it —
-`backend/voice/instructions.py` hardcodes `realtime/instructions.md`. It is a
-checked-in draft, kept because it measures well on this binding (below).
+An alternative prompt (`instructions01.md`) once sat in **both** trees: a single
+5,811-byte brief written to serve both bindings, on the theory that a shorter, less
+ambiguous prompt would make tool decisions faster. Both copies have been **deleted**.
+The measurements are kept here because they are the reason, and because they say
+something durable about the two bindings.
 
-An agent-tree copy also existed. It was measured against the live agent prompt — a
-clone agent carrying only the prompt change, 5 interleaved rounds, 30 answers per
-arm:
+**Agent mode** — a clone agent carrying only the prompt change, 5 interleaved rounds,
+30 answers per arm:
 
-| | `agent/instructions.md` | the deleted agent draft |
+| | `agent/instructions.md` | the draft |
 | --- | --- | --- |
 | routing | 30/30 | 30/30 — identical |
 | answer latency | 6.90 s | 8.08 s (+17%) |
 | answers leaking a `【n:m†source】` marker | 0/30 | **18/30** |
 
 Those markers are Foundry's own citation annotations, and the avatar pronounces them
-aloud character by character. The draft bought no routing improvement, cost 17%
-latency and added that defect, so the agent copy was **deleted**.
+aloud character by character. No routing gain, 17% slower, plus that defect.
 
-That verdict is **agent-mode only, and it does not transfer** — measured, not assumed.
-The markers come from the *managed* `azure_ai_search` / `bing_custom_search` tools;
-model mode calls in-process Python returning `{meeting, date, extract}`, so no marker
-of that shape exists to leak. That is why the realtime copy survives.
+**Model mode** — the same method via `scripts/route_test_model.py`, driving a real
+Voice Live model session, 5 interleaved rounds, 28 scored answers per arm:
 
-The realtime copy was then measured the same way, with `scripts/route_test_model.py`
-driving a real Voice Live model session — 5 interleaved rounds, 28 scored answers per
-arm:
-
-| | `realtime/instructions.md` | `instructions01.md` |
+| | `realtime/instructions.md` | the draft |
 | --- | --- | --- |
 | routing | 16/28 (57%) | **26/28 (93%)** |
 | failed to answer | 7/28 (25%) | **11/28 (39%)** |
 | answers leaking a marker or URL | 0/28 | **0/28** |
 | answer latency | 4.17 s | 4.47 s (+7%) |
 
-**Both halves of that table matter.** The draft routes far better *and* answers less
-often, because the two are the same fact: the live prompt sends public questions to the
-minutes corpus, which usually has an answer, while the draft correctly sends them to
-Web IQ, which often does not. In model mode the prompt is not the binding constraint —
-**web retrieval is** (see issue #78). **Do not promote either copy on this evidence.**
+Three things worth carrying forward:
 
-To try either one, swap it over the filename its loader expects and restore
-afterwards — there is deliberately no env override for the prompt path.
+1. **A prompt verdict does not transfer between bindings.** The citation leak that
+   disqualified the draft in agent mode is impossible in model mode: the markers come
+   from the *managed* `azure_ai_search` / `bing_custom_search` tools, whereas model mode
+   calls in-process Python returning `{meeting, date, extract}`. Measure on the binding
+   you intend to ship.
+2. **Better routing is not automatically a better answer.** The draft routes far better
+   *and* answers less often — the same fact stated twice. The live prompt sends public
+   questions to the minutes corpus, which usually has an answer; the draft correctly
+   sends them to Web IQ, which often does not.
+3. **In model mode the prompt is not the binding constraint — web retrieval is**
+   (see issue #78). No prompt edit fixes a snippet that lacks the figure.
+
+To trial a replacement prompt, point the model-mode harness at it directly — it takes
+arbitrary arms and needs no deployment:
+
+```powershell
+uv run python scripts/route_test_model.py --runs 5 --arms LIVE=prompts/realtime/instructions.md,TRIAL=<path>
+```
+
+There is deliberately no env override for the prompt path, so promoting one means
+replacing the file its loader expects.
 
 ### Sizes, because this is a latency-sensitive path
 
@@ -143,9 +149,10 @@ description in the Foundry catalog, not a document. It looks empty in an editor
 preview. It is not.
 
 `routing-test-questions.md` is the only file here that is **never** sent
-anywhere. It is the regression checklist to run *after* editing
-`agent/instructions.md`, to confirm internal questions still route to
-`azure_ai_search` and external ones to `bing_custom_search`.
+anywhere. It is the regression checklist, shared by both bindings, to run
+*after* editing either `agent/instructions.md` or `realtime/instructions.md`,
+confirming internal questions still route to the minutes tool and external ones
+to the web tool.
 
 Future prompts (per-tool routing rules, clarification templates, UI captions)
 belong in subfolders here, e.g. `prompts/tools/<tool>.md`.

@@ -136,7 +136,7 @@ uv run python scripts/test_foundry_agent.py
 Exercises the registered Foundry agent end-to-end (tool calls + final answer) — useful
 to confirm tool routing after editing prompts or switching `AGENT_MODEL`. The routing
 test checklist + model-shootout results live in
-[`prompts/agent/routing-test-questions.md`](../prompts/agent/routing-test-questions.md).
+[`prompts/routing-test-questions.md`](../prompts/routing-test-questions.md).
 
 ## Automated tests
 

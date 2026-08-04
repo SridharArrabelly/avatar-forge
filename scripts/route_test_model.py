@@ -311,8 +311,8 @@ async def main() -> int:
     ap.add_argument("--tier", choices=sorted(TIERS), default="boundary")
     ap.add_argument(
         "--arms",
-        default="OLD=prompts/realtime/instructions.md,NEW=prompts/realtime/instructions01.md",
-        help="comma-separated LABEL=path pairs",
+        default="LIVE=prompts/realtime/instructions.md",
+        help="comma-separated LABEL=path pairs; give two or more to A/B them",
     )
     args = ap.parse_args()
 

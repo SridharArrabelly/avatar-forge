@@ -50,7 +50,7 @@ CORE = [
 # rule from one that merely lists examples. The core set above is saturated at
 # 30/30, so it can only catch a regression - improvement has to show up here.
 #
-# Sourced from "Boundary / edge cases" in prompts/agent/routing-test-questions.md,
+# Sourced from "Boundary / edge cases" in prompts/routing-test-questions.md,
 # where they were recorded as manual-only.
 BOUNDARY = [
     # Public governance facts, despite the word "board".
