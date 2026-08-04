@@ -173,8 +173,9 @@ serves both harnesses. Prompts must not hardcode either set: they use
   the per-question average.
 - **A fresh session per question (model mode)**, so conversation history cannot
   contaminate later answers.
-- **Latency is total turn time, not time-to-first-token.** Retrieval round-trips
-  dominate. Do not quote these as production latency figures.
+- **Latency reports two different figures.** `first token` is the useful proxy
+  for first audible word; `completion` includes the full answer and tool
+  round-trips. Never quote completion as perceived avatar latency.
 - **Encoding.** Agent answers contain `【...†source】` citation characters that
   crash the Windows cp1252 console — set `$env:PYTHONIOENCODING='utf-8'`.
   Transcripts are written UTF-8 and are gitignored.
@@ -192,6 +193,10 @@ uv run python scripts/bench_routing_agent.py --runs 3 --label gpt_5_4_none_8_8
 
 # Model mode — no provisioning step; the prompt is passed per session
 uv run python scripts/bench_routing_model.py --runs 5 --tier boundary
+
+# Internal regression when Web IQ is unavailable. The harness keeps a local
+# search_web schema as a competing routing-only stub; no web request is made.
+uv run python scripts/bench_routing_model.py --runs 3 --tier core --groups minutes,policies
 ```
 
 Notes:
@@ -202,6 +207,10 @@ Notes:
 - `AGENT_MODEL` no longer swaps the prompt: `agent/instructions.md` is the only
   agent prompt and is loaded unconditionally.
 - Both harnesses locate the repo root by walking up from the working directory.
+- When Web IQ is not configured, the model harness retains `search_web` as a
+  routing-only stub. That makes a policy-to-web leak observable instead of
+  awarding internal questions a free pass because only one tool exists. External
+  answer quality is still untestable until `WEBIQ_API_KEY` is configured.
 
 ---
 

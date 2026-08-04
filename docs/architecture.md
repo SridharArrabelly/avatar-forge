@@ -223,7 +223,7 @@ avatar-forge/
 │   │   ├── event_handlers.py      # SDK event -> frontend message translation
 │   │   ├── catalog.py             # Meeting catalogue fetch from AI Search (injected at session start)
 │   │   ├── functions.py           # Built-in tool implementations (get_time, get_weather, calculate)
-│   │   ├── tools.py               # Model-mode tools: search_minutes (AI Search) + search_web (Web IQ)
+│   │   ├── tools.py               # Model tools: internal minutes/policies (AI Search) + web (Web IQ)
 │   │   ├── instructions.py        # Model-mode prompt loader (prompts/realtime/)
 │   │   └── auth.py                # DefaultAzureCredential + caching wrapper
 │   └── acs/                       # Channels C/D — in-call media bridge (opt-in)

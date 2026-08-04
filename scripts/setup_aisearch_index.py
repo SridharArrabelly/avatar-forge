@@ -85,6 +85,7 @@ from azure.search.documents.indexes.models import (
     VectorSearchAlgorithmMetric,
     VectorSearchProfile,
 )
+from backend.document_titles import display_document_title
 from docx import Document
 from pypdf import PdfReader
 from dotenv import load_dotenv
@@ -439,9 +440,9 @@ def iter_documents(s: dict, aoai) -> Iterable[dict]:
         return
 
     for path in files:
-        title = path.stem
         reader = READERS[path.suffix.lower()]
         doc_type = classify_document(path, s["data_dir"])
+        title = display_document_title(path.stem, doc_type)
         log.info("Reading %s  [%s]", path.name, doc_type)
         try:
             raw = reader(path)

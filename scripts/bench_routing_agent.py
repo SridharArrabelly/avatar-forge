@@ -132,7 +132,9 @@ def classify(itype: str) -> str:
     return f"other:{itype}"
 
 
-def ask(openai: OpenAI, catalog: str | None, question: str) -> tuple[list[str], str]:
+def ask(
+    openai: OpenAI, catalog: str | None, question: str
+) -> tuple[list[str], str, float | None, float]:
     if catalog:
         request_input = [
             {"type": "message", "role": "system", "content": catalog},
@@ -140,6 +142,7 @@ def ask(openai: OpenAI, catalog: str | None, question: str) -> tuple[list[str], 
         ]
     else:
         request_input = question
+    started = time.perf_counter()
     stream = openai.responses.create(
         stream=True,
         tool_choice="auto",
@@ -148,15 +151,23 @@ def ask(openai: OpenAI, catalog: str | None, question: str) -> tuple[list[str], 
     )
     tools: list[str] = []
     text_parts: list[str] = []
+    first_token: float | None = None
     for event in stream:
         if event.type == "response.output_text.delta":
+            if first_token is None and event.delta:
+                first_token = time.perf_counter() - started
             text_parts.append(event.delta)
         elif event.type == "response.output_item.done":
             item = event.item
             itype = getattr(item, "type", "")
             if itype.endswith("_call") and itype != "function_call":
                 tools.append(itype)
-    return tools, "".join(text_parts).strip()
+    return (
+        tools,
+        "".join(text_parts).strip(),
+        first_token,
+        time.perf_counter() - started,
+    )
 
 
 def main() -> int:
@@ -186,11 +197,13 @@ def main() -> int:
     )
 
     n = len(QUESTIONS)
-    # per-question correct count across runs; per-question latencies
+    # Per-question correct count, time-to-first-token and completion latency.
     correct = [0] * n
     qlat: list[list[float]] = [[] for _ in range(n)]
+    qfirst: list[list[float]] = [[] for _ in range(n)]
     run_scores: list[int] = []
     all_lat: list[float] = []
+    all_first: list[float] = []
     transcripts: list[str] = []  # full answers (run 1) for quality review
 
     print(f"\n########## CONFIG: {args.label or 'agent'} | tier={args.tier} "
@@ -200,13 +213,14 @@ def main() -> int:
         score = 0
         line = []
         for idx, (q, expected) in enumerate(QUESTIONS):
-            t0 = time.perf_counter()
             tools = None
             text = ""
+            first_token = None
+            dt = 0.0
             last_err = ""
             for attempt in range(4):  # retry transient API errors (e.g. 429)
                 try:
-                    tools, text = ask(openai, catalog, q)
+                    tools, text, first_token, dt = ask(openai, catalog, q)
                     break
                 except Exception as e:
                     last_err = str(e)
@@ -215,9 +229,11 @@ def main() -> int:
                 line.append(f"Q{idx+1}:ERR")
                 print(f"      Q{idx+1} ERR: {last_err[:120]}")
                 continue
-            dt = time.perf_counter() - t0
             qlat[idx].append(dt)
             all_lat.append(dt)
+            if first_token is not None:
+                qfirst[idx].append(first_token)
+                all_first.append(first_token)
             primary = ([classify(t) for t in tools] or ["none"])[0]
             ok = (primary == expected)
             if ok:
@@ -225,9 +241,13 @@ def main() -> int:
                 score += 1
             line.append(f"Q{idx+1}:{'.' if ok else 'X'}")
             if run == 1:  # capture one full transcript per question
+                first_label = (
+                    f"{first_token:.1f}s" if first_token is not None else "n/a"
+                )
                 transcripts.append(
                     f"Q{idx+1} [{expected}->{primary} "
-                    f"{'OK' if ok else 'MISROUTE'} {dt:.1f}s] {q}\n    {text}\n"
+                    f"{'OK' if ok else 'MISROUTE'} "
+                    f"first={first_label} complete={dt:.1f}s] {q}\n    {text}\n"
                 )
             time.sleep(1.5)  # space calls to avoid burst throttling
         run_scores.append(score)
@@ -243,9 +263,21 @@ def main() -> int:
     print("-" * 70)
     print(f"SUMMARY [{args.label}]: {sum(run_scores)}/{total} correct "
           f"(runs: {run_scores})")
+    if all_first:
+        print(
+            f"  first token: avg {sum(all_first)/len(all_first):.1f}s  "
+            f"min {min(all_first):.1f}s  max {max(all_first):.1f}s  "
+            f"n={len(all_first)}"
+        )
+    missing_first = len(all_lat) - len(all_first)
+    if missing_first:
+        print(f"  first token: missing on {missing_first} completed turn(s)")
     if all_lat:
-        print(f"  latency: avg {sum(all_lat)/len(all_lat):.1f}s  "
-              f"min {min(all_lat):.1f}s  max {max(all_lat):.1f}s")
+        print(
+            f"  completion : avg {sum(all_lat)/len(all_lat):.1f}s  "
+            f"min {min(all_lat):.1f}s  max {max(all_lat):.1f}s  "
+            f"n={len(all_lat)}"
+        )
 
     # Per-group breakdown. A headline score hides the failure that matters most:
     # policies leaking to the web tool shows up as a 5-point drop in ONE group
@@ -259,15 +291,31 @@ def main() -> int:
             got = sum(correct[i] for i in idxs)
             want = len(idxs) * args.runs
             lats = [x for i in idxs for x in qlat[i]]
-            avg = sum(lats) / len(lats) if lats else 0.0
+            firsts = [x for i in idxs for x in qfirst[i]]
+            avg_total = sum(lats) / len(lats) if lats else 0.0
+            first_label = (
+                f"{sum(firsts) / len(firsts):4.1f}s" if firsts else " n/a "
+            )
             flag = "" if got == want else "   <-- "
-            print(f"    {g:<9} {got:>3}/{want:<3}  avg {avg:4.1f}s{flag}")
+            print(
+                f"    {g:<9} {got:>3}/{want:<3}  "
+                f"first {first_label}  complete {avg_total:4.1f}s{flag}"
+            )
     print("  per-question pass rate:")
     for idx, (q, expected) in enumerate(QUESTIONS):
         rate = f"{correct[idx]}/{args.runs}"
-        avg = sum(qlat[idx]) / len(qlat[idx]) if qlat[idx] else 0.0
+        avg_total = sum(qlat[idx]) / len(qlat[idx]) if qlat[idx] else 0.0
+        first_label = (
+            f"{sum(qfirst[idx]) / len(qfirst[idx]):4.1f}s"
+            if qfirst[idx]
+            else " n/a "
+        )
         flag = "" if correct[idx] == args.runs else "  <-- MISS"
-        print(f"    Q{idx+1:<2} [{expected:8}] {rate}  ({avg:4.1f}s){flag}  {q[:52]}")
+        print(
+            f"    Q{idx+1:<2} [{expected:8}] {rate}  "
+            f"(first {first_label} / complete {avg_total:4.1f}s)"
+            f"{flag}  {q[:52]}"
+        )
     return 0
 
 
