@@ -104,10 +104,29 @@ _PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
 # would read the process environment only and silently ignore .env — the
 # documented way to re-run this script by hand after changing the avatar.
 
+# The tool names as the AGENT sees them, and the values {{SEARCH_TOOL}} and
+# {{WEB_TOOL}} resolve to here. The web tool's SDK kwarg is
+# `bing_custom_search_preview`, but the name the prompt refers to — and the one
+# every prompt in this repo has always used — is the unsuffixed form. Model mode
+# substitutes its own pair; see backend/voice/instructions.py.
+AGENT_SEARCH_TOOL_NAME = "azure_ai_search"
+AGENT_WEB_TOOL_NAME = "bing_custom_search"
+
 
 def _apply_brand(text: str) -> str:
-    """Substitute brand placeholders ({{AVATAR_NAME}}) in a loaded prompt."""
-    return text.replace("{{AVATAR_NAME}}", resolve_avatar_display_name())
+    """Substitute brand and tool placeholders in a loaded prompt.
+
+    {{SEARCH_TOOL}}/{{WEB_TOOL}} exist because one authored prompt serves both
+    voice bindings, and the two register different tool names — model mode has
+    search_minutes / search_web (see backend/voice/tools.py). Naming either set
+    literally would leave the other mode describing tools that do not exist.
+    These must resolve to the names the tools are actually created with below.
+    """
+    return (
+        text.replace("{{AVATAR_NAME}}", resolve_avatar_display_name())
+        .replace("{{SEARCH_TOOL}}", AGENT_SEARCH_TOOL_NAME)
+        .replace("{{WEB_TOOL}}", AGENT_WEB_TOOL_NAME)
+    )
 
 
 def _load_prompt(*relative: str) -> str:

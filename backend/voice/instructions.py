@@ -15,6 +15,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from ..avatar_identity import resolve_avatar_display_name
+from .tools import SEARCH_MINUTES_TOOL, SEARCH_WEB_TOOL
 
 logger = logging.getLogger(__name__)
 
@@ -50,9 +51,21 @@ def _load_body() -> str:
 
 
 def load_realtime_instructions() -> str:
-    """The model-mode system prompt with the persona name substituted.
+    """The model-mode system prompt with the persona and tool names substituted.
 
     The name is resolved per call rather than cached with the body — it is the
     one part that can differ between deployments sharing this image.
+
+    The tool placeholders exist because a single authored prompt serves both
+    bindings, which register *different* tool names: agent mode has
+    azure_ai_search / bing_custom_search, model mode the two below. Naming
+    either set literally would leave the other mode describing tools that do
+    not exist. The names are read off the registered schemas so a rename in
+    tools.py cannot silently desynchronise the prompt from the tool surface.
     """
-    return _load_body().replace("{{AVATAR_NAME}}", resolve_avatar_display_name())
+    return (
+        _load_body()
+        .replace("{{AVATAR_NAME}}", resolve_avatar_display_name())
+        .replace("{{SEARCH_TOOL}}", SEARCH_MINUTES_TOOL["name"])
+        .replace("{{WEB_TOOL}}", SEARCH_WEB_TOOL["name"])
+    )
