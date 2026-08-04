@@ -15,7 +15,7 @@ Two independent choices decide what you deploy:
 
 | Axis | Question | Set by | Options |
 |---|---|---|---|
-| **Front door** | Where do people reach the avatar? | `DEPLOY_PROFILE` | A web · B Teams tab · C in-call bot · D headless |
+| **Front door** | Where do people reach the avatar? | `DEPLOY_PROFILE` | `web` (A) · `teams-tab` (A+B) · `in-call` (A+B+C) — channel **D** is not a profile |
 | **Brain** | What answers? | `VOICE_BINDING` | agent mode · model mode |
 
 They are orthogonal — **every front door works with either brain**. Both are chosen
@@ -37,7 +37,7 @@ flowchart LR
         A["<b>A</b> · Web browser"]
         B["<b>B</b> · Teams personal tab"]
         C["<b>C</b> · In-call media bot"]
-        D["<b>D</b> · In-call headless"]
+        D["<b>D</b> · In-call ACS guest"]
     end
 
     subgraph Brain["One brain — Python / FastAPI on Azure Container Apps"]
@@ -76,7 +76,7 @@ flowchart LR
         A2["<b>A</b> · Web browser"]
         B2["<b>B</b> · Teams personal tab"]
         C2["<b>C</b> · In-call media bot"]
-        D2["<b>D</b> · In-call headless"]
+        D2["<b>D</b> · In-call ACS guest"]
     end
 
     subgraph Brain2["Same host, different middle"]
@@ -131,11 +131,15 @@ administrator access you need**.
 | **A** | **Web** (standalone) | ✅ Shipped | — *(the core)* | **None** | [a-web.md](docs/channels/a-web.md) |
 | **B** | **Teams — personal tab** | ✅ Shipped | **None** | Upload a Teams app package | [b-teams-tab.md](docs/channels/b-teams-tab.md) |
 | **C** | **Teams — in-call avatar** (Graph media bot) | ✅ Working | Azure Bot + **Windows VM** + DNS + TLS | **Highest** — incl. **Teams app access policy** | [c-in-call-media-bot.md](docs/channels/c-in-call-media-bot.md) |
-| **D** | **Teams — in-call avatar** (headless browser) | 🔜 Placeholder | Container/job | TBD | [d-in-call-headless.md](docs/channels/d-in-call-headless.md) |
+| **D** | **Teams — in-call avatar** (ACS browser guest) | ✅ Media leg working | ACS resource (`ENABLE_ACS`) | **None** — joins as an anonymous guest | [d-in-call-headless.md](docs/channels/d-in-call-headless.md) |
 
 They are not four equal options: **A → B is a ladder** (each additive on the one
 before), while **C and D are rivals** — two implementations of the same capability.
 The [channel hub](docs/channels/README.md) explains how to choose.
+
+Note that `DEPLOY_PROFILE` covers only A–C. **Channel D is switched on separately**
+with `ENABLE_ACS`, because no profile sets it — see
+[d-in-call-headless.md](docs/channels/d-in-call-headless.md#deploying-it).
 
 👉 **Start here: [docs/channels/README.md](docs/channels/README.md)** for the decision
 guide, and **[docs/admin-checklist.md](docs/admin-checklist.md)** for every manual step

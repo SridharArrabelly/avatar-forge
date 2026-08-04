@@ -1,109 +1,202 @@
-# Channel D — In-call avatar (headless browser)  ⟵ placeholder
+# Channel D — In-call avatar (ACS browser guest)
 
-**Status: not built.** This page exists to hold the design and, more importantly,
-to **fix the comparison criteria before the work starts** — so the eventual
-choice between this and [channel C](c-in-call-media-bot.md) is a decision rather
-than a justification written afterwards.
+**Two things share this page, and they are at very different stages.** Keeping them
+apart is the single most useful thing this document does.
+
+| | What it is | Status |
+| --- | --- | --- |
+| **The media leg** — `frontend/acs-join.js` | A browser page that joins a Teams meeting as an anonymous **ACS** guest, hears the other participants, and answers aloud with the avatar's face on a video tile | **Built**, and verified in real meetings |
+| **The host** — headless Chromium + a calendar watcher | Running that same page unattended in a container instead of a human opening a tab | **Not built** — the proposal and its open questions are kept further down |
+
+"Headless" was never a *capability*; it is a way to *host* code that already exists.
+Every media question — can it join, can it hear the room, can it publish a face — is
+answered by the leg that is built, and none of those answers would change if the same
+page later ran without a human watching it.
+
+> **Channel lettering is under review.** The owner has proposed making this leg **C**
+> and the [Graph media bot](c-in-call-media-bot.md) **D**, so the ladder runs from
+> zero-admin to most-admin. Deferred deliberately: the letters are referenced from
+> issue #27, the open PR, `meeting-bot/` and three design pages, so renaming is one
+> clean sweep for later rather than churn now. Read D as "the ACS browser guest".
 
 ---
 
-## The idea
+## How it joins
 
-Instead of a server-side media bot using the Graph Communications calling stack,
-run a **headless browser** (Chromium) that joins the meeting as an ordinary
-participant through the Teams web client, and wire its microphone and speaker to
-the existing Voice Live pipeline. This is the approach taken by the ADIA design.
+No Teams identity is involved anywhere. The page mints a short-lived **ACS VoIP
+token** from the backend and joins as an *anonymous interop guest* — the same class of
+participant as someone who clicks "join on the web" without signing in.
 
-### Reference architecture *(proposed — nothing here is built or verified)*
+| Step | Where | Detail |
+| --- | --- | --- |
+| 1. Mint an identity | `POST /api/acs/token` → `backend/acs/routes.py` | Server-side. Uses `ACS_CONNECTION_STRING` if set, otherwise `ACS_ENDPOINT` with `DefaultAzureCredential`. Returns a short-lived VoIP token, so the browser never sees a connection string. Returns **503** when `ENABLE_ACS` is false. |
+| 2. Build a locator | `buildMeetingLocator()` | A classic `.../l/meetup-join/...` link becomes `{ meetingLink }`. Short `/meet/` links are **not** accepted by the `meetingLink` locator and are detected separately. |
+| 3. Join | `callAgent.join(locator, { audioOptions: { localAudioStreams: [localAudio], muted: false } })` | Her outgoing audio stream is attached **at join time**, so she is audible the moment she is admitted rather than after a second negotiation. |
+| 4. Admission | Teams, not us | Anonymous guests land in the **lobby** when the meeting has one, and a human admits them. Nothing in the code bypasses that, and nothing should. |
+| 5. Wire media | on `call.state === "Connected"` | `startBrowserMedia()` runs first (its first statement opens the media websocket), then `startPlacardVideo()`. |
+
+She appears in the roster as `<AVATAR_DISPLAY_NAME> (AI assistant)`.
+
+**What this buys, and what it costs.** No Entra consent, no Teams administrator, no
+application access policy — that is the whole reason this leg exists. The price is
+that she has no Teams identity: she cannot post in the meeting chat as herself, she
+cannot be @mentioned, and she shows as an external guest. A first-class Teams identity
+is what [the Graph media bot](c-in-call-media-bot.md) is for, and it is why that
+channel is kept despite costing an administrator.
+
+## How it hears the room
+
+This is the part that surprises people, so it is written out in full.
+
+**ACS does not hand you a "meeting audio" stream.** It exposes one `RemoteAudioStream`
+per remote participant and renders them itself for playback. Getting those samples
+into a capture pipeline takes two independent mechanisms and one browser quirk, and
+all three are load-bearing.
 
 ```mermaid
 flowchart LR
-    CAL["Microsoft 365 calendar"]
-
-    subgraph ACA["Azure Container App"]
-        direction TB
-        W["Calendar watcher"]
-        CH["Headless Chromium<br/>Playwright"]
-        API["FastAPI backend<br/><i>the existing brain, unchanged</i>"]
-        W -- "launch session" --> CH
-        CH -- "raw PCM 24 kHz over WS" --> API
+    subgraph MEET["Teams meeting"]
+        P1["Participant A"]
+        P2["Participant B"]
     end
 
-    TM["Teams meeting"]
+    subgraph PAGE["acs-join.html — the joiner tab"]
+        direction TB
+        SDK["ACS Calling SDK<br/>call.remoteAudioStreams"]
+        HOOK["srcObject hook<br/><i>fallback path</i>"]
+        SRC["MediaStream per participant"]
+        PRIME["muted audio element<br/><i>keeps samples flowing</i>"]
+        AN["per-track analyser<br/><i>measures pre-gain</i>"]
+        TG["per-track gain"]
+        RG["roomGate"]
+        MIC["microphone<br/>AEC + NS"]
+        MG["micGate"]
+        WL["pcm16-processor worklet<br/>960 samples / 40 ms"]
+    end
+
+    API["FastAPI<br/>/ws/acs/browser"]
     VL["Azure Voice Live<br/>+ Foundry agent"]
 
-    CAL -- "Graph: find meeting + joinUrl" --> W
-    CH == "ACS Web SDK join" ==> TM
-    API -- "Graph: post chat" --> TM
-    API <-- "audio up · answer down<br/>function call = act" --> VL
+    P1 --> SDK
+    P2 --> SDK
+    SDK -- "getMediaStream()" --> SRC
+    SDK -. "renders to an element" .-> HOOK
+    HOOK --> SRC
+    SRC --> PRIME
+    SRC --> AN
+    SRC --> TG
+    TG --> RG
+    MIC --> MG
+    RG --> WL
+    MG --> WL
+    WL -- "PCM16 24 kHz binary frames" --> API
+    API --> VL
 ```
 
-Two things this diagram implies that [channel C](c-in-call-media-bot.md) does not:
+### Path 1 — the documented one
 
-- **The join is scheduled, not operator-triggered.** A calendar watcher finds the
-  meeting via Graph and launches a browser session. C needs a human to `POST /api/join`.
-  That watcher is net-new work, and reading the calendar is itself a Graph permission.
-- **The whole thing runs in a container**, so it can scale to zero between meetings —
-  the single biggest cost argument against C's always-on Windows VM.
+`RemoteAudioStream.getMediaStream()` returns a `Promise<MediaStream>`.
+`scanRemoteAudioStreams()` sweeps `call.remoteAudioStreams` on connect and every 3 s
+after, so participants who join late are picked up too. Wiring is idempotent
+(deduplicated by track id), which is what makes re-scanning free.
 
-> **Discrepancy to resolve before building.** The reference diagram says *ACS Web SDK
-> join*, but the description above says *Teams web client*. These are different
-> mechanisms with different consequences: the ACS Web SDK joins as an anonymous interop
-> guest (we already run this in C's browser joiner), whereas driving the real Teams web
-> client means a signed-in account and a licence.
->
-> **Update (2026-08-03) — CONFIRMED WORKING.** This note previously said the ACS Web
-> SDK "cannot hear other participants", so D "collapses". That conclusion was wrong,
-> and so was the observation it rested on.
->
-> The measurement (`wiredTracks 0, maxRms 0`) was real, but it was **not evidence about
-> the platform**. The code called `getMediaStreamTrack()`, which is not a member of
-> `RemoteAudioStream` — the interface exposes `getMediaStream(): Promise<MediaStream>`
-> and `getVolume()`. Worse, the function containing that call had **no caller**. So the
-> SDK was never actually asked for the stream, and the zero was our own bug.
->
-> The [ADIA reference implementation](#adia) takes the remote stream from the DOM
-> instead: it intercepts `HTMLMediaElement.prototype.srcObject`, so when the SDK
-> attaches a participant's stream to an element in order to *play* it, the page keeps a
-> reference and routes it into a capture worklet. The SDK is never asked.
->
-> `acs-join.js` now tries the **documented** `getMediaStream()` first and keeps the
-> interception as a fallback, reporting which one delivered as `remoteVia=sdk` or
-> `remoteVia=srcObject` in `capture_stats`. The interception is the path that has been
-> **run in a real meeting**. With the microphone disabled (`?mic=0`), so the only
-> possible audio source was another participant:
->
-> ```text
-> capture stats: maxRms=0.15861 remoteStreams=1 wiredTracks=2 remoteMeters=2
->                remoteMaxRms=0.18466 micCapture=False
-> User transcript: 'Hey Simone, how are you?'
-> ```
->
-> `micCapture=False` with `remoteMaxRms=0.18466` and a correct transcript is the whole
-> proof: **the browser leg hears the meeting, with no administrator anywhere in the
-> path.** The assistant answered aloud, and the follow-up question was picked up by the
-> 30-second follow-up window.
->
-> **What this does and does not establish.** It proves remote participant audio reaches
-> Voice Live. It does *not* yet cover:
->
-> - **More than one other human.** The test had a single remote participant, so whether
->   ACS delivers one stream per participant (the hook wires each) or a single mix is
->   still unobserved. The hook captures whatever gets attached either way, but that is
->   inference, not measurement.
-> - **What the second wired track is.** `wiredTracks=2` against `remoteStreams=1` means
->   something beyond the one remote participant was attached — plausibly our own
->   outgoing audio being rendered. `remoteMaxRms` was non-zero while she was speaking,
->   which is consistent with that. No feedback loop occurred because capture was
->   suppressed during her speech — the gate that is now `roomGate` in
->   `applyCaptureGates()`, which holds the room tap shut whenever she is audible.
->   That gate is load-bearing rather than belt-and-braces. Logging track ids would
->   settle what the track actually was.
->
-> The standing caveat still applies: this rides an implementation detail, not a
-> contract. If a future SDK renders remote audio purely through Web Audio, the hook
-> stops firing and `remoteMaxRms` returns to 0 — which is exactly how the regression
-> announces itself. `?remote=0` disables the hook without a redeploy.
+> **This path looked dead for months, and the reason was ours.** The code called
+> `getMediaStreamTrack()` — not a member of the interface, which exposes
+> `getMediaStream()` and `getVolume()` — and the function containing that call had
+> **no caller at all**. The resulting `wiredTracks=0, maxRms=0` was read as proof that
+> the ACS Web SDK "cannot hear other participants", and that conclusion was written
+> into this page as the reason the whole channel collapsed. The measurement was real;
+> the SDK was simply never asked. It is worth remembering as the cost of drawing a
+> platform conclusion from an unverified local failure.
+
+### Path 2 — the `srcObject` interception
+
+`installSrcObjectHook()` redefines `HTMLMediaElement.prototype.srcObject` globally, so
+every assignment anywhere on the page is observed. The SDK has to *play* remote audio,
+so it assigns each stream to an element, and the hook sees it. The technique comes from
+[the ADIA implementation](#adia).
+
+This rides an **implementation detail, not a contract**. If a future SDK renders remote
+audio purely through Web Audio, the hook stops firing and `remoteMaxRms` returns to 0 —
+which is precisely how that regression would announce itself. `?remote=0` disables the
+hook without a redeploy.
+
+Whichever path reaches a track first owns its `via` label, and the documented path is
+attached **before** the priming element is created so that it wins the race. Otherwise
+the diagnostic would always read `srcObject` and we would never learn whether the
+supported path works.
+
+> **The hook fires on the avatar's own elements too.** Her voice arrives on a WebRTC
+> track attached to elements on this same page. Unguarded, it would be wired into the
+> room tap and posted straight back to Voice Live as the next question — she would
+> interrupt herself on every answer. Her track ids go into `avatarOwnTracks` *before*
+> the assignment and are skipped, and tracks belonging to the stream handed to ACS as
+> our outgoing audio are excluded the same way, by identity.
+
+### The quirk that makes either path work
+
+**Chrome only pulls samples from a *remote* WebRTC `MediaStream` through Web Audio
+while an `HTMLMediaElement` is also consuming it.** A `MediaStreamAudioSourceNode` on
+its own produces silence — no error, no warning, just zeros.
+
+So every wired stream also gets a **muted** `<audio>` element which is played and kept
+alive in `primingAudioEls`. Muted, because the SDK already renders the meeting for
+whoever is at the tab; a second audible copy would be an echo. The element exists
+purely to keep the pipeline pulling.
+
+### From the taps into Voice Live
+
+Both taps meet in one Web Audio graph:
+
+| Stage | Node | Why it is there |
+| --- | --- | --- |
+| per-track meter | `AnalyserNode` | Measures each remote track **before** its gain, so a gated track still reports its true level. Metering after the gate would erase the evidence needed to judge the gate. |
+| per-track gate | `GainNode` | Lets one track be silenced without closing the whole room tap |
+| room gate | `roomGate` | The shared gate for every remote tap |
+| mic gate | `micGate` | The near-field microphone, already echo-cancelled and noise-suppressed by the browser |
+| capture | `pcm16-processor` AudioWorklet | 960 samples at 24 kHz = **40 ms** frames, converted to PCM16. Identical to the web app. |
+| sink | `captureSink` at gain **0** → `destination` | A capture node only runs while it is connected to the destination; zero gain makes it process without playing the room back into the operator's ears |
+
+Frames go down the `/ws/acs/browser` websocket as binary, where `BrowserVoiceBridge`
+forwards them to Voice Live.
+
+**Frames are sent continuously, even when every gate is shut.** The gates attenuate the
+*signal*; they never stop the *stream*. Cutting the stream mid-utterance orphans the
+server VAD — it fires `speech_started`, never sees `speech_stopped`, and the turn hangs
+forever. This invariant is inherited from the web app and is not negotiable.
+
+### Why the microphone is a separate source
+
+The room taps carry the far side. The microphone carries whoever is sitting at the
+joiner tab, and it is kept separate for three reasons: it is the only source the
+browser has echo-cancelled and noise-suppressed; it is the only one that still works
+if both remote paths fail; and it is the only input that can safely stay open while she
+speaks — which makes it the only barge-in path this leg has today.
+
+### It is proven live, and here is exactly what was proven
+
+Run in a real Teams meeting with the microphone disabled (`?mic=0`), so the only
+possible audio source was another participant:
+
+```text
+capture stats: maxRms=0.15861 remoteStreams=1 wiredTracks=2 remoteMeters=2
+               remoteMaxRms=0.18466 micCapture=False
+User transcript: 'Hey Simone, how are you?'
+```
+
+`micCapture=False` with a non-zero `remoteMaxRms` and a correct transcript is the whole
+proof: **the browser leg hears the meeting, with no administrator anywhere in the
+path.** She answered aloud, and the follow-up question was caught by the follow-up
+window.
+
+What it does **not** establish, stated so it is not quietly assumed:
+
+- **More than one other human.** There was a single remote participant, so whether ACS
+  delivers one stream per participant or a single mix under load is still unobserved.
+  The wiring handles either, but that is inference.
+- **What the second wired track is.** `wiredTracks=2` against `remoteStreams=1` means
+  something beyond the one participant was attached. This is what the per-track metering
+  described under [Barge-in](#barge-in-the-mic-is-never-gated) exists to identify.
 
 ## The avatar rides the web app's transport
 
@@ -195,13 +288,44 @@ So the gates are **per source**:
 | Room tap | **closed** | A feedback path, not a barge-in path — nothing cancels it |
 | Display capture | **closed** | Same: it carries whatever the Teams window is playing |
 
-`roomSpeakRms` in the capture stats is the measurement behind the middle row: it is
-the peak room-tap level sampled **while she is speaking**. Non-zero means the tap is
-indeed carrying her voice back.
-
 The cost is that only the operator's microphone can interrupt her; a *remote*
-participant cannot. That is a real limitation of this leg and the price of not
-having an echo canceller on the room tap.
+participant cannot. That is a real limitation of this leg, and the price of not having
+an echo canceller on the room tap.
+
+#### The evidence for the middle row is weaker than it looks
+
+`roomSpeakRms` — the peak room-tap level sampled while she is speaking — was the whole
+justification for closing the room tap. It is not sufficient, because it is a single
+peak across **every** remote track at once. "Her voice is coming back" and "the one
+participant is talking" produce the same number.
+
+The deployed telemetry makes that concrete. In every window where `roomSpeakRms` was
+non-zero it was **exactly equal** to `remoteMaxRms`, with `parts=1`:
+
+```text
+roomSpeakRms=0.20941 remoteMaxRms=0.20941 parts=1 remoteStreams=1 wiredTracks=2
+roomSpeakRms=0.23026 remoteMaxRms=0.23026 parts=1 remoteStreams=1 wiredTracks=2
+```
+
+That single participant is most likely the operator's own Teams client replaying her
+voice into the meeting — but the aggregate cannot prove it, and it has been the sole
+basis for the gate regardless.
+
+So each remote track is now metered **individually**, with its peak split by whether
+she was speaking at the time, and each has its own gain into the shared room gate. The
+analyser sits before the gain so a gated track still reports its true level. In
+`capture stats`:
+
+| Reading | Interpretation | Action |
+| --- | --- | --- |
+| `spk` high, `idl` ~0 | our own audio returning on that track | gate that track alone |
+| `idl` high | a person, who could be interrupting | leave it open |
+| both ~0 over a large `n` | the track carries nothing | ignore it |
+
+If no track turns out to be an echo path, the room gate can be removed outright and
+**remote participants get to interrupt her too**. That change is deliberately waiting on
+the measurement rather than on reasoning — the last gate altered on reasoning alone was
+the half-duplex mode below, and it made every answer worse.
 
 > **There was a half-duplex mode. It is gone.** For a while the microphone was gated
 > shut during her answer too, exposed as `?duplex=` and a "let me interrupt her"
@@ -237,6 +361,212 @@ her tile for 4s. Silent by design: interjecting audibly is exactly what the wake
 phrase exists to prevent. The label is derived from `ACS_WAKE_PHRASES[0]`, so it can
 never drift from the gate that actually decides.
 
+## Reading `capture stats`
+
+Every ~5 s the page posts a `capture_stats` frame and `backend/acs/bridge.py` logs it
+as one line. It is the primary debugging instrument for this channel, so each field is
+worth knowing. Retrieve it from Log Analytics (`ContainerAppConsoleLogs_CL`), not from
+`az containerapp logs show`, which is unreliable:
+
+```kusto
+ContainerAppConsoleLogs_CL
+| where TimeGenerated > ago(1d)
+| where Log_s contains 'capture stats'
+| order by TimeGenerated desc
+| take 20
+| project TimeGenerated, Log_s
+```
+
+| Field | Reads | Meaning |
+| --- | --- | --- |
+| `frames` / `maxRms` | counter / 0–1 | Captured frames and their peak level this window. `maxRms` at 0 with a live call means nothing is reaching the worklet. |
+| `capVia` | `worklet` / `scriptprocessor` | Which capture node engaged. `scriptprocessor` is the fallback and means 170 ms frames instead of 40 ms. |
+| `ctxRate` | Hz | `AudioContext` sample rate; should be 24000 so no resampling happens. |
+| `micOpen` / `roomOpen` | bool | Live gate states. `micOpen` should be `True` at all times unless the operator muted. |
+| `humanMuted` | bool | Whether every remote participant is muted, which closes both gates. It reported `True` in every sample once, because an **empty** participant list was read as “everybody is muted”; the SDK under-reports on Teams interop, so it now listens when it cannot tell. A value that never varies is usually a broken sensor. |
+| `roomSpeakRms` | 0–1 | Peak room-tap level sampled **while she was speaking**. See the caveat below. |
+| `parts` | count | Remote participants ACS reports. `0` means a solo test, and makes every remote-audio number meaningless. |
+| `remoteStreams` | count | `call.remoteAudioStreams.length`. |
+| `wiredTracks` / `remoteMeters` | count | Tracks actually wired into the capture graph. |
+| `remoteMaxRms` | 0–1 | Peak across all remote taps this window. |
+| `remoteVia` | `sdk` / `srcObject` / both | Which path delivered. If this ever loses `srcObject` **and** `sdk`, the leg has gone deaf. |
+| `tracks` | per-track list | `id/via spk=<peak while she spoke> idl=<peak while she was silent> n=<speak frames>/<idle frames>` |
+| `videoState`, `avatarPic`, `avatarIce`, `avatarVoice` | — | Face and voice health. `avatarIce` separates "no face and no answer" (ICE failed) from "no face only". |
+| `drawFps` / `vFps` / `pumpVia` | fps | Canvas repaints, decoded avatar frames, and which pump delivered them (`frames` = `MediaStreamTrackProcessor`, `rvfc` = the fallback). |
+| `build` / `stale` | hash / bool | Which asset the tab is running. **`stale=True` means the tab predates the current deploy** — reload before believing anything else on the line. |
+| `hidden` | bool | Tab visibility; see the operational constraint below. |
+| `micCapture` | bool | `False` when `?mic=0`, which is how you prove the leg hears *others* rather than the operator. |
+
+> **`roomSpeakRms` alone cannot settle whether the room tap echoes her.** It is a
+> single peak across every remote track at once, so "her voice is coming back" and
+> "the one participant is talking" produce the same number. In the deployed telemetry
+> it was *equal to* `remoteMaxRms` in every window where it was non-zero, with
+> `parts=1` — consistent with both readings and decisive for neither. The per-track
+> `tracks=[...]` breakdown exists for exactly this reason: a track loud only in `spk`
+> is our own audio returning, while a track with energy in `idl` is a person.
+
+## Operational constraint — the joiner tab must stay visible
+
+Measured in a live meeting, from `capture stats`:
+
+| joiner tab | canvas repaints | decoded avatar frames |
+| --- | --- | --- |
+| visible | 55 fps | 25 fps |
+| hidden | ~6 fps | 0 fps |
+
+The browser generates the outgoing video tile, so anything that throttles its
+rendering degrades the tile every participant sees. The moment the tab is hidden
+(switched away, minimised, or fully covered — e.g. Teams maximised on a laptop
+screen), `requestVideoFrameCallback` stops entirely and `setInterval` is clamped.
+At 6 fps the avatar's lips move a handful of times a second, which reads as
+"robotic" and as broken lip sync no matter how the audio offset is tuned.
+
+Mitigations in the code, in order of effectiveness:
+
+1. Repaints are driven by `MediaStreamTrackProcessor` reading decoded frames off
+   the media pipeline. That is data-driven rather than a timer, so it is not
+   subject to timer throttling. Falls back to `requestVideoFrameCallback`.
+2. A watchdog repaint runs from the audio callback (the audio thread is never
+   throttled). This is only ~6 fps — a floor, not a fix.
+3. The joiner page warns when the tab is hidden.
+
+**Update — the first mitigation is confirmed working.** `pumpVia=frames` now appears
+in live logs, so `MediaStreamTrackProcessor` is the pump in practice rather than in
+theory, and a hidden tab logged `vFps=25`: decoded avatar frames keep arriving at full
+rate while backgrounded. That is the throttling-immune path doing its job.
+
+> **One reading from the same session is not yet explained.** That hidden-tab line
+> carried `drawFps=0` alongside `vFps=25`. Since the pump calls the same `draw()` that
+> increments `drawCount`, those two numbers should not be able to disagree, so one of
+> the assumptions behind them is wrong. It is recorded here rather than explained away;
+> a visible-versus-hidden A/B on the current build would settle it, and until then the
+> operational advice below stands unchanged.
+
+**Operationally: keep the joiner tab visible** — a second monitor, or side by side
+with Teams. This is a genuine disadvantage of D versus C, where a server-side
+media bot has no such dependency, and belongs in the comparison below.
+
+## Deploying it
+
+This leg is **additive**: a deployment without it behaves exactly as it does today.
+Nothing here is switched on by a `DEPLOY_PROFILE`, which is deliberate but easy to
+trip over — see the note at the end.
+
+### What has to exist
+
+| Setting | Value | What it does |
+| --- | --- | --- |
+| `ENABLE_ACS` | `true` | **The one that provisions infrastructure.** `infra/main.bicep` deploys the conditional `modules/communicationServices.bicep` and passes `ACS_ENDPOINT` into the container app. Left at `false`, no ACS resource is created and `/api/acs/*` answers 503. |
+| `ACS_DATA_LOCATION` | e.g. `United States` | Data residency geography for the ACS resource. Chosen at provision time. |
+| `ACS_ENDPOINT` | set by infra | Written automatically when `ENABLE_ACS=true`. Auth is via the container's managed identity, which needs a role on the ACS resource. |
+| `ACS_CONNECTION_STRING` | optional | Alternative to endpoint + managed identity. Takes precedence when set; simplest for local development. |
+| `ACS_AVATAR_VIDEO_ENABLED` | `true` | Asks Voice Live to synthesise avatar **video** for in-call sessions. Without it there is no face to publish. |
+| `BROWSER_JOIN_VIDEO_ENABLED` | `true` | Publishes that face as the ACS video tile. Setting it `false` is the safe rollback — her voice keeps working. |
+
+Turn-taking is tuned with `ACS_WAKE_PHRASES`, `ACS_REQUIRE_WAKE_PHRASE` and
+`ACS_FOLLOWUP_WINDOW_S`. Full descriptions and defaults live in
+[`configuration.md`](../configuration.md#teams-in-call-avatar-channels-c-and-d-issue-27).
+
+```powershell
+azd env set ENABLE_ACS true
+azd env set ACS_AVATAR_VIDEO_ENABLED true
+azd env set BROWSER_JOIN_VIDEO_ENABLED true
+azd up
+```
+
+Then open `https://<app>/acs-join.html`, paste a Teams meeting link, and join.
+
+> **`ENABLE_ACS` is an infrastructure flag, not a runtime one.** The backend never reads
+> it. `backend/config.py` derives its own gate as
+> `ACS_ENABLED = ACS_ENDPOINT or ACS_CONNECTION_STRING or MEETING_BOT_ENABLED`, so what
+> actually opens `/api/acs/*` is an ACS address having *reached the container*.
+> `ENABLE_ACS=true` is simply what makes `infra/` create the resource and pass
+> `ACS_ENDPOINT` down.
+>
+> The practical consequence: setting `ENABLE_ACS` on an existing environment changes
+> nothing until you **provision and then deploy**. And `azd provision` on its own resets
+> the container app to the Bicep placeholder image — it reports success while the site
+> silently serves the wrong revision. Always follow it with `azd deploy`.
+
+> **No deploy profile turns this on.** `DEPLOY_PROFILE` has exactly three values —
+> `web`, `teams-tab` and `in-call` — and `in-call` provisions the *Graph media bot*,
+> not this. `scripts/channels.py` does not mention ACS at all, so `ENABLE_ACS` must be
+> set by hand. That is a genuine gap in the profile story rather than a design
+> decision, and it should be closed when the channel lettering is settled.
+
+### Admin steps you must do yourself
+
+Almost none, which is the point of this channel:
+
+- **Nothing in Entra.** No consent, no app registration, no directory role.
+- **Nothing in the Teams admin centre.** No application access policy.
+- **The tenant must permit anonymous/guest join** for the meetings in question — a
+  meeting-organiser or tenant setting, not something this code can influence.
+- **Somebody has to admit her from the lobby**, unless the meeting auto-admits.
+
+### Compliance
+
+She is a participant with a microphone and a camera tile, and she is visibly named
+`(AI assistant)` in the roster. She does not record the meeting, and no meeting audio
+is persisted by this leg — audio is streamed to Voice Live for recognition and
+discarded. Participants should still be told an AI assistant is present; the display
+name does that passively, and announcing it once is better practice.
+
+## The unbuilt half — running it headless
+
+Everything above is built. Everything below is a proposal kept for when unattended
+operation is actually wanted, together with the record of how the media questions
+were settled.
+
+### The idea
+
+Instead of a server-side media bot using the Graph Communications calling stack,
+run a **headless browser** (Chromium) that joins the meeting as an ordinary
+participant through the Teams web client, and wire its microphone and speaker to
+the existing Voice Live pipeline. This is the approach taken by the ADIA design.
+
+#### Reference architecture *(proposed — nothing here is built or verified)*
+
+```mermaid
+flowchart LR
+    CAL["Microsoft 365 calendar"]
+
+    subgraph ACA["Azure Container App"]
+        direction TB
+        W["Calendar watcher"]
+        CH["Headless Chromium<br/>Playwright"]
+        API["FastAPI backend<br/><i>the existing brain, unchanged</i>"]
+        W -- "launch session" --> CH
+        CH -- "raw PCM 24 kHz over WS" --> API
+    end
+
+    TM["Teams meeting"]
+    VL["Azure Voice Live<br/>+ Foundry agent"]
+
+    CAL -- "Graph: find meeting + joinUrl" --> W
+    CH == "ACS Web SDK join" ==> TM
+    API -- "Graph: post chat" --> TM
+    API <-- "audio up · answer down<br/>function call = act" --> VL
+```
+
+Two things this diagram implies that [channel C](c-in-call-media-bot.md) does not:
+
+- **The join is scheduled, not operator-triggered.** A calendar watcher finds the
+  meeting via Graph and launches a browser session. C needs a human to `POST /api/join`.
+  That watcher is net-new work, and reading the calendar is itself a Graph permission.
+- **The whole thing runs in a container**, so it can scale to zero between meetings —
+  the single biggest cost argument against C's always-on Windows VM.
+
+> **Discrepancy to resolve before building.** The reference diagram says *ACS Web SDK
+> join*, but the description above says *Teams web client*. These are different
+> mechanisms with different consequences: the ACS Web SDK joins as an anonymous interop
+> guest — which is exactly what the built leg above already does, needing no account and
+> no admin — whereas driving the real Teams web client means a signed-in account and a
+> licence, and would give the assistant a genuine Teams identity in the roster.
+>
+> Settle this first, because it decides whether the headless work is a *hosting* change
+> to proven code or a new join mechanism with its own unknowns.
+
 ## <a id="adia"></a>Prior art — the ADIA implementation
 
 A client-built agent (`ADIA-Agent`) implements this same architecture end to end and is
@@ -271,12 +601,14 @@ If true, D removes every hard blocker in C. That is the entire case for it.
 
 ## What is unknown
 
-Recorded honestly, before any work:
+Recorded honestly before any work, and kept with the answers struck through as they
+arrived. These are questions about the **headless host**; the media leg answered its
+own share of them by being built:
 
-- **Which joiner mechanism it actually is** — ACS Web SDK (anonymous guest, known
-  to be deaf to other participants) or the real Teams web client (needs an account
-  and a licence). See the discrepancy note above; this one question decides whether
-  the channel is viable at all
+- ~~Which joiner mechanism it actually is~~ — **answered.** It is the ACS Web SDK as
+  an anonymous guest, and it *does* hear other participants. The claim that it was
+  "deaf" was our own unverified bug, described under [how it hears the
+  room](#how-it-hears-the-room)
 - Whether meeting policy permits anonymous/guest join in the target tenant
 - Whether a camera tile can be published (the avatar's *face*, not just voice) —
   C achieves this; a browser may be limited to screen share
@@ -286,35 +618,6 @@ Recorded honestly, before any work:
   always-on VM at ~$283/month)
 - Whether it violates any acceptable-use terms — **check this first**, because a
   negative answer ends the evaluation immediately
-
-## Operational constraint — the joiner tab must stay visible
-
-Measured in a live meeting, from `capture stats`:
-
-| joiner tab | canvas repaints | decoded avatar frames |
-| --- | --- | --- |
-| visible | 55 fps | 25 fps |
-| hidden | ~6 fps | 0 fps |
-
-The browser generates the outgoing video tile, so anything that throttles its
-rendering degrades the tile every participant sees. The moment the tab is hidden
-(switched away, minimised, or fully covered — e.g. Teams maximised on a laptop
-screen), `requestVideoFrameCallback` stops entirely and `setInterval` is clamped.
-At 6 fps the avatar's lips move a handful of times a second, which reads as
-"robotic" and as broken lip sync no matter how the audio offset is tuned.
-
-Mitigations in the code, in order of effectiveness:
-
-1. Repaints are driven by `MediaStreamTrackProcessor` reading decoded frames off
-   the media pipeline. That is data-driven rather than a timer, so it is not
-   subject to timer throttling. Falls back to `requestVideoFrameCallback`.
-2. A watchdog repaint runs from the audio callback (the audio thread is never
-   throttled). This is only ~6 fps — a floor, not a fix.
-3. The joiner page warns when the tab is hidden.
-
-**Operationally: keep the joiner tab visible** — a second monitor, or side by side
-with Teams. This is a genuine disadvantage of D versus C, where a server-side
-media bot has no such dependency, and belongs in the comparison below.
 
 ## <a id="comparison"></a>Comparison criteria — agreed up front
 

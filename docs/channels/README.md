@@ -31,7 +31,7 @@ access you need**.
 | **A** | **Web** (standalone) | Shipped | — *(this is the core)* | **None** beyond an Azure subscription | [a-web.md](a-web.md) |
 | **B** | **Teams personal tab** | Shipped | **None** | Upload/sideload a Teams app package | [b-teams-tab.md](b-teams-tab.md) |
 | **C** | **In-call avatar** — Graph media bot | **Working** | Azure Bot (calling) + **Windows VM** + DNS + TLS | **Entra admin consent** for `Calls.*.All` *(a Teams access policy is needed only for short `/meet/` links)* | [c-in-call-media-bot.md](c-in-call-media-bot.md) |
-| **D** | **In-call avatar** — headless browser | Partly built | Container/job | **None** — anonymous guest join *(unproven)* | [d-in-call-headless.md](d-in-call-headless.md) |
+| **D** | **In-call avatar** — ACS browser guest | **Media leg working**; headless host not built | ACS resource *(`ENABLE_ACS`)*; container/job only if made headless | **None** — anonymous guest join, verified live | [d-in-call-headless.md](d-in-call-headless.md) |
 
 ### Two things this table is deliberately saying
 
@@ -62,7 +62,7 @@ flowchart LR
     subgraph Rivals["Live in-call presence — two routes, both kept"]
         direction LR
         C["<b>C</b> · Graph media bot<br/>Windows VM · <b>built &amp; working</b><br/>admin: <b>Entra consent</b>"]
-        D["<b>D</b> · Headless browser<br/><i>partly built in acs-join.js</i><br/>admin: <b>none</b> (unproven)"]
+        D["<b>D</b> · ACS browser guest<br/><i>working in acs-join.js</i><br/>admin: <b>none</b>"]
     end
 
     A -- "in-call needs A deployed<br/><i>(but not B)</i>" --> Rivals
@@ -118,7 +118,7 @@ capability, so environments created before profiles existed are unaffected.
 | `MEETING_BOT_ENABLED` | `in-call` | Serves the media-bot bridge (`/ws/acs/audio`) for **C**. |
 | `DEPLOY_MEETING_BOT_HOST` | `in-call` | Provisions the Windows media host + calling bot registration. |
 | `MEETING_BOT_APP_ID` / `_DNS_LABEL` / `_ADMIN_PASSWORD` | you supply | Required for **C**; the host is skipped if any is missing. |
-| `ENABLE_ACS` | `false` | Provisions `modules/communicationServices.bicep`. **No channel above needs this.** It serves the separate browser joiner (`/acs-join.html`), where a browser tab joins a meeting as an anonymous guest. Channel C joins via Graph calling — the `acs` in `/ws/acs/audio` is the bridge protocol's name, not an ACS dependency. |
+| `ENABLE_ACS` | `false` | Provisions `modules/communicationServices.bicep`. **Required by channel D**, the browser joiner at `/acs-join.html`, where a browser tab joins a meeting as an anonymous guest. Channels A–C do not need it: channel C joins via Graph calling, and the `acs` in `/ws/acs/audio` is the bridge protocol's name, not an ACS dependency. Note that **no `DEPLOY_PROFILE` sets it** — see [d-in-call-headless.md](d-in-call-headless.md#deploying-it). |
 | `DEPLOY_BING_GROUNDING` | `true` | Provisions `modules/bingGrounding.bicep` (Bing account + site allow-list) and the Foundry connection to it, enabling the agent's web tool. On by default; set `false` to skip. Applies to every channel, but **only in agent mode** — see below. |
 
 > **Provisioning follows `VOICE_BINDING`.** Grounding with Bing is a *managed
@@ -153,8 +153,8 @@ will mislead you. Two things break the pattern:
 | --- | --- | --- | --- |
 | **A** web | `backend/`, `frontend/` | — | base `infra/` |
 | **B** tab | `frontend/teams.js` (same app) | `teams/` → `staticTabs` | *(none — reuses A)* |
-| **C** in-call | `meeting-bot/` (.NET, own Windows host) + `backend/acs/` (bridge) + `frontend/acs-join.js`, `companion.js` | `teams/` → `supportsCalling`, `configurableTabs` *(optional)* | `modules/meetingBotHost.bicep` |
-| **D** headless | *(not built)* | — | — |
+| **C** in-call | `meeting-bot/` (.NET, own Windows host) + `backend/acs/bridge.py` (`/ws/acs/audio`) | `teams/` → `supportsCalling`, `configurableTabs` *(optional)* | `modules/meetingBotHost.bicep` |
+| **D** in-call | `frontend/acs-join.{html,js}` + `backend/acs/` (`/ws/acs/browser`, `client.py`, `routes.py`) | — *(no Teams package — it joins as a guest)* | `modules/communicationServices.bicep`, `modules/acsRoleForApp.bicep` |
 
 One manifest, three progressive shapes — the build flags are the difference:
 
@@ -181,8 +181,11 @@ So you can compare them without re-reading prose:
 5. **How to verify** — the exact commands that prove it works
 6. **Cost & teardown** — what it costs to leave running, and how to stop paying
 
-*(Channel D is a placeholder and does not follow the contract yet — it has a
-proposed architecture and pre-registered comparison criteria instead.)*
+*(Channel D is split in two: its **media leg is built and live-verified**, and is
+documented in depth rather than to the contract above — the mechanism is the
+interesting part. The **headless host** that would run it without an operator's
+browser is still unbuilt, and carries a proposed architecture plus pre-registered
+comparison criteria.)*
 
 ### Where architecture lives, and why it is split three ways
 

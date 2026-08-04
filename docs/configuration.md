@@ -382,7 +382,7 @@ it — see [`teams/README.md`](../teams/README.md).
 | `TEAMS_ENABLE_CALLING` | `--enable-calling` | `false` | Sets `supportsCalling: true`. Pair with the **calling** bot's id (`MEETING_BOT_APP_ID`). |
 | `TEAMS_ENABLE_COMPANION` | `--enable-companion` | `false` | Adds the in-meeting side panel / stage tabs. Off keeps the package identical to the tab-only shape. |
 
-## Teams in-call avatar (channel C, issue #27)
+## Teams in-call avatar (channels C and D, issue #27)
 
 Opt-in. The avatar joins a Teams **meeting**, hears every participant, and answers
 spoken questions aloud with a lip-synced camera tile, using the same Voice Live +
@@ -397,7 +397,7 @@ it serves the media bot **without** provisioning an ACS resource. See
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `ENABLE_ACS` | `false` | **azd/infra only.** When `true`, provisions the conditional `communicationServices.bicep` and passes `ACS_ENDPOINT` to the container. **Not needed by channels A–D** — see the note below the table. |
+| `ENABLE_ACS` | `false` | **azd/infra only, and the one flag that provisions ACS.** When `true`, deploys the conditional `communicationServices.bicep` and passes `ACS_ENDPOINT` to the container. **Required by channel D** (the browser guest joiner); channels A–C do not need it. No `DEPLOY_PROFILE` sets it — see the note below the table. |
 | `ACS_DATA_LOCATION` | `United States` | **azd/infra only.** Data residency geography for the ACS resource. |
 | `ACS_ENDPOINT` | — | ACS resource endpoint (`https://<acs>.communication.azure.com/`). Set automatically by infra when `ENABLE_ACS=true`. Auth via the container's managed identity (needs a role on the ACS resource). |
 | `ACS_CONNECTION_STRING` | — | Alternative to `ACS_ENDPOINT` + managed identity (includes endpoint + key). Takes precedence when set; simplest for local/dev. |
@@ -412,10 +412,13 @@ it serves the media bot **without** provisioning an ACS resource. See
 > **The `ACS_` prefix spans two unrelated things.** Read it as two groups:
 >
 > - **The ACS *resource*** — `ENABLE_ACS`, `ACS_DATA_LOCATION`, `ACS_ENDPOINT`,
->   `ACS_CONNECTION_STRING`, `ACS_CALLBACK_BASE_URL`. **No channel in the A–D ladder
->   needs these.** They serve the separate browser joiner (`/acs-join.html`), where a
->   browser tab joins a meeting as an anonymous guest. Leave `ENABLE_ACS` at `false`
->   unless you are specifically using that page.
+>   `ACS_CONNECTION_STRING`, `ACS_CALLBACK_BASE_URL`. These provision and address the
+>   ACS resource, and they are needed by **channel D only** — the browser guest
+>   joiner at `/acs-join.html`, where a browser tab joins a meeting as an anonymous
+>   guest. Channels A–C never touch them. Note that **no `DEPLOY_PROFILE` turns
+>   `ENABLE_ACS` on**: `scripts/channels.py` does not mention ACS, so channel D is
+>   enabled by setting it explicitly (`azd env set ENABLE_ACS true`). See
+>   [`channels/d-in-call-headless.md`](channels/d-in-call-headless.md#deploying-it).
 > - **The audio *bridge*** — `ACS_AUDIO_SAMPLE_RATE`, `ACS_WAKE_PHRASES`,
 >   `ACS_REQUIRE_WAKE_PHRASE`, `ACS_IDLE_TIMEOUT_S`, `ACS_FOLLOWUP_WINDOW_S`. These
 >   are read by `backend/acs/bridge.py` and **do apply to channel C**, which speaks
