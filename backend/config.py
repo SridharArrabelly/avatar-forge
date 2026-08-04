@@ -175,8 +175,14 @@ ACS_REQUIRE_WAKE_PHRASE = os.getenv(
 # After the avatar finishes an answer, stay "armed" for this many seconds so a
 # natural follow-up question does NOT need the wake phrase again (conversational
 # turn-taking). Only applies when ACS_REQUIRE_WAKE_PHRASE is True. 0 disables the
-# grace window (every turn then needs the wake phrase). Default 30s.
-ACS_FOLLOWUP_WINDOW_S = float(os.getenv("ACS_FOLLOWUP_WINDOW_S", "30"))
+# grace window (every turn then needs the wake phrase).
+#
+# Default 90s, raised from 30s after live testing: two questions in one session
+# ("what is MTN's share price today?") landed 35s and 40s after the previous
+# answer — plainly aimed at her, just outside the window — so she sat silent and
+# the tester had to repeat themselves with the wake phrase. That reads as "she
+# ignored me", which is worse than the risk the window guards against.
+ACS_FOLLOWUP_WINDOW_S = float(os.getenv("ACS_FOLLOWUP_WINDOW_S", "90"))
 # Seconds of inactivity before the participant leaves the call (0 disables).
 ACS_IDLE_TIMEOUT_S = float(os.getenv("ACS_IDLE_TIMEOUT_S", "0"))
 # Avatar face: when true, the browser joiner sends an outgoing

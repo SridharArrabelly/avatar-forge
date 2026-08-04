@@ -11,7 +11,7 @@ So the load-bearing assertions here are the negative ones: with
 no model-mode builder returns anything.
 
 Needs no Azure and no credentials — it builds config objects and inspects them.
-Run: uv run python scripts/test_voice_binding.py
+Run: uv run python tests/test_voice_binding.py
 """
 
 import os

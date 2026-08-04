@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.43.8.12551",
-      "templateHash": "6517855163691193764"
+      "templateHash": "12126610585998438323"
     }
   },
   "parameters": {
@@ -336,7 +336,7 @@
       "type": "string",
       "defaultValue": "",
       "metadata": {
-        "description": "Deployment profile from `scripts/set_profile.py` — one of \"web\", \"teams-tab\", \"in-call\". Drives which optional channels deploy. Empty keeps the pre-profile behaviour (explicit flags only)."
+        "description": "Deployment profile from `scripts/set_profile.py` — one of \"web\", \"teams-tab\", \"in-call\" (channel C, Windows media bot) or \"in-call-browser\" (channel D, ACS browser guest). Drives which optional channels deploy. Empty keeps the pre-profile behaviour (explicit flags only)."
       }
     },
     "enableAcs": {
@@ -357,7 +357,7 @@
       "type": "string",
       "defaultValue": "false",
       "metadata": {
-        "description": "\"true\"/\"false\". Serve the .NET Teams media-bot bridge without an ACS resource (sets MEETING_BOT_ENABLED). Implied by deployProfile=\"in-call\"."
+        "description": "\"true\"/\"false\". Serve the .NET Teams media-bot bridge without an ACS resource (sets MEETING_BOT_ENABLED). Implied by deployProfile=\"in-call\" exactly; \"in-call-browser\" is channel D and does not imply it."
       }
     },
     "acsAudioSampleRate": {
@@ -381,11 +381,18 @@
         "description": "\"true\"/\"false\". In-call avatar sends an outgoing video tile so it is a visible participant."
       }
     },
+    "browserJoinVideoEnabled": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "\"true\"/\"false\". The browser joiner's tile carries the LIVE lip-synced avatar instead of a static placard. Needs acsAvatarVideoEnabled=\"true\" as well — the tile has to exist before it can carry a face."
+      }
+    },
     "deployMeetingBotHost": {
       "type": "string",
       "defaultValue": "false",
       "metadata": {
-        "description": "\"true\"/\"false\". Provision the Windows media host + calling bot registration. Implied by deployProfile=\"in-call\"."
+        "description": "\"true\"/\"false\". Provision the Windows media host + calling bot registration. Implied by deployProfile=\"in-call\" exactly; \"in-call-browser\" is channel D and needs no host."
       }
     },
     "meetingBotAppId": {
@@ -452,8 +459,8 @@
       ]
     },
     "modelCapacity": {
-      "type": "int",
-      "defaultValue": 50
+      "type": "string",
+      "defaultValue": "250"
     }
   },
   "variables": {
@@ -468,6 +475,7 @@
     "createFoundry": "[or(or(empty(parameters('foundryAccountName')), empty(parameters('foundryResourceGroup'))), empty(parameters('foundryProjectEndpoint')))]",
     "createSearch": "[or(empty(parameters('searchServiceName')), empty(parameters('searchResourceGroup')))]",
     "resolvedAgentModel": "[if(not(empty(parameters('agentModel'))), parameters('agentModel'), if(variables('createFoundry'), parameters('modelDeploymentName'), 'gpt-5.4'))]",
+    "resolvedModelCapacity": "[int(if(not(empty(parameters('modelCapacity'))), parameters('modelCapacity'), '250'))]",
     "profileInCall": "[equals(toLower(parameters('deployProfile')), 'in-call')]",
     "wantMeetingBotBridge": "[or(variables('profileInCall'), equals(toLower(parameters('meetingBotEnabled')), 'true'))]",
     "wantMeetingBotHost": "[or(variables('profileInCall'), equals(toLower(parameters('deployMeetingBotHost')), 'true'))]",
@@ -600,7 +608,7 @@
             "value": "[parameters('modelSkuName')]"
           },
           "modelCapacity": {
-            "value": "[parameters('modelCapacity')]"
+            "value": "[variables('resolvedModelCapacity')]"
           },
           "agentModel": {
             "value": "[variables('resolvedAgentModel')]"
@@ -653,6 +661,9 @@
           },
           "acsAvatarVideoEnabled": {
             "value": "[parameters('acsAvatarVideoEnabled')]"
+          },
+          "browserJoinVideoEnabled": {
+            "value": "[parameters('browserJoinVideoEnabled')]"
           }
         },
         "template": {
@@ -662,7 +673,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.43.8.12551",
-              "templateHash": "1001520684086372636"
+              "templateHash": "6673048578718943267"
             }
           },
           "parameters": {
@@ -907,6 +918,13 @@
               "defaultValue": "",
               "metadata": {
                 "description": "\"true\"/\"false\". In-call avatar sends an outgoing video tile (visible participant)."
+              }
+            },
+            "browserJoinVideoEnabled": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "\"true\"/\"false\". The browser joiner's tile carries the LIVE lip-synced avatar instead of a static placard. Needs acsAvatarVideoEnabled=\"true\" as well."
               }
             }
           },
@@ -2476,6 +2494,9 @@
                   },
                   "acsAvatarVideoEnabled": {
                     "value": "[parameters('acsAvatarVideoEnabled')]"
+                  },
+                  "browserJoinVideoEnabled": {
+                    "value": "[parameters('browserJoinVideoEnabled')]"
                   }
                 },
                 "template": {
@@ -2485,7 +2506,7 @@
                     "_generator": {
                       "name": "bicep",
                       "version": "0.43.8.12551",
-                      "templateHash": "3413366013603604989"
+                      "templateHash": "12555570511420734749"
                     }
                   },
                   "parameters": {
@@ -2685,6 +2706,13 @@
                         "description": "\"true\"/\"false\" string. When \"true\", the in-call avatar sends an outgoing video tile so it is a visible participant instead of a faceless audio leg."
                       }
                     },
+                    "browserJoinVideoEnabled": {
+                      "type": "string",
+                      "defaultValue": "",
+                      "metadata": {
+                        "description": "\"true\"/\"false\" string. When \"true\", the browser joiner's outgoing tile carries the LIVE lip-synced avatar (fragmented MP4 from Voice Live, painted onto the tile canvas) instead of the static branded placard. Requires acsAvatarVideoEnabled=\"true\" — the placard tile has to exist before it can carry a face."
+                      }
+                    },
                     "developerMode": {
                       "type": "string",
                       "defaultValue": "false",
@@ -2707,7 +2735,7 @@
                     "webIqSecrets": "[if(variables('webIqConfigured'), createArray(createObject('name', 'webiq-api-key', 'value', parameters('webIqApiKey'))), createArray())]",
                     "webIqEnv": "[if(variables('webIqConfigured'), concat(createArray(createObject('name', 'WEBIQ_API_KEY', 'secretRef', 'webiq-api-key')), if(empty(parameters('webIqBaseUrl')), createArray(), createArray(createObject('name', 'WEBIQ_BASE_URL', 'value', parameters('webIqBaseUrl')))), if(empty(parameters('webIqAllowedDomains')), createArray(), createArray(createObject('name', 'WEBIQ_ALLOWED_DOMAINS', 'value', parameters('webIqAllowedDomains'))))), createArray())]",
                     "meetingBotOn": "[equals(toLower(parameters('meetingBotEnabled')), 'true')]",
-                    "meetingBotEnv": "[concat(if(variables('meetingBotOn'), createArray(createObject('name', 'MEETING_BOT_ENABLED', 'value', 'true')), createArray()), if(not(empty(parameters('acsAudioSampleRate'))), createArray(createObject('name', 'ACS_AUDIO_SAMPLE_RATE', 'value', parameters('acsAudioSampleRate'))), createArray()), if(not(empty(parameters('acsRequireWakePhrase'))), createArray(createObject('name', 'ACS_REQUIRE_WAKE_PHRASE', 'value', parameters('acsRequireWakePhrase'))), createArray()), if(not(empty(parameters('acsAvatarVideoEnabled'))), createArray(createObject('name', 'ACS_AVATAR_VIDEO_ENABLED', 'value', parameters('acsAvatarVideoEnabled'))), createArray()))]"
+                    "meetingBotEnv": "[concat(if(variables('meetingBotOn'), createArray(createObject('name', 'MEETING_BOT_ENABLED', 'value', 'true')), createArray()), if(not(empty(parameters('acsAudioSampleRate'))), createArray(createObject('name', 'ACS_AUDIO_SAMPLE_RATE', 'value', parameters('acsAudioSampleRate'))), createArray()), if(not(empty(parameters('acsRequireWakePhrase'))), createArray(createObject('name', 'ACS_REQUIRE_WAKE_PHRASE', 'value', parameters('acsRequireWakePhrase'))), createArray()), if(not(empty(parameters('acsAvatarVideoEnabled'))), createArray(createObject('name', 'ACS_AVATAR_VIDEO_ENABLED', 'value', parameters('acsAvatarVideoEnabled'))), createArray()), if(not(empty(parameters('browserJoinVideoEnabled'))), createArray(createObject('name', 'BROWSER_JOIN_VIDEO_ENABLED', 'value', parameters('browserJoinVideoEnabled'))), createArray()))]"
                   },
                   "resources": [
                     {
@@ -2761,8 +2789,8 @@
                               "name": "web",
                               "image": "[parameters('containerImage')]",
                               "resources": {
-                                "cpu": "[json('1.0')]",
-                                "memory": "2.0Gi"
+                                "cpu": "[json('2.0')]",
+                                "memory": "4.0Gi"
                               },
                               "env": "[concat(createArray(createObject('name', 'PORT', 'value', '3000'), createObject('name', 'AZURE_CLIENT_ID', 'value', parameters('uamiClientId')), createObject('name', 'DEVELOPER_MODE', 'value', parameters('developerMode')), createObject('name', 'AZURE_VOICELIVE_ENDPOINT', 'value', parameters('voiceliveEndpoint')), createObject('name', 'PROJECT_ENDPOINT', 'value', parameters('projectEndpoint')), createObject('name', 'AGENT_NAME', 'value', parameters('agentName')), createObject('name', 'AGENT_PROJECT_NAME', 'value', parameters('agentProjectName')), createObject('name', 'AGENT_MODEL', 'value', parameters('agentModel')), createObject('name', 'EMBEDDING_DEPLOYMENT', 'value', parameters('embeddingDeployment')), createObject('name', 'AZURE_SEARCH_ENDPOINT', 'value', parameters('searchEndpoint')), createObject('name', 'SEARCH_CONNECTION_NAME', 'value', parameters('searchConnectionName')), createObject('name', 'SEARCH_INDEX_NAME', 'value', parameters('searchIndexName')), createObject('name', 'VOICELIVE_VOICE', 'value', parameters('voiceLiveVoice')), createObject('name', 'BING_CONNECTION_NAME', 'value', parameters('bingConnectionName')), createObject('name', 'BING_CUSTOM_CONFIG_NAME', 'value', parameters('bingCustomConfigName')), createObject('name', 'AVATAR_NAME', 'value', parameters('avatarName')), createObject('name', 'CUSTOM_AVATAR_NAME', 'value', parameters('customAvatarName')), createObject('name', 'AVATAR_DISPLAY_NAME', 'value', parameters('avatarDisplayName')), createObject('name', 'AVATAR_TAGLINE', 'value', parameters('avatarTagline')), createObject('name', 'PHOTO_AVATAR_NAME', 'value', parameters('photoAvatarName')), createObject('name', 'IS_PHOTO_AVATAR', 'value', parameters('isPhotoAvatar')), createObject('name', 'IS_CUSTOM_AVATAR', 'value', parameters('isCustomAvatar')), createObject('name', 'AVATAR_BACKGROUND_IMAGE_URL', 'value', parameters('avatarBackgroundImageUrl')), createObject('name', 'SR_MODEL', 'value', parameters('srModel')), createObject('name', 'RECOGNITION_LANGUAGE', 'value', parameters('recognitionLanguage')), createObject('name', 'APPLICATIONINSIGHTS_CONNECTION_STRING', 'value', parameters('appInsightsConnectionString'))), concat(variables('acsEnv'), variables('meetingBotEnv'), variables('voiceBindingEnv'), variables('webIqEnv')))]",
                               "probes": [

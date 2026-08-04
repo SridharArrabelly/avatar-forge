@@ -186,13 +186,13 @@ param srModel string = 'mai-transcribe-1'
 param recognitionLanguage string = 'auto'
 
 // ───────── channel C in-call media (#27) ─────────
-@description('Deployment profile from `scripts/set_profile.py` — one of "web", "teams-tab", "in-call". Drives which optional channels deploy. Empty keeps the pre-profile behaviour (explicit flags only).')
+@description('Deployment profile from `scripts/set_profile.py` — one of "web", "teams-tab", "in-call" (channel C, Windows media bot) or "in-call-browser" (channel D, ACS browser guest). Drives which optional channels deploy. Empty keeps the pre-profile behaviour (explicit flags only).')
 param deployProfile string = ''
 @description('Enable channel C ACS Call Automation media participant ("true"/"false"). When not "true" (default), no ACS resource is created and the deployment behaves exactly as today.')
 param enableAcs string = 'false'
 @description('ACS data residency geography (NOT an Azure region), e.g. "United States", "Europe", "Africa".')
 param acsDataLocation string = 'United States'
-@description('"true"/"false". Serve the .NET Teams media-bot bridge without an ACS resource (sets MEETING_BOT_ENABLED). Implied by deployProfile="in-call".')
+@description('"true"/"false". Serve the .NET Teams media-bot bridge without an ACS resource (sets MEETING_BOT_ENABLED). Implied by deployProfile="in-call" exactly; "in-call-browser" is channel D and does not imply it.')
 param meetingBotEnabled string = 'false'
 @description('PCM sample rate (Hz) the Teams media bot streams (16000).')
 param acsAudioSampleRate string = ''
@@ -200,11 +200,13 @@ param acsAudioSampleRate string = ''
 param acsRequireWakePhrase string = ''
 @description('"true"/"false". In-call avatar sends an outgoing video tile so it is a visible participant.')
 param acsAvatarVideoEnabled string = ''
+@description('"true"/"false". The browser joiner\'s tile carries the LIVE lip-synced avatar instead of a static placard. Needs acsAvatarVideoEnabled="true" as well — the tile has to exist before it can carry a face.')
+param browserJoinVideoEnabled string = ''
 
 // ───────── channel C Windows media host (#27) ─────────
 // Deployed only for the in-call channel. Requires its own Entra app — an app can
 // back only ONE Azure Bot resource, so this cannot reuse botAppId.
-@description('"true"/"false". Provision the Windows media host + calling bot registration. Implied by deployProfile="in-call".')
+@description('"true"/"false". Provision the Windows media host + calling bot registration. Implied by deployProfile="in-call" exactly; "in-call-browser" is channel D and needs no host.')
 param deployMeetingBotHost string = 'false'
 @description('Entra app client id of the CALLING bot. Must differ from botAppId.')
 param meetingBotAppId string = ''
@@ -226,7 +228,14 @@ param modelVersion string = '2026-03-05'
 param modelDeploymentName string = 'gpt-5.4'
 @allowed([ 'GlobalStandard', 'Standard', 'DataZoneStandard' ])
 param modelSkuName string = 'GlobalStandard'
-param modelCapacity int = 50
+// TPM capacity in thousands, so '250' is 250K tokens/minute. Typed as a string,
+// not an int, because azd substitutes MODEL_CAPACITY textually and ARM refuses a
+// JSON string for an int parameter -- the same reason enableAcs is a string.
+// On GlobalStandard this is a rate ceiling, not a reservation: billing is per token
+// consumed, so raising it costs nothing and only buys headroom against 429s. Every
+// turn resends the full agent prompt plus retrieved chunks, so 50 was easy to trip.
+// Bounded by regional quota: az cognitiveservices usage list -l <region>
+param modelCapacity string = '250'
 
 var resourceToken = toLower(uniqueString(subscription().id, environmentName, location))
 var tags = {
@@ -243,6 +252,10 @@ var createSearch  = empty(searchServiceName) || empty(searchResourceGroup)
 // could never find, so greenfield derives it. BYO keeps the old default because the
 // deployment lives in an account this template did not create and cannot inspect.
 var resolvedAgentModel = !empty(agentModel) ? agentModel : (createFoundry ? modelDeploymentName : 'gpt-5.4')
+
+// Guard the empty case: `azd env set MODEL_CAPACITY ""` reaches the template as an
+// empty string, and int('') fails at deploy time rather than falling back.
+var resolvedModelCapacity = int(!empty(modelCapacity) ? modelCapacity : '250')
 
 // ───────── Profile derivation ─────────
 // The profile RAISES capability; it never lowers it. Explicit flags still work
@@ -302,7 +315,7 @@ module resources 'resources.bicep' = {
     modelVersion: modelVersion
     modelDeploymentName: modelDeploymentName
     modelSkuName: modelSkuName
-    modelCapacity: modelCapacity
+    modelCapacity: resolvedModelCapacity
     agentModel: resolvedAgentModel
     embeddingDeployment: embeddingDeployment
     avatarName: avatarName
@@ -321,6 +334,7 @@ module resources 'resources.bicep' = {
     acsAudioSampleRate: acsAudioSampleRate
     acsRequireWakePhrase: acsRequireWakePhrase
     acsAvatarVideoEnabled: acsAvatarVideoEnabled
+    browserJoinVideoEnabled: browserJoinVideoEnabled
   }
 }
 

@@ -4,8 +4,10 @@ No Azure, no network. Guards the shape of the query string, including the
 exclusion form that the previous implementation rendered as `site:-host`.
 """
 import sys
+from pathlib import Path
 
-sys.path.insert(0, ".")
+# Anchor on this file, not the working directory, so the suite runs from anywhere.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from backend.voice.tools import (  # noqa: E402
     build_query,

@@ -24,6 +24,16 @@
  * Its two small externalised deps (@azure/communication-common, @azure/logger) are
  * loaded as ES modules and exposed as the globals the UMD factory expects.
  */
+// Diagnostic switch: ?mic=0 disables local-microphone capture so the only thing
+// that can produce signal is the intercepted remote (room) audio. Use it when
+// answering "can this leg hear the meeting?" — with the mic live, its own signal
+// masks the answer.
+const MIC_CAPTURE = new URLSearchParams(location.search).get("mic") !== "0";
+// ?remote=0 disables the srcObject interception entirely, restoring the exact
+// pre-2026-08-03 behaviour (mic-only capture). This leg is live-verified, so
+// there is a way back that does not need a redeploy.
+const REMOTE_CAPTURE = new URLSearchParams(location.search).get("remote") !== "0";
+
 const CALLING_UMD = "/vendor/communication-calling-1.40.1.js";
 const COMMON_ESM = "https://esm.sh/@azure/communication-common@2.3.1";
 const LOGGER_ESM = "https://esm.sh/@azure/logger@1.1.4";
@@ -78,16 +88,19 @@ let callAgent = null;
 // in ensureEnabled() so the participant name is never hardcoded.
 let avatarDisplayName = "Avatar";
 let _configReady = null;
-// Avatar face: when the server enables it, the joiner sends an
-// outgoing video tile so the avatar is a *visible* participant. The first
-// increment is a branded placard (logo + name + a "listening" pulse) drawn to a
-// canvas and sent via the ACS raw-video LocalVideoStream — the same path a live
-// animated-avatar track will use next.
+// Avatar face: when the server enables it, the joiner sends an outgoing video
+// tile so the avatar is a *visible* participant. The tile is a canvas we paint —
+// the avatar's WebRTC video frames when the transport is up, a branded placard
+// (logo + name + status pulse) before that and whenever the track goes quiet —
+// handed to ACS through the raw-video LocalVideoStream. The composite is also
+// what carries the thinking caption and the wake-phrase hint, which a meeting has
+// no other screen for.
 let avatarVideoEnabled = false;
 let _LocalVideoStreamCtor = null; // captured from the SDK at join() time
-let localVideoStream = null;      // ACS LocalVideoStream wrapping the placard canvas
+let localVideoStream = null;      // ACS LocalVideoStream wrapping the tile canvas
 let placardStream = null;         // MediaStream from canvas.captureStream()
 let placardTimerId = null;        // canvas redraw timer (setInterval keeps frames flowing even when the tab is backgrounded)
+let placardDraw = null;           // current tile paint fn, so decoded frames can drive it
 let placardImg = null;            // brand logo image, loaded once from /brand/color.png
 
 // ───────── browser-side media bridge (client-side audio path) ─────────
@@ -101,18 +114,124 @@ let audioCtx = null;
 let outboundDest = null;        // MediaStreamDestination -> the call's outgoing audio
 let outboundLocalStream = null; // ACS LocalAudioStream wrapping outboundDest.stream
 let mediaWs = null;
-let captureNode = null;         // ScriptProcessor pulling remote audio -> WS
+let captureNode = null;         // capture node feeding PCM16 -> WS (worklet, or SP fallback)
 let captureSink = null;         // zero-gain sink so the capture node runs silently
+let micGate = null;             // GainNode on the microphone path
+let roomGate = null;            // GainNode on the room/display taps
+let captureVia = "none";        // "worklet" | "scriptprocessor" (diagnostics)
+let micOpenNow = true;          // last applied gate states (diagnostics)
+let roomOpenNow = true;
+let roomSpeakRms = 0;           // peak room-tap RMS measured WHILE she speaks
 const wiredRemoteTracks = new Set();
+// One record per wired remote audio track, metered and gated INDIVIDUALLY:
+//   { id, label, via, analyser, gain, peak, peakSpeak, peakIdle, nSpeak, nIdle }
+// "The room tap carries her voice back" has only ever been measured across the
+// whole tap at once, which cannot tell an echoing track apart from a human who
+// happens to be talking. Per-track levels, split by whether she was speaking,
+// can. That distinction decides whether the room gate is protection or damage.
+const remoteTracks = [];
+const remoteWiredVia = new Set(); // which path(s) delivered remote audio: sdk / srcObject
+const pendingRemoteStreams = []; // remote streams seen before audioCtx existed
+let remoteRmsScratch = null;    // reusable buffer for analyser reads
+let remoteMaxRms = 0;           // peak remote-only RMS since last stats report
+let srcObjectHooked = false;
+let remoteScanTimer = null;     // periodic sweep of call.remoteAudioStreams
 const primingAudioEls = [];     // muted <audio> elements priming remote tracks
 let micStream = null;           // getUserMedia mic stream feeding the capture node
 let displayStream = null;       // getDisplayMedia stream (far-side / Teams app audio)
 let displaySource = null;       // MediaStreamSource for the far-side audio
 let captureFrames = 0;          // ScriptProcessor callbacks (diagnostics)
 let captureMaxRms = 0;          // peak RMS since last stats report (diagnostics)
-let playCursor = 0;             // scheduling cursor for outbound playback
+let playCursor = 0;             // scheduling cursor for the no-avatar PCM path
+// Tile render health. The joiner tab generates the outgoing video, so anything
+// that throttles its rendering (backgrounding, occlusion by the Teams window,
+// GPU/power state) degrades the tile everyone else sees. Reported so a "it went
+// jerky when I moved windows" report can be checked instead of guessed at.
+let drawCount = 0;              // canvas repaints since the last stats report
+let rvfcCount = 0;              // decoded avatar frames since the last report
+let lastDrawMs = 0;
+let statsLastMs = 0;
+let framePumpVia = "none";      // which clock is driving the repaints
+// Fingerprint of the joiner script the server is serving, captured the first time
+// we ask. A tab left open across a deploy keeps running its old JS in memory no
+// matter what the cache headers say — that happened here and silently invalidated
+// a live test round, because the telemetry described a build that was no longer
+// deployed. Compare on every config fetch and say so loudly.
+let clientBuild = "";
+let buildStale = false;
+function noteBuildId(id) {
+    if (!id) return;
+    if (!clientBuild) {
+        clientBuild = id;
+        console.log(`[acs-join] build ${id}`);
+        return;
+    }
+    if (id !== clientBuild && !buildStale) {
+        buildStale = true;
+        log("This page is running an OLD build — reload (F5) before testing.");
+    }
+}
+// The web stage covers the wait for the first token with an on-screen "thinking"
+// indicator. In a meeting there is no screen — but the avatar's video tile is a
+// canvas we draw ourselves, so it can carry the same cue. Voice Live's built-in
+// StaticInterimResponseConfig is not an option here: it requires the model
+// binding, and the in-call session runs the Foundry agent binding for tools.
+//
+// The wording and the cadence are the web app's (app.js THINKING_*), so a change
+// to the copy lands on both surfaces. Two differences, both deliberate:
+//
+//   - Shown after 250ms rather than the web's 700ms. A brief blank on a screen is
+//     nothing; in a meeting the room hears silence and starts talking over her.
+//   - Derived from elapsed time on each frame instead of setInterval/setTimeout.
+//     Background tabs clamp timers to ~1Hz and this tab sits behind the Teams
+//     window, so timer-driven rotation would lurch. Same behaviour, no timers.
+let thinkingSince = 0;
+const THINKING_SHOW_AFTER_MS = 250;
+const THINKING_CAPTIONS = [
+    "Looking through the records…",
+    "Checking the latest information…",
+    "Pulling the details together…",
+];
+const THINKING_SLOW_CAPTION = "Just a moment — getting you a reliable answer…";
+const THINKING_ROTATE_MS = 2200;
+const THINKING_SLOW_MS = 3500;
+// Hard ceiling, mirroring the web's failsafe timer: if the "off" message is ever
+// lost the cue expires on its own instead of pulsing at the room forever.
+const THINKING_MAX_MS = 25000;
+
+// The caption to show right now, or "" when the cue is down.
+function thinkingCaption() {
+    if (!thinkingSince) return "";
+    const age = performance.now() - thinkingSince;
+    if (age < THINKING_SHOW_AFTER_MS || age > THINKING_MAX_MS) return "";
+    const shown = age - THINKING_SHOW_AFTER_MS;
+    if (shown >= THINKING_SLOW_MS) return THINKING_SLOW_CAPTION;
+    const i = Math.floor(shown / THINKING_ROTATE_MS) % THINKING_CAPTIONS.length;
+    return THINKING_CAPTIONS[i];
+}
+
+// Shrink a label until it fits, then report its width. The captions are far
+// longer than the single word this tile used to carry, and Teams crops the tile
+// horizontally on narrow layouts, so overflow is a real outcome, not a theory.
+function fitLabel(ctx, text, weight, startPx, minPx, maxWidth) {
+    let px = startPx;
+    const font = (p) => `${weight} ${p}px -apple-system, 'Segoe UI', system-ui, sans-serif`;
+    ctx.font = font(px);
+    while (ctx.measureText(text).width > maxWidth && px > minPx) {
+        px -= 1;
+        ctx.font = font(px);
+    }
+    return { px, width: ctx.measureText(text).width };
+}
+// A suppressed utterance looks exactly like a dead microphone from the room's
+// side: she heard the question, understood it, and deliberately said nothing.
+// The tile is ours to draw, so it carries the reason. Silent by design — the
+// whole point of the wake phrase is not to interject.
+let hintText = "";
+let hintUntil = 0;
+const HINT_MS = 4000;
 let scheduledSources = [];      // active outbound buffer sources (for barge-in flush)
-let captureMutedUntil = 0;      // half-duplex: drop mic capture until this ctx time
+let captureMutedUntil = 0;      // room tap: hold it shut until this ctx time
 
 function setupOutboundAudio(LocalAudioStream) {
     audioCtx = new (window.AudioContext || window.webkitAudioContext)({
@@ -122,6 +241,8 @@ function setupOutboundAudio(LocalAudioStream) {
     // Nuru's synthesized speech is the call's *only* outgoing audio (no mic),
     // which also eliminates the laptop-mic echo we saw while testing.
     outboundLocalStream = new LocalAudioStream(outboundDest.stream);
+    // Any remote stream intercepted before the context existed can now be wired.
+    drainPendingRemoteStreams();
     return outboundLocalStream;
 }
 
@@ -144,7 +265,7 @@ function openMediaSocket() {
     const wsUrl = `${location.origin.replace(/^http/, "ws")}/ws/acs/browser`;
     mediaWs = new WebSocket(wsUrl);
     mediaWs.binaryType = "arraybuffer";
-    mediaWs.onopen = () => console.log("[acs-join] media WS open");
+    mediaWs.onopen = () => { console.log("[acs-join] media WS open"); flushVideoReports(); };
     mediaWs.onclose = () => console.log("[acs-join] media WS closed");
     mediaWs.onerror = (e) => console.warn("[acs-join] media WS error", e);
     mediaWs.onmessage = (ev) => {
@@ -153,9 +274,16 @@ function openMediaSocket() {
                 const msg = JSON.parse(ev.data);
                 if (msg.type === "stop_playback") {
                     flushPlayback();
-                    skipAvatarToLiveEdge();
-                } else if (msg.type === "video_data") {
-                    handleAvatarChunk(msg.delta);
+                } else if (msg.type === "ice_servers") {
+                    setupAvatarWebRTC(msg.iceServers || []);
+                } else if (msg.type === "avatar_sdp_answer") {
+                    handleAvatarSdpAnswer(msg.serverSdp || "");
+                } else if (msg.type === "thinking") {
+                    thinkingSince = msg.active ? performance.now() : 0;
+                    if (msg.active) hintUntil = 0; // answering beats nudging
+                } else if (msg.type === "hint") {
+                    hintText = msg.text || "";
+                    hintUntil = hintText ? performance.now() + HINT_MS : 0;
                 }
             } catch (_) { /* ignore */ }
             return;
@@ -165,12 +293,22 @@ function openMediaSocket() {
 }
 
 // Voice Live PCM16 -> schedule into the outgoing call audio.
-// A small jitter buffer (lead time) absorbs network/WS timing variance so the
-// scheduled chunks play gap-free instead of underrunning into clicks/breakups.
-const PLAYBACK_LEAD = 0.25; // seconds of cushion ahead of the play clock
-const CAPTURE_TAIL = 0.4;   // extra mic-mute time after playback drains (anti-echo)
-// Peak amplitude (0..1) above which a chunk counts as *speech* rather than the
-// avatar's idle silence. See the half-duplex note in playPcmChunk.
+//
+// This is the NO-AVATAR path only. With the avatar on, her voice arrives as a
+// WebRTC media track and is wired straight to outboundDest — the server stops
+// sending PCM entirely, so nothing below runs.
+//
+// It used to carry a second job: holding the audio back to meet a picture that
+// had been through MediaSource buffering, decode, a canvas repaint and an encode.
+// That reconstruction is gone, and with it the tunable lead, the drift guard and
+// the silence shaver that fought each other over where the cursor should sit.
+// What is left is an ordinary jitter buffer — enough cushion that chunks play
+// gap-free instead of underrunning into clicks.
+const PLAYBACK_LEAD = 0.12; // seconds of cushion ahead of the play clock
+const MAX_PLAYBACK_LEAD = 0.4;
+const CAPTURE_TAIL = 0.4;   // extra room-tap mute time after playback drains (anti-echo)
+// Peak amplitude (0..1) above which a chunk counts as *speech* rather than
+// digital silence. See the room-tap note below.
 const SPEECH_PEAK = 0.01;
 function playPcmChunk(int16) {
     if (!audioCtx || !outboundDest) return;
@@ -187,19 +325,22 @@ function playPcmChunk(int16) {
     node.connect(outboundDest);
     const now = audioCtx.currentTime;
     // If we've fallen behind (or this is the first chunk of a turn), rebuild the
-    // cushion rather than scheduling right at "now", which would underrun.
-    if (playCursor < now + 0.02) playCursor = now + PLAYBACK_LEAD;
+    // cushion rather than scheduling right at "now", which would underrun. The
+    // ceiling catches a burst big enough to push playback audibly late.
+    if (playCursor < now + 0.02 || playCursor > now + MAX_PLAYBACK_LEAD) {
+        playCursor = now + PLAYBACK_LEAD;
+    }
     node.start(playCursor);
     playCursor += buf.duration;
-    // Half-duplex: while Nuru is speaking (and for a short tail afterwards), the
-    // mic would otherwise capture her own voice from the Teams-client speaker and
-    // feed it back as a new "question". Suppress capture until playback drains.
+    // While she is speaking (and for a short tail afterwards) the raw room tap
+    // carries her own voice back from the call mix, and nothing echo-cancels it —
+    // so that tap is held shut. The microphone is NOT: the browser has already
+    // echo-cancelled it, and closing it is what used to eat the front of a
+    // question and cost three attempts to be heard.
     //
-    // Arm this on ACTUAL SPEECH, not merely on "a chunk arrived". With the avatar
-    // enabled our PCM comes from the avatar's muxed AAC track, which streams
-    // CONTINUOUSLY for the whole session (she idles on camera between turns) — so
-    // "a chunk arrived" is true forever, which pinned captureMutedUntil ahead of
-    // the clock and wedged the mic shut: she never heard a single question.
+    // Arm on ACTUAL SPEECH, never merely on "a chunk arrived" — Voice Live sends
+    // exact digital silence between turns rather than nothing at all, so "a chunk
+    // arrived" is true forever and would pin the gate shut for the whole call.
     if (peak >= SPEECH_PEAK) captureMutedUntil = playCursor + CAPTURE_TAIL;
     scheduledSources.push(node);
     node.onended = () => {
@@ -208,133 +349,481 @@ function playPcmChunk(int16) {
     };
 }
 
-// Barge-in: drop everything queued so Nuru stops mid-sentence when a human talks.
+// Barge-in. The server has already cancelled the response, so with the avatar on
+// her voice track simply stops at the source and there is nothing queued here to
+// drop — this reduces to reopening the room tap. The buffer flush still matters on
+// the no-avatar path, where chunks are scheduled up to PLAYBACK_LEAD into the future.
 function flushPlayback() {
     for (const node of scheduledSources) {
         try { node.stop(); } catch (_) { /* already stopped */ }
     }
     scheduledSources = [];
     playCursor = audioCtx ? audioCtx.currentTime : 0;
-    captureMutedUntil = 0; // playback cancelled — re-open the mic immediately
+    // She has stopped, so the room tap is no longer a feedback path. The microphone
+    // needs nothing done to it — it was never closed.
+    captureMutedUntil = 0;
+    avatarLastAudibleMs = 0;
 }
 
 // Capture the meeting's remote audio and stream PCM16 to the server.
 function allHumansMuted() {
     // From Nuru's leg, the humans are remote participants. If at least one is
     // explicitly unmuted, someone may be talking to the meeting -> listen.
-    // If there are none yet, or all are muted, suppress capture.
+    //
+    // An EMPTY list means we know nothing, not that everyone is muted. This SDK
+    // demonstrably under-reports on Teams interop — capture stats have shown
+    // remoteStreams=0 while wiredTracks=2 carried real audio — so treating
+    // "no participants visible" as "all muted" silently deafens her mid-meeting
+    // and the question just vanishes. That was one cause of "sometimes she does
+    // not respond". Listen when we cannot tell; only stay quiet when we can
+    // actually see every human muted.
     try {
         const parts = (call && call.remoteParticipants) ? call.remoteParticipants : [];
-        if (!parts.length) return true;
+        if (!parts.length) return false;
         return !parts.some((p) => p && p.isMuted === false);
     } catch (_) {
         return false; // never hard-fail capture on an inspection error
     }
 }
 
-function ensureCaptureNode() {
-    if (captureNode) return;
-    // NOTE (perf, deliberate): this is a main-thread ScriptProcessor, while the
-    // web app (app.js) captures via an AudioWorklet at 960 samples / 40 ms. At
-    // 24 kHz, 4096 samples is 170 ms of buffering before a sample leaves the
-    // browser, and app.js carries a comment recording that smaller buffers gave
-    // it tighter barge-in latency. So this leg is ~130 ms behind the web app on
-    // the question path, and shares a thread with the avatar canvas + MediaSource.
-    // Left as-is on purpose: this is the no-admin FALLBACK leg (the Graph media
-    // bot is the real one) and the half-duplex gate below took several live
-    // sessions to stabilise. Porting it to an AudioWorklet is worthwhile but is
-    // a change to a live-verified media path and wants its own live test round.
-    captureNode = audioCtx.createScriptProcessor(4096, 1, 1);
-    captureNode.onaudioprocess = (e) => {
-        if (!mediaWs || mediaWs.readyState !== WebSocket.OPEN) return;
-        const samples = e.inputBuffer.getChannelData(0);
-        // Track signal level so we can tell (from server logs) whether the
-        // captured meeting audio is real or all-zero/silent.
-        let sum = 0;
-        for (let i = 0; i < samples.length; i++) sum += samples[i] * samples[i];
-        const rms = Math.sqrt(sum / samples.length);
-        if (rms > captureMaxRms) captureMaxRms = rms;
-        captureFrames++;
-        // Half-duplex gate: don't forward mic audio while Nuru is speaking, so
-        // her own voice (from the Teams-client speaker) can't loop back as a
-        // new question. Browser AEC can't cancel it (different app's output).
-        const selfTalking = !!(audioCtx && audioCtx.currentTime < captureMutedUntil);
-        // Privacy gate: Nuru taps the local mic directly, which is independent
-        // of the Teams client's mute. But from Nuru's leg the human is a *remote*
-        // participant, so we honour their Teams mute — if every human is muted,
-        // nothing is legitimately being said to the meeting, so stop listening.
-        const humanMuted = allHumansMuted();
-        const muted = selfTalking || humanMuted;
-        if (captureFrames % 25 === 0) {
-            try {
-                mediaWs.send(JSON.stringify({
-                    type: "capture_stats",
-                    frames: captureFrames,
-                    maxRms: Number(captureMaxRms.toFixed(5)),
-                    ctxRate: audioCtx ? audioCtx.sampleRate : 0,
-                    selfTalking,
-                    humanMuted,
-                    remoteStreams: (call && call.remoteAudioStreams)
-                        ? call.remoteAudioStreams.length : 0,
-                    wiredTracks: wiredRemoteTracks.size,
-                }));
-            } catch (_) { /* ignore */ }
-            captureMaxRms = 0;
+// The web app's capture processor, copied verbatim from app.js. That pipeline is
+// the one that has been tuned over many rounds until barge-in and turn detection
+// "work like a champion", so this leg runs the same code rather than a second
+// implementation that would have to be tuned all over again.
+const PCM16_WORKLET_SRC = `
+class PCM16Processor extends AudioWorkletProcessor {
+    constructor() {
+        super();
+        // 40ms at 24kHz = 960 samples. Smaller buffers give tighter
+        // barge-in/interruption latency than the previous 100ms.
+        this.bufferSize = 960;
+        this.buffer = new Float32Array(this.bufferSize);
+        this.offset = 0;
+        this.silence = new Float32Array(128); // one render quantum
+    }
+    process(inputs) {
+        const input = inputs[0];
+        // app.js returns early when there is no input, because it has exactly one
+        // always-live microphone source and so never sees that case. This leg
+        // gates its sources with GainNodes, and a fully attenuated graph can hand
+        // us an empty input — at which point returning early would STOP the
+        // stream, which is precisely the failure app.js documents (the server VAD
+        // fires speech_started, never sees speech_stopped, and the turn hangs
+        // forever). Substituting silence keeps the same invariant it relies on.
+        const data = (input && input[0]) ? input[0] : this.silence;
+        for (let i = 0; i < data.length; i++) {
+            this.buffer[this.offset++] = data[i];
+            if (this.offset >= this.bufferSize) {
+                const pcm16 = new Int16Array(this.bufferSize);
+                for (let j = 0; j < this.bufferSize; j++) {
+                    const s = Math.max(-1, Math.min(1, this.buffer[j]));
+                    pcm16[j] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+                }
+                this.port.postMessage(pcm16.buffer, [pcm16.buffer]);
+                this.buffer = new Float32Array(this.bufferSize);
+                this.offset = 0;
+            }
         }
-        if (muted) return;
-        const pcm = floatToPcm16(samples);
-        mediaWs.send(pcm.buffer);
-    };
-    // A ScriptProcessor only runs while connected to the destination; route it
+        return true;
+    }
+}
+registerProcessor('pcm16-processor', PCM16Processor);
+`;
+
+// Per-source gates.
+//
+// The web app has exactly one input: a microphone that the browser has already
+// echo-cancelled and noise-suppressed. This leg has three summed into one node —
+// that microphone PLUS the raw room tap PLUS the optional display capture. The
+// extra two are the entire difference, and they are unprocessed: no echo
+// canceller sees them, and the room tap carries the call's own mix, which is how
+// opening the mic during her answer fed her voice straight back to Voice Live and
+// she interrupted herself continuously.
+//
+// So the gates are per-source rather than one global drop:
+//   mic  — always open, exactly as the web app leaves it
+//   room — never open while she speaks; it is a feedback path, not a barge-in path
+//
+// There is deliberately no half-duplex mode. This channel once closed the mic while
+// she spoke, and live testing (2026-08-03) was unambiguous: with it on she took three
+// attempts to hear a question, because the gate ate the front of every utterance and
+// the server VAD never saw a turn start. With the mic simply left open, barge-in was
+// immediate and the room did not trigger her once. The web app never had this gate;
+// adding it here was the divergence, and removing it is the fix.
+function applyCaptureGates() {
+    const speaking = !!(audioCtx && audioCtx.currentTime < captureMutedUntil);
+    const humanMuted = allHumansMuted();
+    // The web app deliberately does NOT gate the mic on playback state — its own
+    // comment calls that fragile, since one missed response_done sticks the gate
+    // and drops the mic for good. Echo-driven false turns are handled instead by
+    // browser AEC + server echo cancellation + barge-in/interrupt in lock-step.
+    // Same policy here now.
+    micOpenNow = !humanMuted;
+    roomOpenNow = !humanMuted && !speaking;
+    if (micGate) micGate.gain.value = micOpenNow ? 1 : 0;
+    if (roomGate) roomGate.gain.value = roomOpenNow ? 1 : 0;
+}
+
+// One captured frame (Int16 PCM, 960 samples / 40ms), whichever node produced it.
+function onCaptureFrame(buf) {
+    // Drive the "is she speaking" meter from here rather than from a rAF loop.
+    // This runs on the audio thread's cadence, which browsers do not throttle;
+    // rAF stops dead when the tab is hidden, and this tab lives behind Teams.
+    sampleAvatarSpeaking();
+    // Render watchdog. setInterval is clamped to ~1Hz and requestVideoFrameCallback
+    // stops entirely once the tab is hidden or fully occluded — and the joiner tab
+    // normally sits behind the Teams window, so the outgoing tile can silently
+    // collapse to a slideshow. Audio keeps flowing regardless, so drive a repaint
+    // from here whenever the normal painters have gone quiet.
+    if (placardDraw && performance.now() - lastDrawMs > 120) {
+        try { placardDraw(); } catch (_) { /* never break capture */ }
+    }
+    if (!mediaWs || mediaWs.readyState !== WebSocket.OPEN) return;
+    applyCaptureGates();
+    const pcm = new Int16Array(buf);
+    // Track signal level so we can tell (from server logs) whether the captured
+    // meeting audio is real or all-zero/silent.
+    let sum = 0;
+    for (let i = 0; i < pcm.length; i++) {
+        const s = pcm[i] / 32768;
+        sum += s * s;
+    }
+    const rms = Math.sqrt(sum / pcm.length);
+    if (rms > captureMaxRms) captureMaxRms = rms;
+    captureFrames++;
+    // Remote-only level, measured independently of the mic so we can tell whether
+    // the srcObject interception is actually delivering room audio — and, when
+    // sampled during her own speech, whether the room tap really does carry her
+    // voice back (roomSpeakRms). That is the measurement behind gating it.
+    const speaking = !!(audioCtx && audioCtx.currentTime < captureMutedUntil);
+    if (remoteTracks.length) {
+        const n = remoteTracks[0].analyser.fftSize;
+        if (!remoteRmsScratch || remoteRmsScratch.length !== n) {
+            remoteRmsScratch = new Float32Array(n);
+        }
+        for (let a = 0; a < remoteTracks.length; a++) {
+            const rec = remoteTracks[a];
+            rec.analyser.getFloatTimeDomainData(remoteRmsScratch);
+            let rsum = 0;
+            for (let i = 0; i < n; i++) rsum += remoteRmsScratch[i] * remoteRmsScratch[i];
+            const rr = Math.sqrt(rsum / n);
+            if (rr > remoteMaxRms) remoteMaxRms = rr;
+            if (rr > rec.peak) rec.peak = rr;
+            // Split by whether SHE was talking at the time. A track loud only while
+            // she talks is our own audio returning; a track with energy while she is
+            // silent is a human who could be interrupting. No aggregate can separate
+            // those two, which is why the old single roomSpeakRms could not settle it.
+            if (speaking) {
+                rec.nSpeak++;
+                if (rr > rec.peakSpeak) rec.peakSpeak = rr;
+                if (rr > roomSpeakRms) roomSpeakRms = rr;
+            } else {
+                rec.nIdle++;
+                if (rr > rec.peakIdle) rec.peakIdle = rr;
+            }
+        }
+    }
+    // 125 frames = ~5s at 40ms.
+    if (captureFrames % 125 === 0) reportCaptureStats();
+    // Always send, even when a gate is shut — the gates zero the SIGNAL, they do
+    // not stop the STREAM. app.js documents why this matters: cutting the stream
+    // mid-utterance orphans the server VAD, which fires speech_started and then
+    // never sees speech_stopped, so the turn hangs forever. Continuous silence
+    // always lets the server close the turn.
+    mediaWs.send(buf);
+}
+
+function ensureCaptureNode() {
+    if (micGate) return; // gates exist -> callers can wire into them immediately
+    // Gates are created synchronously so sources can connect right away, while
+    // the worklet module loads asynchronously behind them.
+    micGate = audioCtx.createGain();
+    roomGate = audioCtx.createGain();
+    micGate.gain.value = 1;
+    roomGate.gain.value = 1;
+    startCaptureWorklet();
+}
+
+async function startCaptureWorklet() {
+    try {
+        const blob = new Blob([PCM16_WORKLET_SRC], { type: "application/javascript" });
+        const url = URL.createObjectURL(blob);
+        await audioCtx.audioWorklet.addModule(url);
+        URL.revokeObjectURL(url);
+        const node = new AudioWorkletNode(audioCtx, "pcm16-processor");
+        node.port.onmessage = (e) => onCaptureFrame(e.data);
+        wireCaptureNode(node, "worklet");
+    } catch (e) {
+        console.warn("[acs-join] AudioWorklet unavailable — ScriptProcessor fallback", e);
+        const node = audioCtx.createScriptProcessor(4096, 1, 1);
+        node.onaudioprocess = (ev) => {
+            onCaptureFrame(floatToPcm16(ev.inputBuffer.getChannelData(0)).buffer);
+        };
+        wireCaptureNode(node, "scriptprocessor");
+    }
+}
+
+function wireCaptureNode(node, via) {
+    captureNode = node;
+    captureVia = via;
+    micGate.connect(node);
+    roomGate.connect(node);
+    // A capture node only runs while connected to the destination; route it
     // through a zero-gain node so it processes without playing remote audio
     // locally (ACS already renders the meeting audio for us).
     captureSink = audioCtx.createGain();
     captureSink.gain.value = 0;
-    captureNode.connect(captureSink);
+    node.connect(captureSink);
     captureSink.connect(audioCtx.destination);
+    console.log(`[acs-join] capture via ${via}`);
+    if (mediaWs && mediaWs.readyState === WebSocket.OPEN) {
+        try { mediaWs.send(JSON.stringify({ type: "capture_wired", via })); } catch (_) {}
+    }
 }
+
+function reportCaptureStats() {
+    const _nowMs = performance.now();
+    const _dt = statsLastMs ? (_nowMs - statsLastMs) / 1000 : 0;
+    statsLastMs = _nowMs;
+    const drawFps = _dt > 0 ? Math.round(drawCount / _dt) : 0;
+    const vFps = _dt > 0 ? Math.round(rvfcCount / _dt) : 0;
+    drawCount = 0;
+    rvfcCount = 0;
+    try {
+        mediaWs.send(JSON.stringify({
+            type: "capture_stats",
+            frames: captureFrames,
+            maxRms: Number(captureMaxRms.toFixed(5)),
+            ctxRate: audioCtx ? audioCtx.sampleRate : 0,
+            capVia: captureVia,
+            micOpen: micOpenNow,
+            roomOpen: roomOpenNow,
+            // Peak room-tap level measured WHILE she was speaking. If this is
+            // non-zero the room tap is carrying her own voice back from the call
+            // mix, which is why that tap — and only that tap — closes while she
+            // speaks. The microphone stays open; it is echo-cancelled.
+            roomSpeakRms: Number(roomSpeakRms.toFixed(5)),
+            humanMuted: !micOpenNow && !roomOpenNow,
+            parts: (call && call.remoteParticipants)
+                ? call.remoteParticipants.length : -1,
+            remoteStreams: (call && call.remoteAudioStreams)
+                ? call.remoteAudioStreams.length : 0,
+            wiredTracks: wiredRemoteTracks.size,
+            remoteMeters: remoteTracks.length,
+            remoteMaxRms: Number(remoteMaxRms.toFixed(5)),
+            remoteVia: Array.from(remoteWiredVia).join("+") || "none",
+            // Per-track breakdown so the logs say WHICH track carries her voice,
+            // not merely that something does. spk/idl are this window's peaks while
+            // she was / was not speaking; nS/nI are the frame counts behind them, so
+            // a peak of 0 from 2 samples is not mistaken for a silent track.
+            tracks: remoteTracks.map((r) => ({
+                id: r.id.slice(0, 8),
+                via: r.via,
+                lbl: (r.label || "").slice(0, 24),
+                spk: Number(r.peakSpeak.toFixed(4)),
+                idl: Number(r.peakIdle.toFixed(4)),
+                nS: r.nSpeak,
+                nI: r.nIdle,
+            })),
+            videoState,
+            avatarPic: avatarHasPicture,
+            // ICE state of the avatar's peer connection. The picture and her
+            // voice both ride it, so "no face and no answer" and "no face only"
+            // are different faults and this is what tells them apart.
+            avatarIce: avatarPc ? avatarPc.iceConnectionState : "none",
+            avatarVoice: !!avatarAnalyser,
+            drawFps,
+            vFps,
+            pumpVia: framePumpVia,
+            build: clientBuild,
+            stale: buildStale,
+            hidden: document.visibilityState !== "visible",
+            micCapture: MIC_CAPTURE,
+        }));
+    } catch (_) { /* ignore */ }
+    captureMaxRms = 0;
+    remoteMaxRms = 0;
+    roomSpeakRms = 0;
+    for (let a = 0; a < remoteTracks.length; a++) {
+        const r = remoteTracks[a];
+        r.peak = 0; r.peakSpeak = 0; r.peakIdle = 0; r.nSpeak = 0; r.nIdle = 0;
+    }
+}
+
+// ───────── remote (room) audio ─────────
+// Two paths, deliberately both present.
+//
+// 1. DOCUMENTED: RemoteAudioStream.getMediaStream() -> Promise<MediaStream>.
+//    This is the supported API and is tried first.
+//
+//    An earlier version of this file claimed the SDK "will not hand us remote
+//    audio", citing a live measurement of wiredTracks 0 / maxRms 0. That
+//    measurement was real but the conclusion drawn from it was wrong twice over:
+//    the code called getMediaStreamTrack(), which is NOT a member of
+//    RemoteAudioStream (the interface exposes getMediaStream() and getVolume()),
+//    and the function containing that call was never invoked by anything. So the
+//    SDK was never actually asked.
+//
+// 2. FALLBACK: intercept HTMLMediaElement.prototype.srcObject. The SDK has to
+//    *play* remote audio, so it assigns the MediaStream to a media element.
+//    Technique taken from the ADIA reference implementation (src/web/bridge.js).
+//    This is proven to work in a real meeting, but it rides an implementation
+//    detail rather than a contract, which is why it is second choice.
+//
+// capture_stats reports `via` so the logs say which path actually delivered the
+// audio. If the documented path works, `via=sdk` and the hook is redundant
+// insurance; if a future SDK renders remote audio purely through Web Audio, the
+// hook stops firing and remoteMaxRms returns to 0 — how the regression announces
+// itself.
+// Track ids we hand to ACS as our outgoing audio. If the SDK ever rendered one
+// back into a media element, the srcObject hook would wire her own voice into the
+// capture path and she would answer herself.
+function isOwnOutboundTrack(id) {
+    try {
+        if (!outboundDest || !outboundDest.stream) return false;
+        return outboundDest.stream.getAudioTracks().some((t) => t.id === id);
+    } catch (_) {
+        return false;
+    }
+}
+
+function attachRemoteMediaStream(ms, via) {
+    try {
+        if (!ms || typeof ms.getAudioTracks !== "function") return;
+        const tracks = ms.getAudioTracks();
+        if (!tracks.length) return;
+        const id = tracks[0].id;
+        if (wiredRemoteTracks.has(id)) return;
+        // The srcObject hook fires on EVERY media element on this page, including
+        // the two we create for the avatar. Wiring her own voice into the room tap
+        // would post it straight back to Voice Live as the next question, so she
+        // would interrupt herself on every answer.
+        if (avatarOwnTracks.has(id)) return;
+        // Our own OUTGOING call audio, if the SDK ever renders it locally. Same
+        // hazard as avatarOwnTracks, but checked by identity against the stream we
+        // actually handed to ACS rather than relying on a registration winning a race.
+        if (isOwnOutboundTrack(id)) return;
+        // audioCtx is created in setupOutboundAudio() before join(), but a stream
+        // arriving first must not be dropped on the floor.
+        if (!audioCtx) { pendingRemoteStreams.push({ ms, via }); return; }
+        wiredRemoteTracks.add(id);
+        ensureCaptureNode();
+        const src = audioCtx.createMediaStreamSource(ms);
+        // Metered separately from the mic so the diagnostic is unambiguous. The
+        // analyser sits BEFORE the gain, so it keeps reading the true level even
+        // while this track is gated shut — otherwise closing the gate would erase
+        // the very evidence needed to judge whether closing it was right.
+        const analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 2048;
+        const trackGain = audioCtx.createGain();
+        trackGain.gain.value = 1;
+        src.connect(analyser);
+        src.connect(trackGain);
+        trackGain.connect(roomGate);
+        remoteTracks.push({
+            id,
+            label: tracks[0].label || "",
+            via: via || "srcObject",
+            analyser,
+            gain: trackGain,
+            peak: 0, peakSpeak: 0, peakIdle: 0, nSpeak: 0, nIdle: 0,
+        });
+        remoteWiredVia.add(via || "srcObject");
+        console.log(`[acs-join] remote audio wired via ${via || "srcObject"}`, id);
+        if (mediaWs && mediaWs.readyState === WebSocket.OPEN) {
+            try { mediaWs.send(JSON.stringify({ type: "remote_wired", trackId: id, via: via || "srcObject" })); } catch (_) {}
+        }
+    } catch (e) {
+        console.warn("[acs-join] attachRemoteMediaStream failed", e);
+    }
+}
+
+function drainPendingRemoteStreams() {
+    if (!audioCtx || !pendingRemoteStreams.length) return;
+    const queued = pendingRemoteStreams.splice(0, pendingRemoteStreams.length);
+    queued.forEach((q) => attachRemoteMediaStream(q.ms, q.via));
+}
+
+function installSrcObjectHook() {
+    if (srcObjectHooked) return;
+    if (!REMOTE_CAPTURE) {
+        console.log("[acs-join] srcObject hook disabled (?remote=0) — mic-only capture");
+        return;
+    }
+    const desc = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, "srcObject");
+    if (!desc || !desc.set) {
+        console.warn("[acs-join] srcObject is not a configurable accessor — remote capture unavailable");
+        return;
+    }
+    Object.defineProperty(HTMLMediaElement.prototype, "srcObject", {
+        configurable: true,
+        enumerable: desc.enumerable,
+        get() { return desc.get.call(this); },
+        set(v) { attachRemoteMediaStream(v, "srcObject"); return desc.set.call(this, v); },
+    });
+    srcObjectHooked = true;
+    console.log("[acs-join] srcObject hook installed");
+}
+// Must be in place before the SDK attaches any remote audio element.
+installSrcObjectHook();
 
 function wireRemoteAudioStream(stream) {
     try {
-        if (!stream || (stream.mediaStreamType && stream.mediaStreamType !== "Audio")) return;
-        const track = typeof stream.getMediaStreamTrack === "function"
-            ? stream.getMediaStreamTrack()
-            : null;
-        Promise.resolve(track).then((t) => {
-            if (!t || wiredRemoteTracks.has(t.id)) return;
-            wiredRemoteTracks.add(t.id);
-            ensureCaptureNode();
-            const ms = new MediaStream([t]);
-            // Chrome/Edge only pull samples from a *remote* WebRTC MediaStream
-            // through Web Audio if the stream is also consumed by a playing
-            // HTMLMediaElement. Prime it with a muted <audio> element so the
-            // ScriptProcessor actually receives the meeting audio.
+        if (!stream) return;
+        if (stream.mediaStreamType && stream.mediaStreamType !== "Audio") return;
+        // The documented member of RemoteAudioStream. getMediaStreamTrack(), which
+        // this used to call, does not exist on the interface.
+        if (typeof stream.getMediaStream !== "function") return;
+        if (stream.isAvailable === false) return;
+        Promise.resolve(stream.getMediaStream()).then((ms) => {
+            if (!ms) return;
+            // Attach BEFORE priming: assigning srcObject below trips our own hook,
+            // and whichever call lands first owns the `via` label. The documented
+            // path must win that race or the diagnostic would always read
+            // "srcObject" and we would never learn whether the SDK path works.
+            attachRemoteMediaStream(ms, "sdk");
+            // Chrome only pulls samples from a *remote* WebRTC MediaStream through
+            // Web Audio while an HTMLMediaElement is also consuming it. The SDK
+            // plays its own element, but muteIncomingAudio() (the echo guard in
+            // startBrowserMedia) may stop that, so prime one here rather than
+            // depend on the SDK's.
             const el = new Audio();
             el.muted = true;
             el.srcObject = ms;
             el.play().catch(() => { /* autoplay may defer; track still primed */ });
             primingAudioEls.push(el);
-            const src = audioCtx.createMediaStreamSource(ms);
-            src.connect(captureNode);
-            console.log("[acs-join] wired remote audio track", t.id);
-            if (mediaWs && mediaWs.readyState === WebSocket.OPEN) {
-                try { mediaWs.send(JSON.stringify({ type: "remote_wired", trackId: t.id })); } catch (_) {}
-            }
-        }).catch((e) => console.warn("[acs-join] getMediaStreamTrack failed", e));
+        }).catch((e) => console.warn("[acs-join] getMediaStream failed", e));
     } catch (e) {
         console.warn("[acs-join] wireRemoteAudioStream failed", e);
     }
 }
 
+// Nothing ever called wireRemoteAudioStream before, which is the other half of
+// why the SDK path looked dead. Sweep the call's remote audio streams on connect
+// and on a timer so participants who join later are picked up too; wiring is
+// idempotent (deduped by track id), so re-scanning is free.
+function scanRemoteAudioStreams() {
+    try {
+        const streams = (call && call.remoteAudioStreams) ? call.remoteAudioStreams : [];
+        for (const s of streams) wireRemoteAudioStream(s);
+    } catch (e) {
+        console.warn("[acs-join] scanRemoteAudioStreams failed", e);
+    }
+}
+
 function startRemoteAudioCapture() {
     ensureCaptureNode();
-    // PRIMARY capture path: the local microphone. ACS's Web SDK auto-renders
-    // remote meeting audio and does NOT expose it as a raw MediaStreamTrack
-    // (getMediaStreamTrack on RemoteAudioStream yields nothing — confirmed:
-    // wiredTracks stayed 0, maxRms 0), so we cannot capture the mixed remote
-    // audio in the browser. Instead we capture this device's mic — the
-    // executive asking the question is at this laptop. echoCancellation strips
-    // Nuru's own voice (played by the Teams client) from the captured signal.
+    // Room audio arrives via wireRemoteAudioStream (documented getMediaStream())
+    // with the srcObject hook as a second path — see the block above. The mic
+    // remains a SEPARATE source because it is the near-field signal for whoever
+    // is at this laptop, and because it is the only one that survives if both
+    // remote paths fail. echoCancellation strips Nuru's own voice (played by the
+    // Teams client) out of that near-field capture.
+    if (!MIC_CAPTURE) {
+        console.log("[acs-join] mic capture disabled (?mic=0) — remote audio only");
+        log("Mic capture disabled — listening to meeting audio only.");
+        return;
+    }
     navigator.mediaDevices.getUserMedia({
         audio: {
             echoCancellation: true,
@@ -345,7 +834,7 @@ function startRemoteAudioCapture() {
     }).then((stream) => {
         micStream = stream;
         const src = audioCtx.createMediaStreamSource(stream);
-        src.connect(captureNode);
+        src.connect(micGate);
         console.log("[acs-join] mic capture wired ->", stream.getAudioTracks().length, "track(s)");
         if (mediaWs && mediaWs.readyState === WebSocket.OPEN) {
             try { mediaWs.send(JSON.stringify({ type: "mic_wired", tracks: stream.getAudioTracks().length })); } catch (_) {}
@@ -356,122 +845,406 @@ function startRemoteAudioCapture() {
     });
 }
 
-// ───────── live avatar face (MediaSource) ─────────
-// The server runs the Voice Live session in avatar/websocket mode and relays the
-// raw fragmented-MP4 stream here as {type:"video_data", delta:<base64>}. We play
-// it MUTED in an offscreen <video> purely as a picture source: the answer AUDIO
-// still arrives separately as decoded PCM16 on the same socket, so the whole
-// turn-taking/barge-in/mute chain stays exactly where it already works. The
-// <video> is then painted onto the same canvas that already feeds the outgoing
-// ACS video tile, so the face replaces the placard without touching transport.
-const FMP4_MIME_CODEC = 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"';
-let avatarLiveVideo = false;      // server says the live stream is enabled
-let avatarVideoEl = null;         // offscreen <video> fed by MediaSource
-let avatarMediaSource = null;
-let avatarSourceBuffer = null;
-let avatarChunkQueue = [];
-let avatarHasPicture = false;     // first decoded frame seen -> safe to paint
-let avatarLastDrawMs = 0;         // last time the video actually advanced
+// ───────── live avatar face + voice (WebRTC) ─────────
+// The avatar arrives here exactly as it does in the web app: Voice Live
+// negotiates a peer connection and delivers the rendered face and the answer
+// audio as two tracks on it, muxed and clocked by the transport.
+//
+// This replaced a design where the server relayed a fragmented-MP4 stream and
+// this file rebuilt A/V sync by hand — MediaSource for the picture, a scheduling
+// cursor with a tunable lead for the voice, plus a drift guard and a silence
+// shaver to stop the two ratcheting apart. Every lip-sync complaint traced to
+// that reconstruction, and none of it exists any more: the voice is wired
+// straight into the outgoing call audio, and the picture is painted off a
+// <video> the transport is driving. Fix something on the web app's avatar path
+// now and this channel inherits it, because it IS the same path.
+//
+// The outgoing tile is still a canvas we composite, because a meeting has no
+// screen for the "thinking" cue or the wake-phrase hint — those overlays ride on
+// top of the face. Compositing costs a frame or two of CONSTANT delay; unlike a
+// scheduling cursor it has nothing that can accumulate, so it cannot drift.
 
-function setupAvatarVideo() {
-    if (avatarVideoEl) return;
-    if (!("MediaSource" in window) || !MediaSource.isTypeSupported(FMP4_MIME_CODEC)) {
-        console.warn("[acs-join] fMP4 MediaSource unsupported — keeping placard");
-        return;
+// Video has several ways to fail silently (startVideo rejecting, ICE never
+// connecting, an SDP answer that will not apply) and every one of them used to
+// land in console.warn — invisible to the operator running the joiner and
+// invisible in the container logs. A face that never appears then looks identical
+// to a face that was never enabled. Report the state to BOTH the on-page log and
+// the backend so it is diagnosable without a browser console.
+let videoState = "off";
+const pendingVideoReports = [];
+function flushVideoReports() {
+    if (!mediaWs || mediaWs.readyState !== WebSocket.OPEN) return;
+    while (pendingVideoReports.length) {
+        try { mediaWs.send(JSON.stringify(pendingVideoReports.shift())); }
+        catch (_) { return; }
     }
-    const v = document.createElement("video");
-    v.autoplay = true;
-    v.playsInline = true;
-    // Muted is essential: the answer audio reaches the call through the PCM path.
-    // Letting this element play would double the voice and break the echo gate.
-    v.muted = true;
-    v.volume = 0;
-    v.addEventListener("canplay", () => v.play().catch(() => {}));
-    v.addEventListener("loadeddata", () => { avatarHasPicture = true; });
-
-    avatarMediaSource = new MediaSource();
-    v.src = URL.createObjectURL(avatarMediaSource);
-    avatarMediaSource.addEventListener("sourceopen", () => {
-        try {
-            if (avatarMediaSource.readyState !== "open") return;
-            avatarSourceBuffer = avatarMediaSource.addSourceBuffer(FMP4_MIME_CODEC);
-            avatarSourceBuffer.addEventListener("updateend", drainAvatarQueue);
-            drainAvatarQueue();
-        } catch (e) {
-            console.error("[acs-join] addSourceBuffer failed", e);
-        }
+}
+function reportVideo(state, detail) {
+    videoState = state;
+    const line = detail ? `${state}: ${detail}` : state;
+    console.log(`[acs-join] video ${line}`);
+    if (state === "failed" || state === "unsupported") log(`Avatar video ${line}`);
+    // openMediaSocket() runs first (inside startBrowserMedia, awaited just before
+    // startPlacardVideo), so the socket normally exists by the time the first video
+    // report fires — but it is still CONNECTING, and send() on a CONNECTING socket
+    // throws. Queue rather than drop: the error detail is the whole point, and
+    // capture_stats only carries the bare state.
+    pendingVideoReports.push({
+        type: "video_status", state, detail: detail ? String(detail) : "",
     });
-    avatarVideoEl = v;
+    flushVideoReports();
 }
 
-function handleAvatarChunk(base64Data) {
-    if (!base64Data) return;
-    if (!avatarVideoEl) setupAvatarVideo();
-    if (!avatarVideoEl) return;
-    try {
-        const bin = atob(base64Data);
-        const bytes = new Uint8Array(bin.length);
-        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-        avatarChunkQueue.push(bytes.buffer);
-        drainAvatarQueue();
-    } catch (e) {
-        console.error("[acs-join] bad avatar chunk", e);
-    }
-}
+let avatarLiveVideo = false;        // server says the live avatar stream is enabled
+let avatarPc = null;                // RTCPeerConnection carrying the avatar's media
+let avatarVideoEl = null;           // offscreen <video> fed by the WebRTC video track
+let avatarPrimeEl = null;           // muted <audio> keeping the voice track flowing
+let avatarPumpTrack = null;         // cloned video track feeding the frame pump
+let avatarVoiceSource = null;       // her voice, wired into the outgoing call audio
+let avatarAnalyser = null;          // level meter driving "she is speaking"
+let avatarLevelBuf = null;
+let avatarLastAudibleMs = 0;        // last moment her voice carried real energy
+let avatarHasPicture = false;       // first frame decoded -> safe to paint
+let avatarLastDrawMs = 0;           // last time the picture actually advanced
+// Track ids belonging to the avatar. installSrcObjectHook() intercepts EVERY
+// srcObject assignment on the page, so without this her own voice would be wired
+// into the room tap and posted back to Voice Live as a question — she would
+// interrupt herself on every single answer.
+const avatarOwnTracks = new Set();
 
-function drainAvatarQueue() {
-    const sb = avatarSourceBuffer;
-    if (!sb || sb.updating) return;
-    if (!avatarMediaSource || avatarMediaSource.readyState !== "open") return;
-    const next = avatarChunkQueue.shift();
-    if (!next) return;
+// ── ICE, ported from app.js ──
+// Read an ICE candidate's type ("host" / "srflx" / "relay"). Chromium exposes
+// `.type` directly; parse the SDP candidate line as a fallback.
+function iceCandidateType(candidate) {
+    if (!candidate) return null;
+    if (candidate.type) return candidate.type;
+    const parts = String(candidate.candidate || "").split(" ");
+    const i = parts.indexOf("typ");
+    return i >= 0 ? (parts[i + 1] || null) : null;
+}
+// A "host" candidate is a private LAN address and can never reach the Azure
+// avatar service; only srflx (NAT-reflexive) or relay (TURN) can. An offer
+// carrying nothing but a host candidate fails exactly like an empty one, so the
+// question is not "do we have a candidate?" but "do we have a reachable one?".
+function isConnectableCandidate(candidate) {
+    const t = iceCandidateType(candidate);
+    return t === "srflx" || t === "relay";
+}
+// Keep gathering briefly after the first relay candidate so its siblings land in
+// the same offer. This app does NOT trickle ICE — the offer must carry every
+// candidate it will ever have — so whatever is in it is all there will ever be.
+const ICE_RELAY_SETTLE_MS = 250;
+const ICE_GATHER_TIMEOUT_MS = 1500;
+const ICE_GATHER_MAX_WAIT_MS = 8000;
+
+// Voice Live sends its ICE servers once the session is configured; that is the
+// signal to negotiate. Built from scratch each time — app.js keeps a prewarmed
+// peer connection to shave startup off a user-facing page load, which buys
+// nothing here: the joiner negotiates once, unattended, while the operator is
+// still pasting a meeting link.
+function setupAvatarWebRTC(iceServers) {
+    if (avatarPc || !avatarLiveVideo) return;
+    reportVideo("connecting", `${(iceServers || []).length} ICE server(s)`);
     try {
-        sb.appendBuffer(next);
-    } catch (e) {
-        // QuotaExceeded: drop what we've already played and retry once. The tile
-        // is live video — old buffered media has no value.
-        console.warn("[acs-join] appendBuffer failed", e);
-        try {
-            const v = avatarVideoEl;
-            if (sb.buffered.length && v) {
-                const end = Math.max(0, v.currentTime - 1);
-                if (end > sb.buffered.start(0)) sb.remove(sb.buffered.start(0), end);
+        const iceConfig = (iceServers || []).map((s) => ({
+            urls: s.urls,
+            username: s.username || undefined,
+            credential: s.credential || undefined,
+        }));
+        const pc = new RTCPeerConnection({ iceServers: iceConfig, iceCandidatePoolSize: 4 });
+        avatarPc = pc;
+        pc.ontrack = (event) => attachAvatarWebRtcTrack(event);
+        pc.oniceconnectionstatechange = () => {
+            if (pc !== avatarPc) return;
+            const st = pc.iceConnectionState;
+            if (st === "failed" || st === "disconnected") reportVideo("failed", `ICE ${st}`);
+        };
+
+        let offerSent = false;
+        let relaySettleTimer = null;
+        let connectableCount = 0;
+        let awaitingUsable = false;
+        const sendOfferOnce = (reason) => {
+            if (offerSent) return;
+            offerSent = true;
+            clearTimeout(relaySettleTimer);
+            if (!mediaWs || mediaWs.readyState !== WebSocket.OPEN) {
+                reportVideo("failed", "media socket closed before the SDP offer");
+                return;
             }
-        } catch (_) { /* best effort */ }
+            // Base64-encoded JSON in both directions — the shape Voice Live expects.
+            const sdpBase64 = btoa(JSON.stringify(pc.localDescription));
+            mediaWs.send(JSON.stringify({ type: "avatar_sdp_offer", clientSdp: sdpBase64 }));
+            console.log(`[acs-join] avatar SDP offer sent (${reason})`);
+        };
+
+        pc.onicecandidate = (event) => {
+            if (!event.candidate) { sendOfferOnce("gathering complete"); return; }
+            if (isConnectableCandidate(event.candidate)) connectableCount += 1;
+            // Degraded path: the backstop already passed with nothing reachable, so
+            // take the first connectable candidate of either kind rather than
+            // holding out for a relay that may never come.
+            if (awaitingUsable) {
+                if (connectableCount > 0 && !relaySettleTimer) {
+                    relaySettleTimer = setTimeout(
+                        () => sendOfferOnce("usable candidate after timeout"), ICE_RELAY_SETTLE_MS);
+                }
+                return;
+            }
+            if (iceCandidateType(event.candidate) === "relay" && !relaySettleTimer) {
+                relaySettleTimer = setTimeout(
+                    () => sendOfferOnce("relay candidate ready"), ICE_RELAY_SETTLE_MS);
+            }
+        };
+
+        pc.addTransceiver("video", { direction: "sendrecv" });
+        pc.addTransceiver("audio", { direction: "sendrecv" });
+        pc.addEventListener("datachannel", (event) => {
+            event.channel.onmessage = (e) => handleAvatarDataChannelMessage(e.data);
+        });
+        pc.createDataChannel("eventChannel");
+
+        pc.createOffer()
+            .then((offer) => pc.setLocalDescription(offer))
+            .then(() => {
+                // Backstop only — sendOfferOnce above should normally have fired
+                // on a relay candidate long before this.
+                setTimeout(() => {
+                    if (offerSent) return;
+                    if (connectableCount > 0) { sendOfferOnce("gathering timed out"); return; }
+                    // Nothing reachable gathered yet. Without trickle, an offer now
+                    // could never connect, so wait for a usable candidate instead
+                    // of shipping a guaranteed-dead session.
+                    awaitingUsable = true;
+                    setTimeout(() => sendOfferOnce("no usable candidates"),
+                        ICE_GATHER_MAX_WAIT_MS - ICE_GATHER_TIMEOUT_MS);
+                }, ICE_GATHER_TIMEOUT_MS);
+            })
+            .catch((err) => reportVideo("failed", `offer: ${(err && err.message) || err}`));
+    } catch (e) {
+        reportVideo("failed", `setup: ${(e && e.message) || e}`);
     }
 }
 
-// Barge-in: audio is flushed server-side, so jump the picture to the live edge
-// instead of leaving the mouth moving through speech nobody will hear.
-function skipAvatarToLiveEdge() {
-    const v = avatarVideoEl;
-    const sb = avatarSourceBuffer;
-    if (!v || !sb) return;
+function handleAvatarSdpAnswer(serverSdpBase64) {
+    if (!avatarPc || !serverSdpBase64) return;
     try {
-        if (sb.buffered.length) {
-            const end = sb.buffered.end(sb.buffered.length - 1);
-            if (end - v.currentTime > 0.15) v.currentTime = end - 0.05;
+        // Base64-encoded JSON: {"type":"answer","sdp":"..."}
+        const answer = JSON.parse(atob(serverSdpBase64));
+        avatarPc.setRemoteDescription(new RTCSessionDescription(answer))
+            .then(() => console.log("[acs-join] avatar remote SDP set"))
+            .catch((err) => reportVideo("failed", `sdp answer: ${(err && err.message) || err}`));
+    } catch (e) {
+        reportVideo("failed", `sdp parse: ${(e && e.message) || e}`);
+    }
+}
+
+// One track off the avatar's peer connection: video becomes the tile's picture
+// source, audio becomes the call's outgoing voice.
+function attachAvatarWebRtcTrack(event) {
+    try {
+        const track = event.track;
+        if (!track) return;
+        // Register BEFORE any srcObject assignment below, or our own hook wires
+        // her voice into the room tap.
+        avatarOwnTracks.add(track.id);
+        // Each element gets its OWN track, never event.streams[0]. Handing a
+        // <video> a stream that also carries audio makes it "autoplay with sound",
+        // which browsers refuse on a first visit — the avatar then never starts
+        // and nothing reports why.
+        const stream = new MediaStream([track]);
+
+        if (track.kind === "video") {
+            const v = document.createElement("video");
+            v.autoplay = true;
+            v.playsInline = true;
+            // Muted, and video-only: the voice rides the separate audio track, and
+            // a muted element is the one thing every autoplay policy allows
+            // unconditionally. An element that will not start produces no frames,
+            // and a tile with no frames looks identical to a failed join.
+            v.muted = true;
+            v.srcObject = stream;
+            v.addEventListener("loadeddata", () => { avatarHasPicture = true; });
+            v.addEventListener("playing", () => {
+                if (avatarVideoEl !== v) return;
+                avatarHasPicture = true;
+                reportVideo("face-live", `${v.videoWidth}x${v.videoHeight}`);
+                startAvatarFramePump(track, v);
+            });
+            v.addEventListener("error", () => {
+                const err = v.error;
+                reportVideo("failed", `video element: code=${err ? err.code : "?"}`);
+            });
+            avatarVideoEl = v;
+            v.play().catch((err) => reportVideo("failed", `play: ${(err && err.name) || err}`));
+            return;
         }
-    } catch (_) { /* seeking a live buffer can throw; harmless */ }
+
+        if (track.kind !== "audio") return;
+        if (!audioCtx || !outboundDest) {
+            reportVideo("failed", "avatar voice arrived before the audio graph existed");
+            return;
+        }
+        // Chrome only pulls samples from a REMOTE WebRTC stream through Web Audio
+        // while an HTMLMediaElement is also consuming it — the same constraint the
+        // room tap hits. Prime with a MUTED element: her voice must not leave this
+        // laptop's speakers, or the microphone would capture it and feed it back.
+        const prime = new Audio();
+        prime.muted = true;
+        prime.srcObject = stream;
+        prime.play().catch(() => { /* autoplay may defer; the track is still primed */ });
+        avatarPrimeEl = prime;
+
+        const src = audioCtx.createMediaStreamSource(stream);
+        avatarVoiceSource = src;
+        // Straight into the call's outgoing audio. No queue, no cursor, no lead:
+        // what the transport delivers is what the room hears, when it arrives.
+        src.connect(outboundDest);
+        // Tapped for level only. Deliberately NOT connected to audioCtx.destination
+        // — that would play her out of the operator's speakers.
+        avatarAnalyser = audioCtx.createAnalyser();
+        avatarAnalyser.fftSize = 512;
+        avatarAnalyser.smoothingTimeConstant = 0.3;
+        avatarLevelBuf = new Uint8Array(avatarAnalyser.fftSize);
+        src.connect(avatarAnalyser);
+        console.log("[acs-join] avatar voice wired to the outgoing call audio");
+    } catch (e) {
+        reportVideo("failed", `track: ${(e && e.message) || e}`);
+    }
+}
+
+// The avatar service brackets each spoken turn on the data channel. Used only as
+// a decaying hint that she has started — never as a latch. A latch that misses
+// its closing event wedges the capture gate shut for the rest of the call, which
+// is the failure app.js warns about and this file has already lived through once.
+function handleAvatarDataChannelMessage(data) {
+    if (typeof data !== "string") return;
+    if (data.indexOf("EVENT_TYPE_SWITCH_TO_SPEAKING") !== -1) {
+        avatarLastAudibleMs = performance.now();
+    }
+}
+
+// "Is she speaking right now?" — replaces the peak detector that used to live in
+// playPcmChunk. In avatar mode there are no PCM chunks, so the level is measured
+// off the WebRTC audio track itself, which is exactly what the room hears.
+//
+// Sampled from onCaptureFrame (the capture worklet's ~25Hz callback), NOT from
+// requestAnimationFrame. app.js can use rAF because its tab is the one you are
+// looking at; this tab sits behind the Teams window, where rAF stops entirely —
+// and a gate driven by a clock that stops is a gate that never reopens.
+const AVATAR_SPEAK_RMS = 0.01;
+const AVATAR_SPEAK_HANGOVER_MS = 400;
+function sampleAvatarSpeaking() {
+    if (!avatarAnalyser || !avatarLevelBuf || !audioCtx) return;
+    avatarAnalyser.getByteTimeDomainData(avatarLevelBuf);
+    let sumSq = 0;
+    for (let i = 0; i < avatarLevelBuf.length; i++) {
+        const s = (avatarLevelBuf[i] - 128) / 128;
+        sumSq += s * s;
+    }
+    const rms = Math.sqrt(sumSq / avatarLevelBuf.length);
+    const now = performance.now();
+    if (rms > AVATAR_SPEAK_RMS) avatarLastAudibleMs = now;
+    // Expressed in the currency applyCaptureGates() already reads, so the gate
+    // logic itself is untouched. It only ever moves forward while real energy is
+    // present, so it drains on its own — it cannot stick shut.
+    if (now - avatarLastAudibleMs < AVATAR_SPEAK_HANGOVER_MS) {
+        captureMutedUntil = audioCtx.currentTime + (AVATAR_SPEAK_HANGOVER_MS / 1000);
+    }
+}
+
+// Repaint the tile in step with decoded frames rather than resampling the stream
+// on a timer: the avatar renders at ~25fps, and a 15fps timer landing between
+// source frames showed some twice and skipped others — that uneven cadence is
+// what read as jerky, "robotic" motion.
+//
+// Prefer MediaStreamTrackProcessor, which reads decoded frames straight off the
+// media pipeline. requestVideoFrameCallback stops dead the moment the tab is
+// hidden (measured in-meeting: vFps 25 -> 0), and this tab normally sits behind
+// the Teams window, so that is the common case rather than an edge case. The
+// track is CLONED first so the processor is a second, independent sink and
+// cannot starve the <video> the canvas paints from.
+function startAvatarFramePump(track, v) {
+    const paint = () => {
+        rvfcCount += 1;
+        if (placardDraw) { try { placardDraw(); } catch (_) { /* never break the pump */ } }
+    };
+    let gotFrames = false;
+    try {
+        if (typeof window.MediaStreamTrackProcessor === "function") {
+            const clone = track.clone();
+            avatarPumpTrack = clone;
+            const reader = new window.MediaStreamTrackProcessor({ track: clone })
+                .readable.getReader();
+            framePumpVia = "frames";
+            (async () => {
+                for (;;) {
+                    const { value, done } = await reader.read();
+                    if (done) break;
+                    try { value.close(); } catch (_) {}
+                    if (avatarVideoEl !== v) break;
+                    gotFrames = true;
+                    paint();
+                }
+                try { reader.cancel(); } catch (_) {}
+            })();
+            // Don't trust it blindly: if nothing arrives, fall back rather than
+            // leaving the tile with no clock at all.
+            setTimeout(() => {
+                if (!gotFrames && avatarVideoEl === v) {
+                    reportVideo("pump-fallback", "no frames from MediaStreamTrackProcessor");
+                    startRvfcPump(v, paint);
+                }
+            }, 2500);
+            return;
+        }
+    } catch (e) {
+        reportVideo("pump-fallback", `trackprocessor: ${(e && e.message) || e}`);
+    }
+    startRvfcPump(v, paint);
+}
+
+function startRvfcPump(v, paint) {
+    if (typeof v.requestVideoFrameCallback !== "function") return;
+    framePumpVia = framePumpVia === "frames" ? "frames+rvfc" : "rvfc";
+    const step = () => {
+        if (avatarVideoEl !== v) return; // torn down — let the loop die
+        paint();
+        try { v.requestVideoFrameCallback(step); } catch (_) {}
+    };
+    try { v.requestVideoFrameCallback(step); } catch (_) {}
 }
 
 function teardownAvatarVideo() {
-    try { if (avatarVideoEl) { avatarVideoEl.pause(); avatarVideoEl.src = ""; } } catch (_) {}
+    try { if (avatarPc) avatarPc.close(); } catch (_) {}
+    avatarPc = null;
+    try { if (avatarVideoEl) { avatarVideoEl.pause(); avatarVideoEl.srcObject = null; } } catch (_) {}
     avatarVideoEl = null;
-    avatarMediaSource = null;
-    avatarSourceBuffer = null;
-    avatarChunkQueue = [];
+    try { if (avatarPrimeEl) { avatarPrimeEl.pause(); avatarPrimeEl.srcObject = null; } } catch (_) {}
+    avatarPrimeEl = null;
+    try { if (avatarPumpTrack) avatarPumpTrack.stop(); } catch (_) {}
+    avatarPumpTrack = null;
+    try { if (avatarVoiceSource) avatarVoiceSource.disconnect(); } catch (_) {}
+    avatarVoiceSource = null;
+    avatarAnalyser = null;
+    avatarLevelBuf = null;
+    avatarOwnTracks.clear();
     avatarHasPicture = false;
     avatarLastDrawMs = 0;
+    avatarLastAudibleMs = 0;
+    framePumpVia = "none";
+    videoState = "off";
 }
 
 // Paint the current avatar frame onto the tile canvas. Returns false when there
 // is nothing live to show, so the caller falls back to the branded placard.
 //
-// "Live" means the <video> has a picture AND its clock is still advancing: when a
-// turn ends the stream simply stops, and a frozen face staring at the room looks
-// broken. After AVATAR_IDLE_MS with no advance we fall back to the placard, which
-// doubles as the "listening" state.
+// "Live" means the <video> has a picture AND its clock is still advancing. On the
+// WebRTC transport the track is continuous, so between turns she simply sits there
+// idle and this stays true — which is what the web app shows too, and is right for
+// a meeting. The idle check therefore only fires on a genuinely dead track (peer
+// connection lost, sender stopped), where a frozen face staring at the room would
+// look broken. Kept as that safety net, not as the between-turns behaviour.
 const AVATAR_IDLE_MS = 900;
 let _avatarLastTime = -1;
 function drawAvatarFrame(ctx, canvas) {
@@ -484,7 +1257,7 @@ function drawAvatarFrame(ctx, canvas) {
         _avatarLastTime = v.currentTime;
         avatarLastDrawMs = now;
     } else if (now - avatarLastDrawMs > AVATAR_IDLE_MS) {
-        return false; // stream idle between turns -> show the placard
+        return false; // track is dead, not idle -> show the placard
     }
 
     // Contain-fit: show the WHOLE frame. The avatar renders SQUARE (512x512); the
@@ -500,13 +1273,19 @@ function drawAvatarFrame(ctx, canvas) {
 }
 
 // ───────── outgoing video tile (avatar face) ─────────
-// Render a branded placard (logo + avatar name + a "listening" pulse) to a canvas
-// and send it as the call's outgoing video, so the avatar is a visible participant
-// tile instead of a faceless audio leg. We use the ACS Calling SDK's raw-video
-// LocalVideoStream (its constructor accepts a MediaStream), which is the exact
-// transport a live animated-avatar video track will use in the next increment.
-// The animation also guarantees the encoder keeps emitting frames (a static
-// canvas can otherwise stall the WebRTC video sender).
+// Render to a canvas and send it as the call's outgoing video, so the avatar is a
+// visible participant tile instead of a faceless audio leg. Uses the ACS Calling
+// SDK's raw-video LocalVideoStream (its constructor accepts a MediaStream).
+//
+// The canvas is kept rather than handing ACS the WebRTC video track directly,
+// because a meeting has no screen for the "thinking" cue or the wake-phrase hint —
+// those are composited onto the tile here. It costs a frame or two of CONSTANT
+// delay, which (unlike the scheduling cursor it replaced) has nothing that can
+// accumulate, so it cannot drift. The placard is the pre-connection and dead-track
+// state; once the avatar's track is live, drawAvatarFrame() paints her instead.
+//
+// The animation also guarantees the encoder keeps emitting frames (a static canvas
+// can otherwise stall the WebRTC video sender).
 function loadBrandImage() {
     if (placardImg) return placardImg;
     placardImg = new Image();
@@ -538,7 +1317,61 @@ async function startPlacardVideo() {
             if (vt && typeof vt.requestFrame === "function") vt.requestFrame();
         } catch (_) { /* requestFrame not supported — captureStream fps covers it */ }
     }
+    function drawThinking(t) {
+        // Only after a short delay, so quick answers never flash a badge.
+        const label = thinkingCaption();
+        if (!label) return;
+        const maxW = canvas.width * 0.94 - 62;
+        const fit = fitLabel(ctx, label, "500", 20, 13, maxW);
+        const w = fit.width + 62;
+        const x = (canvas.width - w) / 2;
+        // Keep the badge inside the 16:9 centre crop. The tile canvas is 4:3 and
+        // Teams crops to its own aspect, lopping off roughly the top and bottom
+        // eighth — a badge pinned near canvas.height was simply never on screen.
+        const y = Math.round(canvas.height * 0.72);
+        ctx.textAlign = "left";
+        ctx.fillStyle = "rgba(11,16,32,.78)";
+        if (ctx.roundRect) {
+            ctx.beginPath(); ctx.roundRect(x, y, w, 34, 17); ctx.fill();
+        } else {
+            ctx.fillRect(x, y, w, 34);
+        }
+        // Three dots cycling, so it reads as activity rather than a frozen tile.
+        for (let i = 0; i < 3; i++) {
+            const on = Math.floor(t * 3) % 3 === i;
+            ctx.beginPath();
+            ctx.fillStyle = on ? "#f59e0b" : "rgba(255,255,255,.35)";
+            ctx.arc(x + 20 + i * 12, y + 17, on ? 4.5 : 3.5, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        ctx.fillStyle = "rgba(255,255,255,.92)";
+        ctx.fillText(label, x + 52, y + 17 + fit.px * 0.35);
+    }
+    function drawHint() {
+        if (!hintUntil || performance.now() > hintUntil) return;
+        // Never stack on the thinking badge — they share the safe band, and if
+        // she is answering the nudge is already moot.
+        if (thinkingSince) return;
+        ctx.font = "500 19px -apple-system, 'Segoe UI', system-ui, sans-serif";
+        const w = ctx.measureText(hintText).width + 34;
+        const x = (canvas.width - w) / 2;
+        const y = Math.round(canvas.height * 0.72);
+        // Fade the last 600ms so it retreats rather than blinking out.
+        const left = hintUntil - performance.now();
+        const a = Math.min(1, left / 600);
+        ctx.textAlign = "left";
+        ctx.fillStyle = `rgba(11,16,32,${0.78 * a})`;
+        if (ctx.roundRect) {
+            ctx.beginPath(); ctx.roundRect(x, y, w, 34, 17); ctx.fill();
+        } else {
+            ctx.fillRect(x, y, w, 34);
+        }
+        ctx.fillStyle = `rgba(255,255,255,${0.92 * a})`;
+        ctx.fillText(hintText, x + 17, y + 23);
+    }
     function draw() {
+        drawCount += 1;
+        lastDrawMs = performance.now();
         const t = (performance.now() - t0) / 1000;
         ctx.fillStyle = "#0b1020";
         ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -547,6 +1380,8 @@ async function startPlacardVideo() {
         // cover the height and centre-crop horizontally rather than letterboxing
         // a small face into a wide black box.
         if (drawAvatarFrame(ctx, canvas)) {
+            drawThinking(t);
+            drawHint();
             keepFrameAlive();
             return;
         }
@@ -563,27 +1398,61 @@ async function startPlacardVideo() {
         ctx.fillStyle = "#ffffff";
         ctx.font = "600 34px -apple-system, 'Segoe UI', system-ui, sans-serif";
         ctx.fillText(name, canvas.width / 2, H * 0.79);
-        // "listening" status with a gentle pulse (and frame keep-alive).
-        const r = 6 + 2 * Math.sin(t * 3);
+        // Status line (and frame keep-alive). The placard has no face to sit
+        // under, so the caption rides here rather than in a separate badge —
+        // stacking the two in the same safe band would collide with the name.
+        // Dot and text are centred as a group so a long caption stays put.
+        const caption = thinkingCaption();
+        const thinking = !!caption;
+        const label = thinking ? caption : "listening";
+        const fit = fitLabel(ctx, label, "400", 18, 12, canvas.width * 0.9 - 24);
+        const left = (canvas.width - (24 + fit.width)) / 2;
+        const r = 6 + 2 * Math.sin(t * (thinking ? 6 : 3));
         ctx.beginPath();
-        ctx.fillStyle = "#22c55e";
-        ctx.arc(canvas.width / 2 - 64, H * 0.883, r, 0, Math.PI * 2);
+        ctx.fillStyle = thinking ? "#f59e0b" : "#22c55e";
+        ctx.arc(left + 8, H * 0.823, r, 0, Math.PI * 2);
         ctx.fill();
         ctx.fillStyle = "rgba(255,255,255,.75)";
-        ctx.font = "400 18px -apple-system, 'Segoe UI', system-ui, sans-serif";
         ctx.textAlign = "left";
-        ctx.fillText("listening", canvas.width / 2 - 48, H * 0.9);
+        ctx.fillText(label, left + 24, H * 0.84);
+        drawHint();
         keepFrameAlive();
     }
     // setInterval (unlike requestAnimationFrame) keeps firing in a backgrounded tab
     // (throttled to ~1s, which is still enough to keep the encoder alive and the
     // logo/name visible) instead of freezing to a blank tile.
-    placardStream = canvas.captureStream(15);
+    placardStream = canvas.captureStream(30);
     localVideoStream = new _LocalVideoStreamCtor(placardStream);
-    placardTimerId = setInterval(draw, 66);
+    placardDraw = draw;
+    // 30fps keep-alive. When the avatar is live, requestVideoFrameCallback drives
+    // the repaints and this merely guarantees frames keep flowing (placard state,
+    // backgrounded tab) instead of the tile freezing.
+    placardTimerId = setInterval(draw, 33);
     draw();
     await call.startVideo(localVideoStream);
-    console.log("[acs-join] placard video started");
+    reportVideo("tile-on", `${canvas.width}x${canvas.height}`);
+    watchTabVisibility();
+}
+
+let _visWatch = false;
+function watchTabVisibility() {
+    if (_visWatch) return;
+    _visWatch = true;
+    document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible") return;
+        // Measured: hidden drops the tile from 55fps to ~6fps and stops
+        // requestVideoFrameCallback outright. Say so, because from the meeting side
+        // it just looks like the avatar broke.
+        log("Tab hidden — keep this tab visible, or the avatar's video degrades.");
+    });
+    // Re-check the served build so a tab left open across a deploy announces
+    // itself instead of quietly reporting telemetry for code that is no longer live.
+    setInterval(async () => {
+        try {
+            const r = await fetch("/api/acs/config", { cache: "no-store" });
+            noteBuildId((await r.json()).buildId);
+        } catch (_) { /* transient — try again next tick */ }
+    }, 60000);
 }
 
 function teardownPlacardVideo() {
@@ -591,6 +1460,7 @@ function teardownPlacardVideo() {
         try { clearInterval(placardTimerId); } catch (_) {}
         placardTimerId = null;
     }
+    placardDraw = null;
     const lvs = localVideoStream;
     localVideoStream = null;
     if (call && lvs && typeof call.stopVideo === "function") {
@@ -603,8 +1473,11 @@ function teardownPlacardVideo() {
 function teardownMedia() {
     teardownPlacardVideo();
     teardownAvatarVideo();
+    if (remoteScanTimer) { clearInterval(remoteScanTimer); remoteScanTimer = null; }
     try { if (mediaWs) mediaWs.close(); } catch (_) {}
     try { if (captureNode) captureNode.disconnect(); } catch (_) {}
+    try { if (micGate) micGate.disconnect(); } catch (_) {}
+    try { if (roomGate) roomGate.disconnect(); } catch (_) {}
     try { if (captureSink) captureSink.disconnect(); } catch (_) {}
     try { if (micStream) micStream.getTracks().forEach((t) => t.stop()); } catch (_) {}
     try { if (displaySource) displaySource.disconnect(); } catch (_) {}
@@ -615,25 +1488,38 @@ function teardownMedia() {
     }
     primingAudioEls.length = 0;
     mediaWs = null; captureNode = null; captureSink = null; audioCtx = null; micStream = null;
+    micGate = null; roomGate = null; captureVia = "none";
     displayStream = null; displaySource = null;
     outboundDest = null; outboundLocalStream = null;
     wiredRemoteTracks.clear(); scheduledSources = []; playCursor = 0;
-    // Reset the half-duplex mute clock. teardownMedia() closes the audioCtx, so the
+    // These outlived the audioCtx before: stale analysers from a closed context
+    // stay readable and keep inflating remoteMeters while always reporting 0,
+    // which would make the remote-audio diagnostic lie after a rejoin.
+    remoteTracks.length = 0;
+    remoteWiredVia.clear();
+    pendingRemoteStreams.length = 0;
+    remoteMaxRms = 0;
+    // Reset the "she is speaking" clock. teardownMedia() closes the audioCtx, so the
     // next join() creates a fresh context whose clock restarts near 0. If we leave a
     // stale (large) captureMutedUntil from the previous context here, the new context's
-    // currentTime stays below it for a very long time and selfTalking gets wedged True
-    // — silently dropping the mic so the avatar never hears questions after a rejoin.
+    // currentTime stays below it for a very long time and the capture gates stay shut
+    // — silently dropping audio so the avatar never hears questions after a rejoin.
     captureMutedUntil = 0;
 }
 
-// Far-side audio (hear remote participants). The ACS/WebRTC client only exposes
-// THIS device's mic — Teams isolates per-client audio by design, so we cannot tap
-// other participants' streams from the browser. The supported production path is a
-// server-side Teams meeting bot (Graph + Real-Time Media), which needs Graph
-// permissions + tenant admin consent. As a no-admin workaround, capture the Teams
-// app's *output* audio at the OS level via getDisplayMedia (the user shares the
-// Teams window/tab WITH audio) and mix it into the same capture node as the mic.
-// Must be triggered by a user gesture.
+// Far-side audio (hear remote participants), FALLBACK path.
+//
+// This is no longer the primary way to hear the room: installSrcObjectHook() taps
+// the remote streams the SDK hands to its own <audio> elements, which is verified
+// live (micCapture=False with a non-zero remoteMaxRms and a correct transcript).
+// Note what the old comment here got wrong — the SDK's getMediaStreamTrack()
+// returning nothing is a fact about ONE METHOD, not evidence that the browser
+// cannot receive other participants' audio. It plainly does; that is how the call
+// is audible.
+//
+// Keep this as the fallback for when the hook does not engage (an SDK that renders
+// audio some other way). The user shares the Teams window/tab WITH audio and we mix
+// its output into the room gate. Must be triggered by a user gesture.
 async function startFarSideCapture() {
     if (!audioCtx) { log("Join the meeting first, then capture far-side audio."); return; }
     try {
@@ -648,11 +1534,12 @@ async function startFarSideCapture() {
         stream.getVideoTracks().forEach((t) => t.stop());
         displayStream = stream;
         ensureCaptureNode();
-        // Route the shared (far-side) audio into the same capture node as the mic;
-        // the half-duplex + human-mute gates already apply to the mixed signal.
+        // Shared (far-side) audio is a room tap like the SDK's own: unprocessed,
+        // and it carries whatever the Teams window is playing — including her.
+        // So it rides the room gate, not the mic gate.
         const audioOnly = new MediaStream(audioTracks);
         displaySource = audioCtx.createMediaStreamSource(audioOnly);
-        displaySource.connect(captureNode);
+        displaySource.connect(roomGate);
         // If the user stops sharing via the browser bar, clean up.
         audioTracks[0].addEventListener("ended", () => {
             try { if (displaySource) displaySource.disconnect(); } catch (_) {}
@@ -733,6 +1620,7 @@ async function ensureEnabled() {
     avatarVideoEnabled = !!cfg.avatarVideoEnabled;
     avatarLiveVideo = !!cfg.avatarLiveVideo;
     if (avatarLiveVideo) console.log("[acs-join] live avatar video enabled");
+    noteBuildId(cfg.buildId);
     return true;
 }
 
@@ -791,10 +1679,10 @@ async function join() {
         return;
     }
     joinBtn.disabled = true;
-    // Defensive: clear any stale half-duplex mute / playback cursor from a prior
+    // Defensive: clear any stale room-tap mute / playback cursor from a prior
     // session so a fresh join always starts listening (a new audioCtx restarts the
-    // clock near 0, and a leftover captureMutedUntil would otherwise wedge the mic).
-    captureMutedUntil = 0; playCursor = 0;
+    // clock near 0, and a leftover captureMutedUntil would otherwise wedge the tap).
+    captureMutedUntil = 0; playCursor = 0; avatarLastAudibleMs = 0;
 
     try {
         // Ensure the branding name (AVATAR_DISPLAY_NAME) has loaded before we
@@ -821,11 +1709,28 @@ async function join() {
 
         // Initialise the device manager (some SDK builds require it before join).
         // Mic permission is best-effort only — we send synthesized audio, not mic.
+        //
+        // VIDEO permission matters even though the outgoing tile is a canvas
+        // MediaStream that never touches a camera: the SDK gates startVideo() on
+        // the browser's video permission state regardless of the stream's origin
+        // (its own failure text is "Failed to start video ... ensure to allow
+        // video permissions"). Asking for audio only, as this did, meant
+        // startVideo() could never succeed and the avatar had no tile at all.
         try {
             const deviceManager = await callClient.getDeviceManager();
-            await deviceManager.askDevicePermission({ audio: true, video: false });
+            const perms = await deviceManager.askDevicePermission({ audio: true, video: true });
+            console.log(`[acs-join] device permissions audio=${perms && perms.audio} video=${perms && perms.video}`);
+            if (perms && perms.video === false) {
+                log("Camera permission was not granted — the avatar's video tile will not appear.");
+            }
         } catch (permErr) {
+            // A machine with no camera can reject the video half outright; the
+            // audio leg must still come up, so fall back rather than abort.
             console.warn("[acs-join] device permission (non-fatal):", permErr);
+            try {
+                const dm = await callClient.getDeviceManager();
+                await dm.askDevicePermission({ audio: true, video: false });
+            } catch (_) { /* best effort */ }
         }
 
         callAgent = await callClient.createCallAgent(credential, {
@@ -871,9 +1776,10 @@ async function join() {
             if (call.state === "Connected") {
                 await startBrowserMedia();
                 if (avatarVideoEnabled) {
-                    // Best-effort: a video failure must never break the audio leg.
+                    // Best-effort: a video failure must never break the audio leg — but it
+                    // must be VISIBLE, or "no face" is indistinguishable from "not enabled".
                     try { await startPlacardVideo(); }
-                    catch (e) { console.warn("[acs-join] placard video failed", e); }
+                    catch (e) { reportVideo("failed", `startVideo: ${e && e.message ? e.message : e}`); }
                 }
             }
             if (call.state === "Disconnected") {
@@ -898,6 +1804,12 @@ async function startBrowserMedia() {
         log(`Connected. Bridging meeting audio to ${avatarDisplayName}…`);
         openMediaSocket();
         startRemoteAudioCapture();
+        // Ask the SDK for the room audio (documented path). Re-scan on a timer so
+        // participants who join after us are picked up; wiring is deduped by track
+        // id, so repeat scans are no-ops.
+        scanRemoteAudioStreams();
+        if (remoteScanTimer) clearInterval(remoteScanTimer);
+        remoteScanTimer = setInterval(scanRemoteAudioStreams, 3000);
         // Stop the SDK from rendering the meeting's incoming audio out the local
         // speaker. We capture it for Voice Live via Web Audio (muted <audio>
         // priming keeps the WebRTC track flowing), so local rendering is pure

@@ -19,9 +19,9 @@ bypass the resampler. Output is forwarded as-is.
 Turn-taking (so she never talks over the room): outbound speech is gated on a
 **wake phrase** appearing in the triggering user utterance (``ACS_REQUIRE_WAKE_
 PHRASE``). When an utterance is not addressed to her, the bridge cancels the
-in-flight Voice Live response and drops its audio. This is a first, tunable slice
-of half-duplex turn-taking; finer barge-in tuning over live room audio is 2b
-follow-up work (the bridge owns this policy so the handler stays generic).
+in-flight Voice Live response and drops its audio. Addressing, not duplex, is the
+policy here — the browser leg leaves its microphone open at all times, so barge-in
+is always available (the bridge owns this policy so the handler stays generic).
 """
 
 from __future__ import annotations
@@ -48,6 +48,31 @@ from ..config import (
 from .avatar_stream import AvatarStreamDecoder
 
 logger = logging.getLogger(__name__)
+
+
+def _fmt_tracks(tracks) -> str:
+    """Render the browser's per-remote-track meters as one compact log token.
+
+    Each entry is ``id/via spk=<peak while she spoke> idl=<peak while she was
+    silent> n=<speak frames>/<idle frames>``. The split is the point: a track with
+    energy only in ``spk`` is our own audio coming back, whereas energy in ``idl``
+    is a human. The frame counts guard against reading a peak of 0 that came from
+    two samples as evidence of a silent track.
+    """
+    if not isinstance(tracks, list) or not tracks:
+        return "none"
+    parts = []
+    for t in tracks:
+        if not isinstance(t, dict):
+            continue
+        lbl = t.get("lbl") or ""
+        parts.append(
+            f"{t.get('id')}/{t.get('via')}"
+            + (f"({lbl})" if lbl else "")
+            + f" spk={t.get('spk')} idl={t.get('idl')}"
+            f" n={t.get('nS')}/{t.get('nI')}"
+        )
+    return "[" + " | ".join(parts) + "]" if parts else "none"
 
 # Per-section Q values for a 6th-order Butterworth response (3 cascaded biquads).
 _BUTTERWORTH_Q6 = (0.51763809, 0.70710678, 1.93185165)
@@ -511,41 +536,23 @@ class BrowserVoiceBridge:
         self._frames_out = 0
         self._closed = False
 
-        # ── Avatar face ──
-        # In avatar/websocket mode Voice Live sends ONE fragmented-MP4 stream
-        # carrying both the rendered face and the answer audio, and stops sending
-        # response.audio.delta entirely. So we do two things with each delta:
+        # ── Avatar face + voice ──
+        # The joiner runs the avatar in WEBRTC mode — the same transport the web
+        # app uses. Face and voice arrive as real media tracks on a peer
+        # connection, muxed and clocked by the transport, so the browser gets
+        # lip-sync for free instead of reconstructing it from a byte stream.
         #
-        #   1. feed it to an AUDIO-ONLY decoder, which recovers the PCM16 and
-        #      pushes it through the existing send_binary path — barge-in, the
-        #      wake-phrase gate and the hard mute all keep working untouched;
-        #   2. forward the raw bytes to the browser, which plays them in a muted
-        #      MediaSource <video> and paints that onto the outgoing video tile.
+        # This bridge therefore relays SDP/ICE and nothing else on the media path:
+        # no fragmented-MP4 decode, no PCM re-injection, no A/V lead to tune. The
+        # earlier websocket mode is still what the .NET media bot uses, because a
+        # dumb media pump has no decoder of its own — see AcsVoiceBridge.
         #
-        # Splitting it this way means the audio leg (the part that already works
-        # in real meetings) is not on the video code path at all: if the face
-        # fails, she still talks.
+        # Consequence worth stating: in avatar mode Voice Live sends no
+        # ``response.audio.delta``, so ``send_binary`` is inert here. It is gated
+        # anyway (below), because a stray PCM frame reaching the joiner would play
+        # ON TOP of the WebRTC track and double her voice in the meeting.
         self._avatar_video = avatar_video
-        self._decoder: Optional[AvatarStreamDecoder] = None
-        self._video_out = 0
-
-    def _ensure_decoder(self) -> AvatarStreamDecoder:
-        if self._decoder is None:
-            self._decoder = AvatarStreamDecoder(
-                width=MEETING_BOT_VIDEO_WIDTH,
-                height=MEETING_BOT_VIDEO_HEIGHT,
-                fps=MEETING_BOT_VIDEO_FPS,
-                audio_rate=_VOICE_LIVE_RATE,
-                on_video=self._drop_video,
-                on_audio=self.send_binary,
-                decode_video=False,  # the browser renders the face itself
-                loop=asyncio.get_running_loop(),
-            )
-        return self._decoder
-
-    async def _drop_video(self, nv12: bytes, width: int, height: int) -> None:
-        """Never called (``decode_video=False``); present to satisfy the decoder."""
-        return
+        self._thinking = False
 
     # ───────── Voice Live -> browser (outbound) ─────────
 
@@ -554,8 +561,14 @@ class BrowserVoiceBridge:
 
         Dropped while the current response is suppressed (utterance not addressed
         to the avatar), which is what keeps her from speaking over the room.
+
+        Also dropped entirely when the avatar is on: her voice then rides the
+        WebRTC audio track, and forwarding PCM as well would make the room hear
+        every answer twice.
         """
         if self._closed or self._suppress_current_response or self._hard_muted:
+            return
+        if self._avatar_video:
             return
         try:
             await self._ws.send_bytes(pcm_bytes)
@@ -567,17 +580,26 @@ class BrowserVoiceBridge:
         """Drive turn-taking and barge-in from Voice Live control events."""
         mtype = msg.get("type")
 
+        if mtype in ("ice_servers", "avatar_sdp_answer"):
+            # WebRTC negotiation for the avatar's own media tracks. Relayed
+            # verbatim: the peer connection lives in the joiner, so the bridge is
+            # only a wire between it and Voice Live.
+            await self._relay(msg)
+            return
+
         if mtype == "video_data":
-            if self._avatar_video and not self._closed:
-                delta = msg.get("delta") or ""
-                if delta:
-                    # Audio first: recovering the PCM is what keeps her audible.
-                    self._ensure_decoder().feed(base64.b64decode(delta))
-                    await self._send_video_delta(delta)
+            # Only reachable in avatar/websocket mode, which the joiner no longer
+            # uses. Ignored rather than decoded: in WebRTC mode the face is a
+            # media track, and there is no MediaSource left to feed.
             return
 
         if mtype == "transcript_done" and msg.get("role") == "user":
             self._on_user_utterance((msg.get("transcript") or "").strip())
+            # She heard it, understood it, and chose not to answer. To a human
+            # that is indistinguishable from a broken microphone, so say so on
+            # the tile — silently, since the whole point is not to interrupt.
+            if ACS_REQUIRE_WAKE_PHRASE and not self._answer_armed:
+                await self._send_hint()
 
         elif mtype == "response_created":
             self._suppress_current_response = not self._answer_armed
@@ -588,8 +610,15 @@ class BrowserVoiceBridge:
                 )
                 if self.handler is not None:
                     await self.handler.interrupt()
+            else:
+                await self._send_thinking(True)
+
+        elif mtype == "transcript_delta" and msg.get("role") == "assistant":
+            # First token of the answer — the wait is over, drop the cue.
+            await self._send_thinking(False)
 
         elif mtype in ("response_done", "audio_done"):
+            await self._send_thinking(False)
             if not self._suppress_current_response:
                 self._last_answer_done_ms = time.monotonic() * 1000.0
             if ACS_REQUIRE_WAKE_PHRASE:
@@ -598,27 +627,57 @@ class BrowserVoiceBridge:
         elif mtype == "stop_playback":
             await self._send_stop_audio()
 
-    async def _send_video_delta(self, delta_b64: str) -> None:
-        """Forward one raw fMP4 chunk to the browser's MediaSource player.
+    async def _send_thinking(self, active: bool) -> None:
+        """Tell the browser to show/hide the "thinking" cue on the video tile.
 
-        Deliberately NOT gated on ``_suppress_current_response``/``_hard_muted``.
-        MediaSource needs a byte-contiguous stream — the ``ftyp``/``moov`` init
-        segment arrives only once per session, and dropping fragments from the
-        middle corrupts everything after them. Silencing is enforced on the audio
-        path instead (that is what the room actually hears); a suppressed response
-        is also interrupted immediately, so barely any video exists for it.
+        The web stage covers the wait for the first token with an on-screen
+        indicator; a meeting has no screen, so the avatar's own tile carries it.
+        Voice Live's built-in interim response is not available here — it needs
+        the model binding, and the in-call session uses the agent binding.
+        """
+        if self._closed or active == self._thinking:
+            return
+        self._thinking = active
+        logger.info(f"[browser {self.client_id}] thinking cue -> {active}")
+        try:
+            await self._ws.send_text(json.dumps({"type": "thinking", "active": active}))
+        except Exception as e:  # noqa: BLE001 — a cue must never kill the call
+            logger.debug(f"[browser {self.client_id}] thinking cue failed: {e}")
+
+    async def _send_hint(self) -> None:
+        """Nudge the room with the wake phrase after an unaddressed utterance.
+
+        Derived from ACS_WAKE_PHRASES[0] rather than hard-coded, so the hint can
+        never drift from the gate that actually decides.
+        """
+        if self._closed:
+            return
+        phrase = (ACS_WAKE_PHRASES[0] if ACS_WAKE_PHRASES else "").strip()
+        if not phrase:
+            return
+        text = f'say "{phrase.title()}" to ask me'
+        logger.info(f"[browser {self.client_id}] wake-phrase hint -> {text!r}")
+        try:
+            await self._ws.send_text(json.dumps({"type": "hint", "text": text}))
+        except Exception as e:  # noqa: BLE001 — a hint must never kill the call
+            logger.debug(f"[browser {self.client_id}] hint failed: {e}")
+
+    async def _relay(self, msg: dict) -> None:
+        """Forward one Voice Live control message to the joiner verbatim.
+
+        Used for the avatar's WebRTC negotiation (``ice_servers``,
+        ``avatar_sdp_answer``). The bridge deliberately does not inspect or
+        rewrite these — the peer connection is the browser's, and any reshaping
+        here would be a second place for the handshake to drift.
         """
         if self._closed:
             return
         try:
-            await self._ws.send_text(
-                json.dumps({"type": "video_data", "delta": delta_b64})
-            )
-            self._video_out += 1
-            if self._video_out == 1:
-                logger.info(f"[browser {self.client_id}] avatar video stream started")
-        except Exception as e:  # noqa: BLE001 — video must never kill the call
-            logger.debug(f"[browser {self.client_id}] video delta send failed: {e}")
+            await self._ws.send_text(json.dumps(msg))
+            if msg.get("type") == "avatar_sdp_answer":
+                logger.info(f"[browser {self.client_id}] relayed avatar SDP answer")
+        except Exception as e:  # noqa: BLE001 — never kill the call over a relay
+            logger.debug(f"[browser {self.client_id}] relay {msg.get('type')} failed: {e}")
 
     async def _send_stop_audio(self) -> None:
         if self._closed:
@@ -653,16 +712,47 @@ class BrowserVoiceBridge:
                                     f"[browser {self.client_id}] capture stats: "
                                     f"frames={ctrl.get('frames')} maxRms={ctrl.get('maxRms')} "
                                     f"ctxRate={ctrl.get('ctxRate')} "
-                                    f"selfTalking={ctrl.get('selfTalking')} "
+                                    f"capVia={ctrl.get('capVia')} "
+                                    f"micOpen={ctrl.get('micOpen')} "
+                                    f"roomOpen={ctrl.get('roomOpen')} "
+                                    f"roomSpeakRms={ctrl.get('roomSpeakRms')} "
                                     f"humanMuted={ctrl.get('humanMuted')} "
+                                    f"parts={ctrl.get('parts')} "
                                     f"remoteStreams={ctrl.get('remoteStreams')} "
-                                    f"wiredTracks={ctrl.get('wiredTracks')}"
+                                    f"wiredTracks={ctrl.get('wiredTracks')} "
+                                    f"remoteMeters={ctrl.get('remoteMeters')} "
+                                    f"remoteMaxRms={ctrl.get('remoteMaxRms')} "
+                                    f"remoteVia={ctrl.get('remoteVia')} "
+                                    f"videoState={ctrl.get('videoState')} "
+                                    f"avatarPic={ctrl.get('avatarPic')} "
+                                    f"avatarIce={ctrl.get('avatarIce')} "
+                                    f"avatarVoice={ctrl.get('avatarVoice')} "
+                                    f"drawFps={ctrl.get('drawFps')} "
+                                    f"vFps={ctrl.get('vFps')} "
+                                    f"pumpVia={ctrl.get('pumpVia')} "
+                                    f"build={ctrl.get('build')} "
+                                    f"stale={ctrl.get('stale')} "
+                                    f"hidden={ctrl.get('hidden')} "
+                                    f"micCapture={ctrl.get('micCapture')} "
+                                    f"tracks={_fmt_tracks(ctrl.get('tracks'))}"
                                 )
                             elif ct == "remote_wired":
                                 logger.info(
                                     f"[browser {self.client_id}] browser wired remote "
-                                    f"audio track {ctrl.get('trackId')}"
+                                    f"audio track {ctrl.get('trackId')} "
+                                    f"via={ctrl.get('via') or 'sdk'}"
                                 )
+                            elif ct == "video_status":
+                                state = ctrl.get("state")
+                                detail = ctrl.get("detail") or ""
+                                msg = (
+                                    f"[browser {self.client_id}] avatar video "
+                                    f"{state}" + (f" — {detail}" if detail else "")
+                                )
+                                if state in ("failed", "unsupported"):
+                                    logger.warning(msg)
+                                else:
+                                    logger.info(msg)
                             elif ct == "mic_wired":
                                 logger.info(
                                     f"[browser {self.client_id}] browser wired mic capture "
@@ -695,6 +785,18 @@ class BrowserVoiceBridge:
                                     f"output re-enabled"
                                 )
                                 self._hard_muted = False
+                            elif ct == "avatar_sdp_offer":
+                                # The joiner's peer connection is ready. Hand the
+                                # offer to Voice Live; the answer comes back as
+                                # `avatar_sdp_answer` and is relayed straight on.
+                                logger.info(
+                                    f"[browser {self.client_id}] avatar SDP offer "
+                                    f"received -> Voice Live"
+                                )
+                                if self.handler is not None:
+                                    await self.handler.send_avatar_sdp_offer(
+                                        ctrl.get("clientSdp") or ""
+                                    )
                             elif ct == "farside_wired":
                                 logger.info(
                                     f"[browser {self.client_id}] browser wired far-side "
@@ -715,8 +817,6 @@ class BrowserVoiceBridge:
             logger.info(f"[browser {self.client_id}] media socket closed: {e}")
         finally:
             self._closed = True
-            if self._decoder is not None:
-                self._decoder.close()
 
     def _on_user_utterance(self, transcript: str) -> None:
         """Arm the answer gate when an utterance is addressed to the avatar."""

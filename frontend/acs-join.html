@@ -62,6 +62,17 @@
         far side, click <em>Capture far-side audio</em> and share the Teams
         window/tab <strong>with “Share audio” ticked</strong>.
     </p>
+    <p class="notice">
+        This runs the <strong>same capture pipeline as the web app</strong> — same microphone
+        settings, same 40&nbsp;ms AudioWorklet, same Voice&nbsp;Live turn detection, and the
+        microphone stays open while she speaks, so you can talk over her at any time. The one
+        difference is that a meeting also needs a <em>room tap</em> to hear other participants,
+        and nothing echo-cancels that tap: while {{AVATAR_NAME}} speaks it would carry her own
+        voice back, so that tap alone is held shut. Headphones are still the better experience —
+        on speakers her voice reaches the microphone from the Teams client, which the browser
+        cannot cancel.
+    </p>
+
     <div id="status">Idle.</div>
 
     <script src="/brand.js"></script>

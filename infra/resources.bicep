@@ -108,6 +108,8 @@ param acsAudioSampleRate string = ''
 param acsRequireWakePhrase string = ''
 @description('"true"/"false". In-call avatar sends an outgoing video tile (visible participant).')
 param acsAvatarVideoEnabled string = ''
+@description('"true"/"false". The browser joiner\'s tile carries the LIVE lip-synced avatar instead of a static placard. Needs acsAvatarVideoEnabled="true" as well.')
+param browserJoinVideoEnabled string = ''
 
 var acsEnabled = toLower(enableAcs) == 'true'
 
@@ -340,6 +342,7 @@ module app 'modules/containerApp.bicep' = {
     acsAudioSampleRate: acsAudioSampleRate
     acsRequireWakePhrase: acsRequireWakePhrase
     acsAvatarVideoEnabled: acsAvatarVideoEnabled
+    browserJoinVideoEnabled: browserJoinVideoEnabled
   }
 }
 

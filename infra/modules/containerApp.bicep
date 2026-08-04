@@ -68,6 +68,9 @@ param acsRequireWakePhrase string = ''
 @description('"true"/"false" string. When "true", the in-call avatar sends an outgoing video tile so it is a visible participant instead of a faceless audio leg.')
 param acsAvatarVideoEnabled string = ''
 
+@description('"true"/"false" string. When "true", the browser joiner\'s outgoing tile carries the LIVE lip-synced avatar (fragmented MP4 from Voice Live, painted onto the tile canvas) instead of the static branded placard. Requires acsAvatarVideoEnabled="true" — the placard tile has to exist before it can carry a face.')
+param browserJoinVideoEnabled string = ''
+
 @description('"true"/"false" string. When "true" the browser exposes the settings panel, live transcript and per-event logging, so settings can be changed and tried live while testing. Production default "false" hides the panel, locks settings and auto-starts an avatar-only experience.')
 param developerMode string = 'false'
 
@@ -126,7 +129,8 @@ var meetingBotEnv = concat(
   meetingBotOn ? [ { name: 'MEETING_BOT_ENABLED', value: 'true' } ] : [],
   !empty(acsAudioSampleRate) ? [ { name: 'ACS_AUDIO_SAMPLE_RATE', value: acsAudioSampleRate } ] : [],
   !empty(acsRequireWakePhrase) ? [ { name: 'ACS_REQUIRE_WAKE_PHRASE', value: acsRequireWakePhrase } ] : [],
-  !empty(acsAvatarVideoEnabled) ? [ { name: 'ACS_AVATAR_VIDEO_ENABLED', value: acsAvatarVideoEnabled } ] : []
+  !empty(acsAvatarVideoEnabled) ? [ { name: 'ACS_AVATAR_VIDEO_ENABLED', value: acsAvatarVideoEnabled } ] : [],
+  !empty(browserJoinVideoEnabled) ? [ { name: 'BROWSER_JOIN_VIDEO_ENABLED', value: browserJoinVideoEnabled } ] : []
 )
 
 resource app 'Microsoft.App/containerApps@2024-10-02-preview' = {
@@ -166,8 +170,15 @@ resource app 'Microsoft.App/containerApps@2024-10-02-preview' = {
           name: 'web'
           image: containerImage
           resources: {
-            cpu: json('1.0')
-            memory: '2.0Gi'
+            // ACA Consumption requires an exact 1 vCPU : 2 GiB ratio, so these two
+            // move together; raising cpu alone fails validation. This is also the
+            // per-replica ceiling: the environment has no workloadProfiles, so it is
+            // Consumption-only and caps at 2 vCPU / 4 GiB. Going higher means adding
+            // a dedicated workload profile to containerAppsEnvironment.bicep first.
+            // Headroom for concurrent Voice Live sessions, each of which bridges
+            // audio in the app process.
+            cpu: json('2.0')
+            memory: '4.0Gi'
           }
           env: concat([
             { name: 'PORT', value: '3000' }

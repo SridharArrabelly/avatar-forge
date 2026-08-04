@@ -15,7 +15,7 @@ Two independent choices decide what you deploy:
 
 | Axis | Question | Set by | Options |
 |---|---|---|---|
-| **Front door** | Where do people reach the avatar? | `DEPLOY_PROFILE` | A web · B Teams tab · C in-call bot · D headless |
+| **Front door** | Where do people reach the avatar? | `DEPLOY_PROFILE` | `web` (A) · `teams-tab` (A+B) · `in-call` (A+B+C) · `in-call-browser` (A+B+D) |
 | **Brain** | What answers? | `VOICE_BINDING` | agent mode · model mode |
 
 They are orthogonal — **every front door works with either brain**. Both are chosen
@@ -37,7 +37,7 @@ flowchart LR
         A["<b>A</b> · Web browser"]
         B["<b>B</b> · Teams personal tab"]
         C["<b>C</b> · In-call media bot"]
-        D["<b>D</b> · In-call headless"]
+        D["<b>D</b> · In-call ACS guest"]
     end
 
     subgraph Brain["One brain — Python / FastAPI on Azure Container Apps"]
@@ -76,7 +76,7 @@ flowchart LR
         A2["<b>A</b> · Web browser"]
         B2["<b>B</b> · Teams personal tab"]
         C2["<b>C</b> · In-call media bot"]
-        D2["<b>D</b> · In-call headless"]
+        D2["<b>D</b> · In-call ACS guest"]
     end
 
     subgraph Brain2["Same host, different middle"]
@@ -131,11 +131,15 @@ administrator access you need**.
 | **A** | **Web** (standalone) | ✅ Shipped | — *(the core)* | **None** | [a-web.md](docs/channels/a-web.md) |
 | **B** | **Teams — personal tab** | ✅ Shipped | **None** | Upload a Teams app package | [b-teams-tab.md](docs/channels/b-teams-tab.md) |
 | **C** | **Teams — in-call avatar** (Graph media bot) | ✅ Working | Azure Bot + **Windows VM** + DNS + TLS | **Highest** — incl. **Teams app access policy** | [c-in-call-media-bot.md](docs/channels/c-in-call-media-bot.md) |
-| **D** | **Teams — in-call avatar** (headless browser) | 🔜 Placeholder | Container/job | TBD | [d-in-call-headless.md](docs/channels/d-in-call-headless.md) |
+| **D** | **Teams — in-call avatar** (ACS browser guest) | ✅ Media leg working | ACS resource (`ENABLE_ACS`) | **None** — joins as an anonymous guest | [d-in-call-headless.md](docs/channels/d-in-call-headless.md) |
 
 They are not four equal options: **A → B is a ladder** (each additive on the one
 before), while **C and D are rivals** — two implementations of the same capability.
 The [channel hub](docs/channels/README.md) explains how to choose.
+
+Picking a profile is enough on its own: it writes every flag that profile needs and
+resets the ones it does not, so choosing the browser guest turns ACS on *and* turns the
+media bot's Windows VM off. Nothing has to be set by hand.
 
 👉 **Start here: [docs/channels/README.md](docs/channels/README.md)** for the decision
 guide, and **[docs/admin-checklist.md](docs/admin-checklist.md)** for every manual step
@@ -247,7 +251,9 @@ Details: **[docs/deployment.md](docs/deployment.md)** ·
 |---|---|
 | **[teams/README.md](teams/README.md)** | Building and sideloading the Teams app package (serves channel B). |
 | **[meeting-bot/README.md](meeting-bot/README.md)** | The .NET/Windows media bot itself (channel C): project layout, configuration, operator runbook, and the traps that cost real debugging time. |
-| **[prompts/README.md](prompts/README.md)** | Agent prompt content, the reasoning/non-reasoning variants, and the edit workflow. |
+| **[prompts/README.md](prompts/README.md)** | Agent and model-mode prompt content, and the edit workflow. |
+| **[scripts/README.md](scripts/README.md)** | Every script that touches Azure, and the prefix convention that tells you what running one costs — which four are wired into `azd up` and must not be renamed. |
+| **[tests/README.md](tests/README.md)** | The offline suites: no network, no credentials, no cost, and what each one pins. |
 | **[docs/testing-meetings.md](docs/testing-meetings.md)** | **How to test the two in-meeting paths** — browser joiner vs. media bot: what each can and cannot hear, runbooks, healthy logs, rollback. |
 
 **Design records** *(archive — why the in-call channel is built the way it is; not needed to deploy)*

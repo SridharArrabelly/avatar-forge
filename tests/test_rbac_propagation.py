@@ -11,14 +11,14 @@ messages (a required AI Search connection is fatal; an optional Bing one is a
 warning). If the wait swallowed 404s, a missing Bing connection would stall the
 deploy for 15 minutes and then fail instead of degrading gracefully.
 
-    uv run python scripts/test_rbac_propagation.py
+    uv run python tests/test_rbac_propagation.py
 """
 from __future__ import annotations
 
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
 from rbac_propagation import is_propagation_error, wait_for_data_plane  # noqa: E402
 

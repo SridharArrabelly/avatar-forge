@@ -52,7 +52,7 @@
     "modelVersion":        { "value": "${MODEL_VERSION=2026-03-05}" },
     "modelDeploymentName": { "value": "${MODEL_DEPLOYMENT_NAME=gpt-5.4}" },
     "modelSkuName":        { "value": "${MODEL_SKU_NAME=GlobalStandard}" },
-    "modelCapacity":       { "value": 50 },
+    "modelCapacity":       { "value": "${MODEL_CAPACITY=250}" },
 
     "enableAcs":       { "value": "${ENABLE_ACS=false}" },
     "acsDataLocation": { "value": "${ACS_DATA_LOCATION=United States}" },
@@ -60,6 +60,7 @@
     "acsAudioSampleRate":  { "value": "${ACS_AUDIO_SAMPLE_RATE=}" },
     "acsRequireWakePhrase":{ "value": "${ACS_REQUIRE_WAKE_PHRASE=}" },
     "acsAvatarVideoEnabled":{ "value": "${ACS_AVATAR_VIDEO_ENABLED=}" },
+    "browserJoinVideoEnabled":{ "value": "${BROWSER_JOIN_VIDEO_ENABLED=}" },
 
     "deployProfile":            { "value": "${DEPLOY_PROFILE=}" },
     "deployMeetingBotHost":     { "value": "${DEPLOY_MEETING_BOT_HOST=false}" },

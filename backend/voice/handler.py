@@ -136,7 +136,7 @@ class VoiceSessionHandler:
         """Assemble the arguments handed to ``voicelive.connect()``.
 
         Extracted from :meth:`start` so the binding shape can be asserted
-        without opening a socket. ``scripts/test_voice_binding.py`` checks every
+        without opening a socket. ``tests/test_voice_binding.py`` checks every
         key here against the installed SDK's real ``connect()`` signature,
         because an unrecognised key does not raise — it is swallowed by
         ``**kwargs`` and the session silently binds to nothing.

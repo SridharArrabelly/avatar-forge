@@ -422,10 +422,94 @@ PROFILES: dict[str, Profile] = {
             "compute charge but not the disk or the IP."
         ),
     ),
+    "in-call-browser": Profile(
+        key="in-call-browser",
+        title="Web + tab + in-call avatar (browser guest)",
+        channels="A + B + D",
+        summary=(
+            "The avatar joins a Teams meeting as an anonymous guest from a browser tab, "
+            "hears the room and answers aloud with a lip-synced camera tile. No Windows "
+            "host and no administrator of any kind — but the tab has to stay open."
+        ),
+        # Everything channel D needs. ENABLE_ACS provisions the resource; the other two
+        # give her a face, and without them the joiner still works but publishes no video.
+        flags={
+            "ENABLE_ACS": "true",
+            "ACS_AVATAR_VIDEO_ENABLED": "true",
+            "BROWSER_JOIN_VIDEO_ENABLED": "true",
+        },
+        providers=["Microsoft.Communication"],
+        steps=(
+            _core_steps()[:4]
+            + [
+                Step(
+                    "Provision Communication Services",
+                    AZD,
+                    DURING,
+                    "Part of the same `azd up`, because selecting this profile set ENABLE_ACS "
+                    "for you: the ACS resource, plus a role assignment that lets the container "
+                    "app mint guest tokens with its own managed identity. No VM, no bot "
+                    "registration, nothing for an administrator to approve.",
+                ),
+            ]
+            + _core_steps()[4:]
+            + _teams_package_steps()
+            + [
+                Step(
+                    "Open the joiner and paste a meeting link",
+                    YOU,
+                    AFTER,
+                    "Browse to /acs-join.html on the deployed app, paste the Teams meeting URL "
+                    "and join. Keep that tab visible — a backgrounded tab throttles her video.",
+                ),
+                Step(
+                    "Admit her from the meeting lobby",
+                    YOU,
+                    AFTER,
+                    "Anonymous guests wait in the lobby unless the organiser has turned it off, "
+                    "so someone already in the meeting has to click Admit.",
+                ),
+            ]
+        ),
+        costs=_core_costs()
+        + [
+            CostItem(
+                "Communication Services",
+                PER_USE,
+                "per participant-minute while she is in a call; nothing at all when idle",
+            ),
+            CostItem("Teams personal tab", FREE, "adds no Azure resources at all"),
+        ],
+        cost_note=(
+            "The cheapest way into a meeting by a wide margin: it adds no always-on "
+            "resource whatsoever, where the media bot adds a Windows VM at roughly "
+            "$283/month whether or not anyone calls."
+        ),
+    ),
 }
 
 DEFAULT_PROFILE = "web"
-PROFILE_ORDER = ["web", "teams-tab", "in-call"]
+PROFILE_ORDER = ["web", "teams-tab", "in-call", "in-call-browser"]
+
+# Every flag any profile sets, mapped to the value that means "off".
+#
+# Selecting a profile writes its own flags and resets all the others, so the profile is
+# genuinely the source of truth rather than a set of switches that only ever accumulate.
+# Without the reset, moving from the media bot to the browser guest would leave
+# DEPLOY_MEETING_BOT_HOST=true behind and quietly keep paying for a Windows VM that the
+# newly-chosen profile never wanted.
+PROFILE_MANAGED_FLAGS: dict[str, str] = {
+    "MEETING_BOT_ENABLED": "false",
+    "DEPLOY_MEETING_BOT_HOST": "false",
+    "ENABLE_ACS": "false",
+    "ACS_AVATAR_VIDEO_ENABLED": "false",
+    "BROWSER_JOIN_VIDEO_ENABLED": "false",
+}
+
+# A flag a profile sets but that is missing from the reset map would never be cleared
+# when switching away, which is the exact leak the map exists to prevent.
+_unmanaged = {n for p in PROFILES.values() for n in p.flags} - set(PROFILE_MANAGED_FLAGS)
+assert not _unmanaged, f"profile flags missing from PROFILE_MANAGED_FLAGS: {sorted(_unmanaged)}"
 
 
 def get_profile(key: str | None) -> Profile:

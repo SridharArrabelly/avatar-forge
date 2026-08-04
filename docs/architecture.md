@@ -58,10 +58,9 @@ and routes turns through the agent so tool calls resolve server-side in Foundry.
 audio forwarding, event processing). The browser only:
 
 - captures the microphone → sends PCM16 audio over the WebSocket;
-- plays back PCM16 audio received over the WebSocket;
-- relays WebRTC signaling for the avatar video (SDP offer/answer through the backend)
-  and renders the avatar via a direct WebRTC peer connection to Azure;
-- (WebSocket video mode) receives fMP4 chunks for MediaSource Extensions playback.
+- plays back PCM16 audio received over the WebSocket, when the avatar is off;
+- relays WebRTC signaling for the avatar (SDP offer/answer through the backend) and
+  receives her face *and* voice as media tracks on a direct peer connection to Azure.
 
 The **in-call avatar** (issue #27) reuses the same Voice Live + Foundry pipeline inside a
 *live Teams meeting*. Two transports exist, and they are not equivalent:
@@ -71,12 +70,15 @@ The **in-call avatar** (issue #27) reuses the same Voice Live + Foundry pipeline
   way to receive the **mixed audio of every participant**. It forwards raw PCM16 over a
   WebSocket (`/ws/acs/audio`) to [`backend/acs/bridge.py`](../backend/acs/bridge.py)'s
   `AcsVoiceBridge`, which adapts it onto the unchanged `VoiceSessionHandler`
-  (wake-phrase turn-taking, barge-in). The avatar's face is decoded from Voice Live's
-  fragmented-MP4 avatar stream to NV12 in Python and sent back as a camera tile.
-- **Browser joiner (`frontend/acs-join.html`) — a fallback for demos.** Joins with the
-  ACS Calling Web SDK (anonymous, lobby-governed, no admin) over `/ws/acs/browser`. It
-  can only ever hear **the operator's own microphone**, because Teams isolates
-  per-client audio. Useful when you have no admin rights; not a substitute for C.
+  (wake-phrase turn-taking, barge-in). A `VideoSocket` cannot negotiate a peer
+  connection, so this leg keeps Voice Live in fragmented-MP4 mode and decodes the face
+  to NV12 in Python before sending it back as a camera tile.
+- **Browser joiner (`frontend/acs-join.html`) — no admin required.** Joins with the
+  ACS Calling Web SDK (anonymous, lobby-governed) over `/ws/acs/browser`. It hears the
+  other participants by intercepting `srcObject` as the SDK attaches their streams for
+  playback — verified live — and runs the **same capture and avatar transport as the
+  web app**, so a fix there is inherited here. It rides an implementation detail rather
+  than a contract, which is the trade against C.
 
 Both are non-recording and fully opt-in — every `/api/acs/*` route returns 503 when
 disabled. An optional Teams meeting **side-panel control panel**
@@ -106,7 +108,7 @@ Search** (a single hosted Bing call instead of an open-ended web tool) and pinni
 the model lifted first-tool accuracy to **~93.5%** on the original `gpt-4.1-mini`
 baseline and cut fan-out to ≈3%. The **current production model is `gpt-5.4` with
 `AGENT_REASONING_EFFORT=none`**, which scores **30/30** on the routing harness
-([`prompts/agent/routing-test-questions.md`](../prompts/agent/routing-test-questions.md))
+([`prompts/routing-test-questions.md`](../prompts/routing-test-questions.md))
 with cleaner numeric synthesis; `gpt-5.4-mini` is a faster, cheaper fallback and
 `gpt-4.1-mini` remains the documented baseline.
 
@@ -118,16 +120,14 @@ referenced by `BING_CUSTOM_CONFIG_NAME`). An open-ended web-search tool on
 `bing_custom_search` resolves a turn in one call. It is wired via `BING_CONNECTION_NAME`
 + `BING_CUSTOM_CONFIG_NAME` when running `setup_foundry_agent.py`.
 
-**The system prompt.** The provisioning script picks one of two prompt variants based
-on `AGENT_MODEL`: [`instructions-nonreasoning.md`](../prompts/agent/instructions-nonreasoning.md)
-for `gpt-4.x`/`gpt-4o` (literal, hard rules, one tool per turn) and
-[`instructions-reasoning.md`](../prompts/agent/instructions-reasoning.md) for
-o-series/`gpt-5` (softer principles, up to 3 tool calls per turn, refined follow-up
-search allowed). Both share the voice-first output rules, the silent meeting-catalogue
-contract, the intent-aware Bing query block, and the JSE-cents conversion rule. The
-selector uses the same `_model_supports_reasoning()` predicate that gates
-`reasoning.effort`, so prompt and model capability stay in lock-step. Full detail in
-[`prompts/README.md`](../prompts/README.md).
+**The system prompt.** The provisioning script loads a single prompt,
+[`instructions.md`](../prompts/agent/instructions.md), unconditionally — no
+per-model variants and no fallback. It carries the voice-first output rules, the
+silent meeting-catalogue contract, the intent-aware Bing query block, and the
+JSE-cents conversion rule. A second variant for `gpt-4.x`/`gpt-4o` and the
+model-family selector that chose between them were both removed: no deployment
+ever loaded the alternative, so it drifted untested while every measurement was
+taken against this file. Full detail in [`prompts/README.md`](../prompts/README.md).
 
 ## Meeting-catalogue injection
 
@@ -259,15 +259,34 @@ avatar-forge/
 │   ├── auth.md                    # Identity and RBAC model
 │   └── testing-meetings.md        # Runbook for the two in-meeting paths
 │
-├── scripts/                       # Utility / one-off scripts (not part of the server)
+├── scripts/                       # Operational: these touch Azure, cost money, or gate a deploy
+│   ├── README.md                  # The naming convention — what running each one costs you
 │   ├── channels.py                # Single source of truth for deploy profiles and their steps
 │   ├── set_profile.py             # Step 0: choose a channel, record DEPLOY_PROFILE, print the plan
 │   ├── preflight.py               # Gate before azd up: regions, providers, tooling, per-profile inputs
-│   ├── setup_foundry_agent.py     # Creates the Foundry agent with AI Search + Bing Custom Search tools
+│   ├── rbac_propagation.py        # Retry helper: waits out data-plane RBAC propagation lag
 │   ├── setup_aisearch_index.py    # Creates/updates the AI Search index and ingests data/
-│   ├── test_aisearch_query.py     # Smoke-tests the index (hybrid + semantic query)
-│   ├── test_foundry_agent.py      # Smoke-tests the live agent end-to-end
-│   └── grant_byo_rbac.py          # Idempotently grants BYO runtime RBAC (brownfield)
+│   ├── setup_foundry_agent.py     # Creates the Foundry agent with AI Search + Bing Custom Search tools
+│   ├── grant_byo_rbac.py          # Idempotently grants BYO runtime RBAC (brownfield)
+│   ├── check_media_sdk_age.py     # Fails once the Graph media SDK pin passes 90 days (channel C)
+│   ├── smoke_aisearch_query.py    # Live: queries the index (hybrid + semantic)
+│   ├── smoke_foundry_agent.py     # Live: end-to-end question against the deployed agent
+│   ├── bench_routing_agent.py     # Live: tool-routing + latency benchmark, agent binding
+│   └── bench_routing_model.py     # Live: the same benchmark on the model binding
+│
+├── tests/                         # Offline: no network, no credentials, free to run
+│   ├── README.md                   # How to run them, and why test_ means exactly one thing
+│   ├── test_docs.py                # Links, mermaid, and region drift vs preflight.py
+│   ├── test_preflight.py           # The helpers that settle the deploy target
+│   ├── test_voice_binding.py       # The agent/model switch and its connect() kwargs
+│   ├── test_avatar_identity.py     # Every surface calls the assistant the same name
+│   ├── test_agent_model_binding.py # The agent binds to a model deployment that exists
+│   ├── test_agent_tool_wiring.py   # Required vs optional agent tools degrade correctly
+│   ├── test_build_package.py       # The Teams package builder's manifest and filename
+│   ├── test_build_query.py         # Site scoping renders the operators Web IQ documents
+│   ├── test_prompt_tool_names.py   # Prompt tool-name placeholders match each binding
+│   ├── test_rbac_propagation.py    # The RBAC-propagation wait used by postprovision
+│   └── test_set_profile.py         # Profile flags are authoritative, not cumulative
 │
 ├── teams/                         # Teams app package for channel B (and the optional in-call bot)
 │   ├── manifest.template.json     # Manifest (schema v1.17): staticTabs + optional bots, templated placeholders

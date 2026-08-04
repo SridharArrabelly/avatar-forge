@@ -20,7 +20,9 @@ Endpoints:
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
+import os
 
 from fastapi import APIRouter, Request, WebSocket
 from fastapi.responses import JSONResponse
@@ -75,15 +77,30 @@ _IN_CALL_CONFIG = {
 }
 
 
-def _in_call_config(avatar_video: bool) -> dict:
+def _in_call_config(avatar_video: bool, output_mode: str = "websocket") -> dict:
     """Voice Live session config for one in-call media session.
 
-    With ``avatar_video`` the session switches to avatar/``websocket`` output, so
-    Voice Live streams a fragmented MP4 carrying BOTH the rendered face and the
-    answer audio (it stops sending ``response.audio.delta`` in this mode). The
-    bridge decodes that stream back into NV12 + PCM16. The avatar identity is read
-    from the app's own UI defaults so the meeting face is the same avatar the web
-    app shows — one source of truth, no separate knob to drift.
+    With ``avatar_video`` the session enables the avatar. ``output_mode`` then
+    decides how the rendered face reaches the leg, and the two legs genuinely
+    need different answers:
+
+    ``websocket`` (the .NET media bot)
+        Voice Live streams a fragmented MP4 carrying BOTH the face and the answer
+        audio. The bridge decodes it back into NV12 + PCM16 in Python, because the
+        bot is a dumb media pump with no decoder of its own.
+
+    ``webrtc`` (the browser joiner)
+        The face and voice arrive as real media tracks on a peer connection,
+        muxed and synchronised by the transport — the same path the web app uses.
+        Nothing has to be decoded, buffered or hand-aligned here, which is the
+        whole reason to prefer it in a browser.
+
+    In BOTH modes Voice Live stops sending ``response.audio.delta``: the answer
+    audio travels with the avatar.
+
+    The avatar identity is read from the app's own UI defaults so the meeting face
+    is the same avatar the web app shows — one source of truth, no separate knob
+    to drift.
     """
     defaults = get_ui_defaults()
     config = dict(_IN_CALL_CONFIG)
@@ -97,7 +114,7 @@ def _in_call_config(avatar_video: bool) -> dict:
     config.update(
         {
             "avatarEnabled": True,
-            "avatarOutputMode": "websocket",
+            "avatarOutputMode": output_mode,
             "isPhotoAvatar": defaults.get("isPhotoAvatar", False),
             "isCustomAvatar": defaults.get("isCustomAvatar", False),
             "avatarName": defaults.get("avatarName", "Lisa-casual-sitting"),
@@ -127,6 +144,20 @@ def _public_base(request: Request) -> str:
     return f"{proto}://{host}".rstrip("/")
 
 
+def _joiner_build_id() -> str:
+    """Short fingerprint of the joiner script currently on disk."""
+    path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+        "frontend",
+        "acs-join.js",
+    )
+    try:
+        st = os.stat(path)
+        return hashlib.sha1(f"{st.st_mtime_ns}:{st.st_size}".encode()).hexdigest()[:12]
+    except OSError:
+        return "unknown"
+
+
 def build_acs_router() -> APIRouter:
     """Return an APIRouter exposing the ACS in-call media endpoints."""
     router = APIRouter()
@@ -145,6 +176,13 @@ def build_acs_router() -> APIRouter:
             # ...and when THIS is true that tile carries the live lip-synced
             # avatar (streamed over the media socket) instead of the placard.
             "avatarLiveVideo": ACS_AVATAR_VIDEO_ENABLED and BROWSER_JOIN_VIDEO_ENABLED,
+            # Fingerprint of the joiner script actually on disk. The page records
+            # this at load and re-checks it; if it changes, the open tab is running
+            # code from before the last deploy. That silently invalidated several
+            # live test rounds — a tab kept open across a deploy keeps its old JS
+            # in memory no matter what the cache headers say, and the telemetry
+            # then describes a build that is no longer deployed.
+            "buildId": _joiner_build_id(),
         }
 
     @router.get("/api/acs/status")
@@ -290,7 +328,7 @@ def build_acs_router() -> APIRouter:
             credential=create_credential(""),
             send_message=bridge.send_message,
             send_binary=bridge.send_binary,
-            config=_in_call_config(BROWSER_JOIN_VIDEO_ENABLED),
+            config=_in_call_config(BROWSER_JOIN_VIDEO_ENABLED, output_mode="webrtc"),
         )
         bridge.handler = handler
         _ACTIVE_CALLS.add(client_id)

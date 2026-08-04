@@ -7,7 +7,8 @@ ordered list of every remaining step — including the ones a human has to do.
 
 The two questions are independent:
 
-    channel  (DEPLOY_PROFILE)  where people reach the avatar   web / teams-tab / in-call
+    channel  (DEPLOY_PROFILE)  where people reach the avatar   web / teams-tab /
+                                                               in-call / in-call-browser
     brain    (VOICE_BINDING)   what answers                    agent / model
 
     uv run python scripts/set_profile.py                             # interactive
@@ -33,6 +34,7 @@ from channels import (
     CYAN,
     DIM,
     GREEN,
+    PROFILE_MANAGED_FLAGS,
     PROFILE_ORDER,
     PROFILES,
     RESET,
@@ -78,7 +80,8 @@ def _azd_env_values() -> dict[str, str]:
 def _choose() -> str:
     print()
     print(f"{BOLD}Which channel do you want to deploy?{RESET}")
-    print(f"{DIM}  Each option builds on the one above it. Start low; you can re-run this later.{RESET}")
+    print(f"{DIM}  The first three build on each other. The last is a rival to the third — the{RESET}")
+    print(f"{DIM}  same in-call avatar, reached a different way. You can re-run this later.{RESET}")
     print()
     for i, key in enumerate(PROFILE_ORDER, start=1):
         p = PROFILES[key]
@@ -147,8 +150,20 @@ def main() -> int:
         print(f"{YELLOW}Is an azd environment selected?{RESET} Run `azd env new <name>` first.")
         return 2
 
-    for name, value in profile.flags.items():
-        _azd_env_set(name, value)
+    # The profile is the source of truth. Write the flags it wants AND reset every
+    # other managed flag, so switching profiles cannot leave the previous one's
+    # infrastructure quietly switched on — moving from the media bot to the browser
+    # guest must not keep paying for a Windows VM the new profile never asked for.
+    changed: list[str] = []
+    if current and current != key:
+        changed.append(f"DEPLOY_PROFILE={key}")
+    for name, off in PROFILE_MANAGED_FLAGS.items():
+        want = profile.flags.get(name, off)
+        # Unset and explicitly-off mean the same thing to infra, so only report a
+        # difference that actually changes what gets deployed.
+        if (env.get(name, "").strip() or off) != want:
+            changed.append(f"{name}={want}")
+        _azd_env_set(name, want)
 
     # Second question: which brain. Only prompted when not supplied, so
     # `--profile X --binding Y` stays fully non-interactive for CI.
@@ -159,7 +174,14 @@ def main() -> int:
     print(f"{GREEN}Profile set to '{key}'.{RESET}")
     if profile.flags:
         flags = ", ".join(f"{k}={v}" for k, v in profile.flags.items())
-        print(f"{DIM}  Derived flags: {flags}{RESET}")
+        print(f"{DIM}  Set for you: {flags}{RESET}")
+    reset = [
+        n
+        for n, off in PROFILE_MANAGED_FLAGS.items()
+        if n not in profile.flags and (env.get(n, "").strip() or off) != off
+    ]
+    if reset:
+        print(f"{DIM}  Reset to off (not part of this profile): {', '.join(reset)}{RESET}")
     print(f"{GREEN}Voice binding set to '{binding}' ({BINDINGS[binding].title}).{RESET}")
 
     missing = [r for r in profile.requires if not env.get(r.name) and not r.optional]
@@ -173,7 +195,29 @@ def main() -> int:
         print(f"{DIM}  Set each with:  azd env set <NAME> <value>{RESET}")
 
     print(render_steps(profile))
-    print(f"{CYAN}Next:{RESET} uv run python scripts/preflight.py")
+
+    # Greenfield and upgrade need different commands, and getting that wrong is the
+    # classic way to be told SUCCESS while nothing you changed actually shipped.
+    # SERVICE_APP_URI is a provision output, so its absence means nothing exists yet.
+    if not env.get("SERVICE_APP_URI"):
+        print(f"{CYAN}Next:{RESET} uv run python scripts/preflight.py")
+        print(f"{DIM}       then `azd up` — one command provisions and deploys all of the above.{RESET}")
+    elif changed:
+        print(f"{BOLD}This environment is already deployed, and you just changed what it deploys:{RESET}")
+        for c in changed:
+            print(f"  {YELLOW}{c}{RESET}")
+        print()
+        print(f"{CYAN}Next:{RESET} uv run python scripts/preflight.py")
+        print(f"       azd provision   {DIM}# these arrive as container-app env vars from Bicep,{RESET}")
+        print(f"       azd deploy      {DIM}# so a deploy on its own would never see them{RESET}")
+        print()
+        print(
+            f"{YELLOW}Run both.{RESET} {DIM}`azd provision` alone reverts the container app to the "
+            f"placeholder image from Bicep, and still reports success.{RESET}"
+        )
+    else:
+        print(f"{CYAN}Nothing to re-provision{RESET} — this environment already matches the profile.")
+        print(f"{DIM}  Ship code changes with `azd deploy`.{RESET}")
     return 0
 
 

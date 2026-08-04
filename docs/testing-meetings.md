@@ -8,11 +8,30 @@ meeting at the same time.
 | --- | --- | --- |
 | Page / API | `acs-join.html` | `POST :9441/api/join` |
 | Runs on | your laptop's browser tab | the Windows VM |
+| Joins the meeting as | anonymous guest, via the ACS Calling Web SDK | the bot's Entra identity, via Graph calling |
 | WebSocket | `/ws/acs/browser` | `/ws/acs/audio` |
-| **Hears** | **only your machine's mic / shared audio** | **everyone in the meeting** |
-| Face | browser decodes fMP4 → canvas → ACS tile | Python decodes → NV12 → `VideoSocket` |
+| Brain (Voice Live + Foundry agent) | **the container app** | **the container app** |
+| Needs an **ACS resource** | **yes** (`/api/acs/token` mints the guest token) | no — joins via Graph |
 | Needs the VM running | no | **yes** (~$283/mo if left on) |
+| **Hears** | **the other participants** — via the `srcObject` hook, verified live | **everyone in the meeting** |
+| Face | WebRTC track → canvas → ACS tile | Python decodes fMP4 → NV12 → `VideoSocket` |
 | Status | proven in real meetings | **proven in real meetings** — joins, hears the room, answers aloud with a lip-synced tile |
+
+**Neither path is a self-contained system, and the VM is not a second brain.** The
+media bot holds no Voice Live session, no agent and no search index — it joins the
+call, pulls raw PCM, and opens a WebSocket *back* to the container app
+(`Bot__BridgeWebSocketUrl` → `wss://<container-app>/ws/acs/audio`). Both sockets then
+hand off to the same `VoiceSessionHandler`. So the container is always required; the
+only question either path answers is **who joins the meeting and where the audio comes
+from**. This is also why `acs-join.html` keeps working with the VM deallocated, and why
+the two rows above disagree only about the ACS resource and the VM.
+
+> ⚠️ **The joiner page can look enabled when it isn't.** `ACS_ENABLED` is
+> `ACS_ENDPOINT or ACS_CONNECTION_STRING or MEETING_BOT_ENABLED`, so deploying the
+> `in-call` profile *without* an ACS resource makes `/api/acs/config` report
+> `enabled: true` — the page loads and offers to join, then `/api/acs/token` fails with
+> a 500 because there is no resource to mint a VoIP identity from. If you want the
+> browser joiner, set `ENABLE_ACS=true` as well; the two flags are independent.
 
 > ⚠️ **Never run both in one meeting.** Two assistants would hear each other's answers and
 > feed back. Leave one before starting the other.
@@ -30,10 +49,32 @@ meeting at the same time.
 > The VM and NSG names (`avatar-meetingbot-vm`, `avatar-meetingbot-nsg`) are
 > deterministic, so those are written literally.
 
-The single most important difference is the "Hears" row. The browser joiner captures the
-*operator's* audio, so it can only answer what **you** say into your own mic. The media bot
-receives the meeting's mixed audio from Teams, so it can answer **anyone**. That is the
-whole reason the media bot exists.
+The "Hears" row used to be the decisive difference, and it no longer is. The browser
+joiner originally captured only the *operator's* microphone, so it could answer only what
+**you** said — which was the whole reason the media bot existed. That changed on
+2026-08-03: `acs-join.js` now intercepts `HTMLMediaElement.prototype.srcObject` and takes
+remote participants' audio from the DOM, because the SDK has to attach those streams to a
+media element in order to play them.
+
+Verified in a real meeting with the microphone disabled (`?mic=0`), so the only possible
+source was another participant:
+
+```text
+capture stats: maxRms=0.15861 remoteStreams=1 wiredTracks=2 remoteMeters=2
+               remoteMaxRms=0.18466 micCapture=False
+User transcript: 'Hey Simone, how are you?'
+```
+
+Two honest limits. Only **one** other human was present, so per-participant vs. mixed
+stream delivery is still unobserved; and `wiredTracks=2` against `remoteStreams=1` means
+a second stream was attached — plausibly our own outgoing audio — which the room-tap gate
+in `applyCaptureGates()` holds shut while she speaks, making that gate load-bearing. See
+[d-in-call-headless.md](channels/d-in-call-headless.md) for detail.
+
+The media bot still differs in kind: it receives Teams' mixed audio through a supported
+first-party API, whereas the browser rides an SDK implementation detail. If a future SDK
+renders remote audio purely through Web Audio, `remoteMaxRms` returns to 0. `?remote=0`
+disables the hook without a redeploy.
 
 ---
 
@@ -82,31 +123,39 @@ curl.exe "$appUrl/api/acs/status"
 | --- | --- |
 | Roster | a participant named **Nuru** |
 | Tile | the **avatar's face**, lip-synced while she answers |
-| Between turns | tile falls back to the branded placard (this is intentional) |
+| Between turns | she stays on screen, idle — the live track keeps running |
 | Voice | she answers aloud, and stops mid-sentence if you talk over her |
 | **Mute** button | she goes silent; the face may keep moving (see below) |
 
 ### Backend log signature (a healthy turn)
 
 ```
-[browser browser-…] avatar video stream started
-[avatar] stream opened: video=h264 audio=aac -> NV12 640x360@15, PCM16 24000Hz
-[avatar] first PCM16 chunk (3136 bytes)
-…
-[avatar] decoder stopped (video=0 audio=NNNN)
+[browser browser-…] relayed avatar SDP answer
+[LATENCY] user_done->first_token=…ms, user_done->audio=…ms
+[browser browser-…] capture stats: … avatarIce=connected avatarVoice=True
 ```
 
-`video=0` is **correct** on this path — the browser decodes the picture itself, so the
-server only decodes audio.
+**No `[avatar] stream opened` line appears on this path, and that is correct.** The
+face and the voice arrive as WebRTC media tracks that never cross the bridge socket,
+so no server-side decoder is created at all — the bridge only relays `ice_servers`
+and `avatar_sdp_answer`. `avatarIce=connected` in the joiner's own capture stats is
+the equivalent evidence.
 
 ### Known, deliberate behaviours (not bugs)
 
-- **She only hears you.** Other people in the room are inaudible to her. This is the design
-  limit of the browser leg, not a fault.
-- **Mute silences the voice, not the face.** Video fragments are never dropped, because
-  MediaSource needs a byte-contiguous stream (the `ftyp`/`moov` init segment arrives once
-  per session, so dropping fragments corrupts everything after them). Silence is enforced on
-  the audio path — which is what the room actually hears.
+- **The microphone is never gated.** There is no half-duplex mode and no "let me
+  interrupt" checkbox — both were removed on 2026-08-03 after live testing showed the
+  gate cost three attempts to be heard (it ate the front of each utterance, so the
+  server VAD never saw a turn begin) and that toggling it mid-answer made her react to
+  every sound in the room. Barge-in just works; talk over her.
+- **Only you can interrupt her.** She *hears* the other participants (the `srcObject`
+  hook, verified live), but the **room tap** — not the mic — is gated shut while she
+  speaks, because nothing echo-cancels it and her own voice would otherwise come
+  straight back as the next question. So a remote participant cannot cut her off
+  mid-answer; the operator's microphone can, because the browser has echo-cancelled it.
+- **Mute silences the voice, but the face keeps moving.** Suppression is enforced on
+  the answer path; the WebRTC video track is negotiated once and runs independently of
+  it. What the room actually hears is what mute controls.
 - **Keep the joiner tab visible if you can.** Backgrounded tabs get throttled; there is an
   explicit `requestFrame()` keep-alive, but a foreground tab is the safe test.
 

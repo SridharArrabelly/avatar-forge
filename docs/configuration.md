@@ -35,7 +35,7 @@ Set with `uv run python scripts/set_profile.py` rather than by hand.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `DEPLOY_PROFILE` | *(empty)* | `web` · `teams-tab` · `in-call`. Selects which channel deploys, and drives the numbered step plan `scripts/preflight.py` prints. Empty keeps the pre-profile behaviour (explicit flags only). |
+| `DEPLOY_PROFILE` | *(empty)* | `web` · `teams-tab` · `in-call` · `in-call-browser`. Selects which channel deploys, and drives the numbered step plan `scripts/preflight.py` prints. Empty keeps the pre-profile behaviour (explicit flags only). **Selecting a profile is authoritative**: it writes that profile's flags and resets the others, so switching away from `in-call` also switches off its Windows VM. |
 | `PREFLIGHT_SKIP` | `false` | `true` bypasses the preprovision preflight gate. An escape hatch — nobody should be stuck behind their own tooling. |
 
 ---
@@ -78,7 +78,7 @@ agent-creation time; the runtime backend never talks to Bing directly.
 | `BING_CONNECTION_NAME` | *(unset — web tool disabled)* | **Optional.** Foundry connection for Grounding with Bing Custom Search (the agent's only external tool). Set for you when `DEPLOY_BING_GROUNDING=true`; otherwise name an existing connection. Leave unset for a search-only agent; naming a connection that doesn't exist skips the tool with a warning rather than failing. |
 | `BING_CUSTOM_CONFIG_NAME` | *(unset — web tool disabled)* | **Optional.** Bing Custom Search configuration name — the curated domain allow-list the web tool is restricted to. Set for you when `DEPLOY_BING_GROUNDING=true`; otherwise required alongside `BING_CONNECTION_NAME`. |
 | `AGENT_MODEL` | `gpt-5.4` | Foundry model deployment the agent runs on. Recommended: `gpt-5.4` + `AGENT_REASONING_EFFORT=none` (best tool routing; 30/30 on the harness). `gpt-5.4-mini` is a cheaper fallback; `gpt-4.1-mini` is the documented baseline. See [architecture.md](architecture.md#tool-calling-accuracy). |
-| `AGENT_REASONING_EFFORT` | `none` | Reasoning effort. **Model-dependent:** `gpt-4.x`/`gpt-4o` reject it (leave **unset** — they 400, manifesting as a silently non-speaking avatar); `gpt-5.x` accept `none\|low\|medium\|high\|xhigh`; o-series accept `low\|medium\|high`. For voice latency the validated value is `none` (real reasoning adds 4–5s to first token). The script also selects the prompt variant from this. |
+| `AGENT_REASONING_EFFORT` | `none` | Reasoning effort. **Model-dependent:** `gpt-4.x`/`gpt-4o` reject it (leave **unset** — they 400, manifesting as a silently non-speaking avatar); `gpt-5.x` accept `none\|low\|medium\|high\|xhigh`; o-series accept `low\|medium\|high`. For voice latency the validated value is `none` (real reasoning adds 4–5s to first token). Left unset on a `gpt-5.x` model the script defaults it to `none` rather than let the service default (`medium`) apply. It does **not** select a prompt — there is one agent prompt. |
 | `AI_SEARCH_TOP_K` | `8` | Chunks pulled from the meeting-minutes index per turn. |
 | `BING_COUNT` | `8` | Snippets returned from the Bing Custom Search allow-list per turn. |
 
@@ -95,7 +95,7 @@ agent-creation time; the runtime backend never talks to Bing directly.
 ## AI Search & index build *(provisioning only)*
 
 Read by [`scripts/setup_aisearch_index.py`](../scripts/setup_aisearch_index.py) and
-[`scripts/test_aisearch_query.py`](../scripts/test_aisearch_query.py).
+[`scripts/smoke_aisearch_query.py`](../scripts/smoke_aisearch_query.py).
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -126,7 +126,7 @@ deployment.
 | `MODEL_VERSION` | `2026-03-05` | Model version (must match `MODEL_NAME`). |
 | `MODEL_DEPLOYMENT_NAME` | `gpt-5.4` | What to **call** that deployment. |
 | `MODEL_SKU_NAME` | `GlobalStandard` | Deployment SKU. |
-| `MODEL_CAPACITY` | `50` | TPM (thousands) capacity. |
+| `MODEL_CAPACITY` | `250` | TPM (thousands) capacity, so `250` is 250K tokens/minute. On `GlobalStandard` this is a **rate ceiling, not a reservation** — billing is per token consumed, so raising it costs nothing and only buys headroom against 429s. Every turn resends the full agent prompt plus retrieved chunks, so the old `50` was easy to trip under demo load. Your regional ceiling: `az cognitiveservices usage list -l <region>`. |
 
 ### Why `MODEL_NAME` and `MODEL_DEPLOYMENT_NAME` are both needed
 
@@ -152,7 +152,7 @@ of a deployment name, and it is why callers — including the Foundry agent — 
 > `MODEL_DEPLOYMENT_NAME` automatically, because the agent has to bind to the
 > deployment the template just created. Set it explicitly only for BYO Foundry, where
 > the deployment already exists and this template did not name it.
-> [`scripts/test_agent_model_binding.py`](../scripts/test_agent_model_binding.py) pins
+> [`tests/test_agent_model_binding.py`](../tests/test_agent_model_binding.py) pins
 > that behaviour.
 
 ---
@@ -302,7 +302,7 @@ avatar is called "Simone" everywhere without configuring anything.
 > and the wake phrase all resolve the name with the same rule
 > ([`backend/avatar_identity.py`](../backend/avatar_identity.py)):
 > `AVATAR_DISPLAY_NAME` → the active avatar model's friendly name → `Avatar`.
-> Pinned by `uv run python scripts/test_avatar_identity.py`.
+> Pinned by `uv run python tests/test_avatar_identity.py`.
 
 > **Renaming after a deploy needs one extra step.** The stage, bot, package and
 > wake phrase pick the new name up from the environment, but the assistant's
@@ -382,7 +382,7 @@ it — see [`teams/README.md`](../teams/README.md).
 | `TEAMS_ENABLE_CALLING` | `--enable-calling` | `false` | Sets `supportsCalling: true`. Pair with the **calling** bot's id (`MEETING_BOT_APP_ID`). |
 | `TEAMS_ENABLE_COMPANION` | `--enable-companion` | `false` | Adds the in-meeting side panel / stage tabs. Off keeps the package identical to the tab-only shape. |
 
-## Teams in-call avatar (channel C, issue #27)
+## Teams in-call avatar (channels C and D, issue #27)
 
 Opt-in. The avatar joins a Teams **meeting**, hears every participant, and answers
 spoken questions aloud with a lip-synced camera tile, using the same Voice Live +
@@ -397,25 +397,27 @@ it serves the media bot **without** provisioning an ACS resource. See
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `ENABLE_ACS` | `false` | **azd/infra only.** When `true`, provisions the conditional `communicationServices.bicep` and passes `ACS_ENDPOINT` to the container. **Not needed by channels A–D** — see the note below the table. |
+| `ENABLE_ACS` | `false` | **azd/infra only, and the one flag that provisions ACS.** When `true`, deploys the conditional `communicationServices.bicep` and passes `ACS_ENDPOINT` to the container. **Required by channel D** (the browser guest joiner); channels A–C do not need it. Set for you by `DEPLOY_PROFILE=in-call-browser`. |
 | `ACS_DATA_LOCATION` | `United States` | **azd/infra only.** Data residency geography for the ACS resource. |
 | `ACS_ENDPOINT` | — | ACS resource endpoint (`https://<acs>.communication.azure.com/`). Set automatically by infra when `ENABLE_ACS=true`. Auth via the container's managed identity (needs a role on the ACS resource). |
 | `ACS_CONNECTION_STRING` | — | Alternative to `ACS_ENDPOINT` + managed identity (includes endpoint + key). Takes precedence when set; simplest for local/dev. |
 | `ACS_CALLBACK_BASE_URL` | — | Public HTTPS base URL ACS uses for call-event callbacks and the media WebSocket. Defaults to the app's own external ingress; set for local dev behind a Dev Tunnel/ngrok. |
 | `ACS_AUDIO_SAMPLE_RATE` | `24000` | PCM sample rate (Hz) for the ACS↔Voice Live bridge. `24000` matches Voice Live (no resample); `16000` also valid. |
 | `ACS_WAKE_PHRASES` | *(derived from the persona name)* | Comma-separated, case-insensitive phrases that invoke a spoken answer (turn-taking, so it never talks over the room). Defaults to `hey <name>,<name>` lower-cased, where `<name>` is the resolved persona name — so you say "hey Simone" to the avatar shown as Simone. Set this only to override. |
-| `ACS_REQUIRE_WAKE_PHRASE` | `true` | Require a wake phrase before answering (half-duplex). Set `false` in a 1:1 test meeting to answer every turn. |
+| `ACS_REQUIRE_WAKE_PHRASE` | `true` | Require a wake phrase before answering, so she stays quiet unless addressed. Set `false` in a 1:1 test meeting to answer every turn. |
 | `ACS_IDLE_TIMEOUT_S` | `0` | Leave the call after N seconds of inactivity (`0` disables). |
-| `ACS_FOLLOWUP_WINDOW_S` | `30` | Seconds after an answer during which a follow-up needs **no** wake phrase, so a real back-and-forth doesn't require saying the name every turn. |
+| `ACS_FOLLOWUP_WINDOW_S` | `90` | Seconds after an answer during which a follow-up needs **no** wake phrase, so a real back-and-forth doesn't require saying the name every turn. Raised from 30s after live testing: questions plainly aimed at her landed 35-40s after the previous answer and were met with silence, which reads as being ignored. |
 
 > [!NOTE]
 > **The `ACS_` prefix spans two unrelated things.** Read it as two groups:
 >
 > - **The ACS *resource*** — `ENABLE_ACS`, `ACS_DATA_LOCATION`, `ACS_ENDPOINT`,
->   `ACS_CONNECTION_STRING`, `ACS_CALLBACK_BASE_URL`. **No channel in the A–D ladder
->   needs these.** They serve the separate browser joiner (`/acs-join.html`), where a
->   browser tab joins a meeting as an anonymous guest. Leave `ENABLE_ACS` at `false`
->   unless you are specifically using that page.
+>   `ACS_CONNECTION_STRING`, `ACS_CALLBACK_BASE_URL`. These provision and address the
+>   ACS resource, and they are needed by **channel D only** — the browser guest
+>   joiner at `/acs-join.html`, where a browser tab joins a meeting as an anonymous
+>   guest. Channels A–C never touch them. Choosing `DEPLOY_PROFILE=in-call-browser`
+>   sets `ENABLE_ACS` for you, so you should not normally set it by hand. See
+>   [`channels/d-in-call-headless.md`](channels/d-in-call-headless.md#deploying-it).
 > - **The audio *bridge*** — `ACS_AUDIO_SAMPLE_RATE`, `ACS_WAKE_PHRASES`,
 >   `ACS_REQUIRE_WAKE_PHRASE`, `ACS_IDLE_TIMEOUT_S`, `ACS_FOLLOWUP_WINDOW_S`. These
 >   are read by `backend/acs/bridge.py` and **do apply to channel C**, which speaks
@@ -438,7 +440,7 @@ The matching values on the VM are `Bot__EnableVideo`, `Bot__VideoWidth/Height/Fp
 | `MEETING_BOT_VIDEO_WIDTH` | `640` | Outbound frame width. Must match `Bot__VideoWidth`. |
 | `MEETING_BOT_VIDEO_HEIGHT` | `360` | Outbound frame height. Must match `Bot__VideoHeight`. |
 | `MEETING_BOT_VIDEO_FPS` | `15` | Outbound frame rate. Must match `Bot__VideoFps`. |
-| `ACS_AVATAR_VIDEO_ENABLED` | `false` | Ask Voice Live to synthesise avatar **video** for in-call sessions. Required for either leg to have a face. |
+| `ACS_AVATAR_VIDEO_ENABLED` | `false` | Ask Voice Live to synthesise avatar **video** for in-call sessions. Required for either leg to have a face. Set for you by `DEPLOY_PROFILE=in-call-browser`. |
 | `BROWSER_JOIN_VIDEO_ENABLED` | `false` | Browser-joiner leg only: decode the avatar in the browser and publish it as the ACS video tile. Setting it `false` is the safe rollback — the voice keeps working. |
 
 ### Windows media host *(azd/infra only)*
@@ -450,8 +452,8 @@ deploy first and tells you which one.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `MEETING_BOT_ENABLED` | `false` | Serves the media-bot bridge at `/ws/acs/audio` on the container app. Implied by `DEPLOY_PROFILE=in-call`. Independent of `ENABLE_ACS`. |
-| `DEPLOY_MEETING_BOT_HOST` | `false` | Provisions `infra/modules/meetingBotHost.bicep` — Windows VM, public IP, NSG, and the Azure Bot registration with the Teams **calling** webhook. Implied by `DEPLOY_PROFILE=in-call`. |
+| `MEETING_BOT_ENABLED` | `false` | Serves the media-bot bridge at `/ws/acs/audio` on the container app. Set by `DEPLOY_PROFILE=in-call`, and reset to `false` by any other profile. Independent of `ENABLE_ACS`. |
+| `DEPLOY_MEETING_BOT_HOST` | `false` | Provisions `infra/modules/meetingBotHost.bicep` — Windows VM, public IP, NSG, and the Azure Bot registration with the Teams **calling** webhook. Set by `DEPLOY_PROFILE=in-call`, and reset to `false` by any other profile, so switching away stops the VM being deployed. |
 | `MEETING_BOT_APP_ID` | — | **Required.** Entra app client id of the calling bot. **Must differ from `BOT_APP_ID`** — an Entra app can back only one Azure Bot resource; reusing it fails with `MsaAppId is already in use`. |
 | `MEETING_BOT_APP_TENANT_ID` | *(deployment tenant)* | Tenant of that app registration. |
 | `MEETING_BOT_DNS_LABEL` | — | **Required.** Globally-unique DNS label; becomes `<label>.<region>.cloudapp.azure.com` and must resolve for the TLS certificate. Preflight checks availability. |

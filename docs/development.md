@@ -120,8 +120,8 @@ Remove-Item Env:\RECREATE_INDEX
 ## Smoke-test the index
 
 ```powershell
-uv run python scripts/test_aisearch_query.py "what was discussed about dividends"
-uv run python scripts/test_aisearch_query.py -k 3 "board chair election"
+uv run python scripts/smoke_aisearch_query.py "what was discussed about dividends"
+uv run python scripts/smoke_aisearch_query.py -k 3 "board chair election"
 ```
 
 Issues a hybrid + semantic query and prints the top results with BM25/vector and
@@ -130,35 +130,41 @@ reranker scores.
 ## Smoke-test the live agent
 
 ```powershell
-uv run python scripts/test_foundry_agent.py
+uv run python scripts/smoke_foundry_agent.py
 ```
 
 Exercises the registered Foundry agent end-to-end (tool calls + final answer) — useful
 to confirm tool routing after editing prompts or switching `AGENT_MODEL`. The routing
 test checklist + model-shootout results live in
-[`prompts/agent/routing-test-questions.md`](../prompts/agent/routing-test-questions.md).
+[`prompts/routing-test-questions.md`](../prompts/routing-test-questions.md).
 
 ## Automated tests
 
 Everything above is a *smoke test* — it needs live Azure resources. Most of the suite
-does not: **nine checks run fully offline**, with no Azure, no credentials and no
-network. They are the fastest way to know you have not broken anything.
+does not: **eleven checks run fully offline**, with no Azure, no credentials and no
+network. They live in [`tests/`](../tests/README.md) — in this repo the `test_` prefix
+means exactly that, and anything that costs money to run sits in
+[`scripts/`](../scripts/README.md) under a `setup_` / `grant_` / `smoke_` / `bench_`
+prefix instead. They are the fastest way to know you have not broken anything.
 
 ```powershell
-uv run python scripts/test_docs.py             # links, mermaid, and region drift vs preflight.py
-uv run python scripts/test_preflight.py        # the helpers that settle the deploy target
-uv run python scripts/test_voice_binding.py    # the agent/model binding switch
-uv run python scripts/test_build_query.py      # site scoping renders the operators Web IQ documents
-uv run python scripts/test_avatar_identity.py  # every surface calls the assistant the same name
-uv run python scripts/test_build_package.py    # the Teams package builder's manifest
-uv run python scripts/test_agent_model_binding.py  # the agent binds to a deployment that exists
-uv run python scripts/test_agent_tool_wiring.py
-uv run python scripts/test_rbac_propagation.py # the RBAC-propagation wait used by postprovision
+uv run python tests/test_docs.py             # links, mermaid, and region drift vs preflight.py
+uv run python tests/test_preflight.py        # the helpers that settle the deploy target
+uv run python tests/test_voice_binding.py    # the agent/model binding switch
+uv run python tests/test_build_query.py      # site scoping renders the operators Web IQ documents
+uv run python tests/test_avatar_identity.py  # every surface calls the assistant the same name
+uv run python tests/test_build_package.py    # the Teams package builder's manifest
+uv run python tests/test_agent_model_binding.py  # the agent binds to a deployment that exists
+uv run python tests/test_agent_tool_wiring.py    # required vs optional agent tools degrade correctly
+uv run python tests/test_prompt_tool_names.py    # prompt tool-name placeholders match each binding
+uv run python tests/test_rbac_propagation.py # the RBAC-propagation wait used by postprovision
+uv run python tests/test_set_profile.py      # profile flags are authoritative, not cumulative
 ```
 
 There is no single runner — each is a standalone script, so run the one that covers what
-you touched. Only [`test_aisearch_query.py`](../scripts/test_aisearch_query.py) and
-[`test_foundry_agent.py`](../scripts/test_foundry_agent.py) need live Azure; those are
+you touched. They anchor their paths on `__file__`, so the working directory does not
+matter. Only [`smoke_aisearch_query.py`](../scripts/smoke_aisearch_query.py) and
+[`smoke_foundry_agent.py`](../scripts/smoke_foundry_agent.py) need live Azure; those are
 the smoke tests above.
 
 Two are worth knowing in more detail.
@@ -192,8 +198,8 @@ After editing the prompts in [`prompts/agent/`](../prompts/agent/) or changing
 uv run python scripts/setup_foundry_agent.py
 ```
 
-The script selects the prompt variant (reasoning vs non-reasoning) from `AGENT_MODEL`
-and wires the AI Search + Grounding-with-Bing-Custom-Search tools. See
+The script loads the single agent prompt (`prompts/agent/instructions.md`) and
+wires the AI Search + Grounding-with-Bing-Custom-Search tools. See
 [`prompts/README.md`](../prompts/README.md) and
 [architecture.md](architecture.md#tool-calling-accuracy).
 

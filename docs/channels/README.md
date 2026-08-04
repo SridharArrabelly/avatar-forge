@@ -30,8 +30,8 @@ access you need**.
 | --- | --- | --- | --- | --- | --- |
 | **A** | **Web** (standalone) | Shipped | — *(this is the core)* | **None** beyond an Azure subscription | [a-web.md](a-web.md) |
 | **B** | **Teams personal tab** | Shipped | **None** | Upload/sideload a Teams app package | [b-teams-tab.md](b-teams-tab.md) |
-| **C** | **In-call avatar** — Graph media bot | **Working** | Azure Bot (calling) + **Windows VM** + DNS + TLS | **Highest**: Graph app permissions, admin consent, **Teams app access policy** | [c-in-call-media-bot.md](c-in-call-media-bot.md) |
-| **D** | **In-call avatar** — headless browser | Placeholder | Container/job | TBD (expected lower than C) | [d-in-call-headless.md](d-in-call-headless.md) |
+| **C** | **In-call avatar** — Graph media bot | **Working** | Azure Bot (calling) + **Windows VM** + DNS + TLS | **Entra admin consent** for `Calls.*.All` *(a Teams access policy is needed only for short `/meet/` links)* | [c-in-call-media-bot.md](c-in-call-media-bot.md) |
+| **D** | **In-call avatar** — ACS browser guest | **Media leg working**; headless host not built | ACS resource *(`ENABLE_ACS`)*; container/job only if made headless | **None** — anonymous guest join, verified live | [d-in-call-headless.md](d-in-call-headless.md) |
 
 ### Two things this table is deliberately saying
 
@@ -40,11 +40,15 @@ B is the best-value step in the whole product: it adds a Teams surface for **zer
 extra Azure resources** — the manifest simply points a `staticTab` at the ACA URL
 the web app already serves.
 
-**C and D are rivals, not siblings.** They are two implementations of the *same*
-capability (the avatar present in a live meeting). You are expected to run the
-comparison in [d-in-call-headless.md](d-in-call-headless.md#comparison) and keep
-one. They are numbered separately only so each can be documented and deployed
-independently while the comparison is open.
+**C and D are alternatives, and both are supported.** They are two implementations
+of the *same* capability — the avatar present in a live meeting — and you pick the
+one that fits your tenant. Neither supersedes the other:
+
+| | **C** — Graph media bot | **D** — headless browser |
+| --- | --- | --- |
+| **Pro** | Supported first-party API; joins **any** meeting from a link once consented; proven live | **No administrator at all**; scales to zero; no Windows, no VM |
+| **Con** | Needs an Entra admin; ~$283/month always-on VM; the media SDK pin [expires every three months](c-in-call-media-bot.md) | Rides an SDK implementation detail that can break silently; needs the tenant to allow anonymous guest join; a full browser per meeting |
+| **Reach for it when** | you have admin, and want the robust supported path | you cannot get admin — this is then the *only* option |
 
 ```mermaid
 flowchart LR
@@ -55,10 +59,10 @@ flowchart LR
         A --> B
     end
 
-    subgraph Rivals["Live in-call presence — pick ONE, then retire the other"]
+    subgraph Rivals["Live in-call presence — two routes, both kept"]
         direction LR
-        C["<b>C</b> · Graph media bot<br/>Windows VM · <b>built &amp; working</b><br/>admin: <b>Teams access policy</b>"]
-        D["<b>D</b> · Headless browser<br/><i>placeholder</i><br/>admin: TBD"]
+        C["<b>C</b> · Graph media bot<br/>Windows VM · <b>built &amp; working</b><br/>admin: <b>Entra consent</b>"]
+        D["<b>D</b> · ACS browser guest<br/><i>working in acs-join.js</i><br/>admin: <b>none</b>"]
     end
 
     A -- "in-call needs A deployed<br/><i>(but not B)</i>" --> Rivals
@@ -75,13 +79,17 @@ needs the backend, not the Teams tab — you can deploy C without ever installin
 | --- | --- | --- |
 | Demo the avatar to anyone with a browser | **A** | No Teams, no admin, no manifest |
 | Put it in front of Teams users with least friction | **A + B** | Zero extra infra; sideload if you lack admin rights |
-| Have it **join a meeting, hear the room, and answer aloud** | **A + C** | The only path with true in-call presence |
-| Evaluate a cheaper in-call option | **A + D** | Then run the comparison and drop the loser |
+| Have it **join a meeting, hear the room, and answer aloud** — *with* an admin | **A + C** | Supported first-party path; joins any meeting from a link |
+| The same, but you **cannot get an administrator** | **A + D** | The only in-call route that needs no consent at all |
 
-**Cannot get Teams admin?** Stop at **A + B** (sideloading a personal tab is
-usually permitted when uploading custom apps is enabled). **C is blocked without
-a Teams administrator** — it requires a Teams app access policy that only they
-can create. Confirm that before investing in the VM.
+**Cannot get an Entra admin?** **C is blocked** — `Calls.JoinGroupCall.All` and
+`Calls.AccessMedia.All` are application permissions, and only an administrator can
+consent to them. There is no user-consent path and no way to join arbitrary meetings
+without them, so **D is your in-call option**; otherwise stop at **A + B**.
+
+**Cannot get a *Teams* admin?** That alone does not block C — use a classic
+`/l/meetup-join/` link, which needs no access policy. See
+[admin-checklist.md](../admin-checklist.md).
 
 ---
 
@@ -92,7 +100,8 @@ numbered plan:
 
 ```powershell
 uv run python scripts/set_profile.py       # interactive
-uv run python scripts/set_profile.py --profile in-call
+uv run python scripts/set_profile.py --profile in-call           # channel C
+uv run python scripts/set_profile.py --profile in-call-browser   # channel D
 ```
 
 The profile lives in the azd environment, **not** in an `azd up` prompt. `azd up`
@@ -105,12 +114,13 @@ capability, so environments created before profiles existed are unaffected.
 
 | Flag | Set by profile | Effect |
 | --- | --- | --- |
-| `DEPLOY_PROFILE` | — | `web` · `teams-tab` · `in-call`. Drives everything below. |
+| `DEPLOY_PROFILE` | — | `web` · `teams-tab` · `in-call` · `in-call-browser`. Drives everything below, and resets the flags of whichever profile you did *not* pick. |
 | *(none)* | `web`, `teams-tab` | Channel **A**. Container app, Foundry agent, AI Search, ACR, identity, roles. |
 | `MEETING_BOT_ENABLED` | `in-call` | Serves the media-bot bridge (`/ws/acs/audio`) for **C**. |
 | `DEPLOY_MEETING_BOT_HOST` | `in-call` | Provisions the Windows media host + calling bot registration. |
 | `MEETING_BOT_APP_ID` / `_DNS_LABEL` / `_ADMIN_PASSWORD` | you supply | Required for **C**; the host is skipped if any is missing. |
-| `ENABLE_ACS` | `false` | Provisions `modules/communicationServices.bicep`. **No channel above needs this.** It serves the separate browser joiner (`/acs-join.html`), where a browser tab joins a meeting as an anonymous guest. Channel C joins via Graph calling — the `acs` in `/ws/acs/audio` is the bridge protocol's name, not an ACS dependency. |
+| `ENABLE_ACS` | `in-call-browser` | Provisions `modules/communicationServices.bicep`. **Required by channel D**, the browser joiner at `/acs-join.html`, where a browser tab joins a meeting as an anonymous guest. Channels A–C do not need it: channel C joins via Graph calling, and the `acs` in `/ws/acs/audio` is the bridge protocol's name, not an ACS dependency. |
+| `ACS_AVATAR_VIDEO_ENABLED`, `BROWSER_JOIN_VIDEO_ENABLED` | `in-call-browser` | Give **D** a face. Without them the joiner still hears and answers, but publishes no video tile. |
 | `DEPLOY_BING_GROUNDING` | `true` | Provisions `modules/bingGrounding.bicep` (Bing account + site allow-list) and the Foundry connection to it, enabling the agent's web tool. On by default; set `false` to skip. Applies to every channel, but **only in agent mode** — see below. |
 
 > **Provisioning follows `VOICE_BINDING`.** Grounding with Bing is a *managed
@@ -145,8 +155,8 @@ will mislead you. Two things break the pattern:
 | --- | --- | --- | --- |
 | **A** web | `backend/`, `frontend/` | — | base `infra/` |
 | **B** tab | `frontend/teams.js` (same app) | `teams/` → `staticTabs` | *(none — reuses A)* |
-| **C** in-call | `meeting-bot/` (.NET, own Windows host) + `backend/acs/` (bridge) + `frontend/acs-join.js`, `companion.js` | `teams/` → `supportsCalling`, `configurableTabs` *(optional)* | `modules/meetingBotHost.bicep` |
-| **D** headless | *(not built)* | — | — |
+| **C** in-call | `meeting-bot/` (.NET, own Windows host) + `backend/acs/bridge.py` (`/ws/acs/audio`) | `teams/` → `supportsCalling`, `configurableTabs` *(optional)* | `modules/meetingBotHost.bicep` |
+| **D** in-call | `frontend/acs-join.{html,js}` + `backend/acs/` (`/ws/acs/browser`, `client.py`, `routes.py`) | — *(no Teams package — it joins as a guest)* | `modules/communicationServices.bicep`, `modules/acsRoleForApp.bicep` |
 
 One manifest, three progressive shapes — the build flags are the difference:
 
@@ -173,8 +183,11 @@ So you can compare them without re-reading prose:
 5. **How to verify** — the exact commands that prove it works
 6. **Cost & teardown** — what it costs to leave running, and how to stop paying
 
-*(Channel D is a placeholder and does not follow the contract yet — it has a
-proposed architecture and pre-registered comparison criteria instead.)*
+*(Channel D is split in two: its **media leg is built and live-verified**, and is
+documented in depth rather than to the contract above — the mechanism is the
+interesting part. The **headless host** that would run it without an operator's
+browser is still unbuilt, and carries a proposed architecture plus pre-registered
+comparison criteria.)*
 
 ### Where architecture lives, and why it is split three ways
 
