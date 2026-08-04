@@ -83,7 +83,8 @@ azd env new <environment-name>
 azd env set AZURE_LOCATION swedencentral
 
 # 4. Choose the channel AND the brain. Records DEPLOY_PROFILE (web · teams-tab ·
-#    in-call) and VOICE_BINDING (agent · model), sets the flags those imply, and
+#    in-call · in-call-browser) and VOICE_BINDING (agent · model), sets every flag
+#    those imply and resets the ones they do not, and
 #    prints the full numbered plan marking who performs each step.
 #    channels/README.md to choose the channel; voice-binding.md to choose the brain.
 uv run python scripts/set_profile.py

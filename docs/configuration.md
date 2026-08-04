@@ -35,7 +35,7 @@ Set with `uv run python scripts/set_profile.py` rather than by hand.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `DEPLOY_PROFILE` | *(empty)* | `web` · `teams-tab` · `in-call`. Selects which channel deploys, and drives the numbered step plan `scripts/preflight.py` prints. Empty keeps the pre-profile behaviour (explicit flags only). |
+| `DEPLOY_PROFILE` | *(empty)* | `web` · `teams-tab` · `in-call` · `in-call-browser`. Selects which channel deploys, and drives the numbered step plan `scripts/preflight.py` prints. Empty keeps the pre-profile behaviour (explicit flags only). **Selecting a profile is authoritative**: it writes that profile's flags and resets the others, so switching away from `in-call` also switches off its Windows VM. |
 | `PREFLIGHT_SKIP` | `false` | `true` bypasses the preprovision preflight gate. An escape hatch — nobody should be stuck behind their own tooling. |
 
 ---
@@ -397,7 +397,7 @@ it serves the media bot **without** provisioning an ACS resource. See
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `ENABLE_ACS` | `false` | **azd/infra only, and the one flag that provisions ACS.** When `true`, deploys the conditional `communicationServices.bicep` and passes `ACS_ENDPOINT` to the container. **Required by channel D** (the browser guest joiner); channels A–C do not need it. No `DEPLOY_PROFILE` sets it — see the note below the table. |
+| `ENABLE_ACS` | `false` | **azd/infra only, and the one flag that provisions ACS.** When `true`, deploys the conditional `communicationServices.bicep` and passes `ACS_ENDPOINT` to the container. **Required by channel D** (the browser guest joiner); channels A–C do not need it. Set for you by `DEPLOY_PROFILE=in-call-browser`. |
 | `ACS_DATA_LOCATION` | `United States` | **azd/infra only.** Data residency geography for the ACS resource. |
 | `ACS_ENDPOINT` | — | ACS resource endpoint (`https://<acs>.communication.azure.com/`). Set automatically by infra when `ENABLE_ACS=true`. Auth via the container's managed identity (needs a role on the ACS resource). |
 | `ACS_CONNECTION_STRING` | — | Alternative to `ACS_ENDPOINT` + managed identity (includes endpoint + key). Takes precedence when set; simplest for local/dev. |
@@ -415,9 +415,8 @@ it serves the media bot **without** provisioning an ACS resource. See
 >   `ACS_CONNECTION_STRING`, `ACS_CALLBACK_BASE_URL`. These provision and address the
 >   ACS resource, and they are needed by **channel D only** — the browser guest
 >   joiner at `/acs-join.html`, where a browser tab joins a meeting as an anonymous
->   guest. Channels A–C never touch them. Note that **no `DEPLOY_PROFILE` turns
->   `ENABLE_ACS` on**: `scripts/channels.py` does not mention ACS, so channel D is
->   enabled by setting it explicitly (`azd env set ENABLE_ACS true`). See
+>   guest. Channels A–C never touch them. Choosing `DEPLOY_PROFILE=in-call-browser`
+>   sets `ENABLE_ACS` for you, so you should not normally set it by hand. See
 >   [`channels/d-in-call-headless.md`](channels/d-in-call-headless.md#deploying-it).
 > - **The audio *bridge*** — `ACS_AUDIO_SAMPLE_RATE`, `ACS_WAKE_PHRASES`,
 >   `ACS_REQUIRE_WAKE_PHRASE`, `ACS_IDLE_TIMEOUT_S`, `ACS_FOLLOWUP_WINDOW_S`. These
@@ -441,7 +440,7 @@ The matching values on the VM are `Bot__EnableVideo`, `Bot__VideoWidth/Height/Fp
 | `MEETING_BOT_VIDEO_WIDTH` | `640` | Outbound frame width. Must match `Bot__VideoWidth`. |
 | `MEETING_BOT_VIDEO_HEIGHT` | `360` | Outbound frame height. Must match `Bot__VideoHeight`. |
 | `MEETING_BOT_VIDEO_FPS` | `15` | Outbound frame rate. Must match `Bot__VideoFps`. |
-| `ACS_AVATAR_VIDEO_ENABLED` | `false` | Ask Voice Live to synthesise avatar **video** for in-call sessions. Required for either leg to have a face. |
+| `ACS_AVATAR_VIDEO_ENABLED` | `false` | Ask Voice Live to synthesise avatar **video** for in-call sessions. Required for either leg to have a face. Set for you by `DEPLOY_PROFILE=in-call-browser`. |
 | `BROWSER_JOIN_VIDEO_ENABLED` | `false` | Browser-joiner leg only: decode the avatar in the browser and publish it as the ACS video tile. Setting it `false` is the safe rollback — the voice keeps working. |
 
 ### Windows media host *(azd/infra only)*
@@ -453,8 +452,8 @@ deploy first and tells you which one.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `MEETING_BOT_ENABLED` | `false` | Serves the media-bot bridge at `/ws/acs/audio` on the container app. Implied by `DEPLOY_PROFILE=in-call`. Independent of `ENABLE_ACS`. |
-| `DEPLOY_MEETING_BOT_HOST` | `false` | Provisions `infra/modules/meetingBotHost.bicep` — Windows VM, public IP, NSG, and the Azure Bot registration with the Teams **calling** webhook. Implied by `DEPLOY_PROFILE=in-call`. |
+| `MEETING_BOT_ENABLED` | `false` | Serves the media-bot bridge at `/ws/acs/audio` on the container app. Set by `DEPLOY_PROFILE=in-call`, and reset to `false` by any other profile. Independent of `ENABLE_ACS`. |
+| `DEPLOY_MEETING_BOT_HOST` | `false` | Provisions `infra/modules/meetingBotHost.bicep` — Windows VM, public IP, NSG, and the Azure Bot registration with the Teams **calling** webhook. Set by `DEPLOY_PROFILE=in-call`, and reset to `false` by any other profile, so switching away stops the VM being deployed. |
 | `MEETING_BOT_APP_ID` | — | **Required.** Entra app client id of the calling bot. **Must differ from `BOT_APP_ID`** — an Entra app can back only one Azure Bot resource; reusing it fails with `MsaAppId is already in use`. |
 | `MEETING_BOT_APP_TENANT_ID` | *(deployment tenant)* | Tenant of that app registration. |
 | `MEETING_BOT_DNS_LABEL` | — | **Required.** Globally-unique DNS label; becomes `<label>.<region>.cloudapp.azure.com` and must resolve for the TLS certificate. Preflight checks availability. |

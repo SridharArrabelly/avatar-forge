@@ -15,7 +15,7 @@ Two independent choices decide what you deploy:
 
 | Axis | Question | Set by | Options |
 |---|---|---|---|
-| **Front door** | Where do people reach the avatar? | `DEPLOY_PROFILE` | `web` (A) · `teams-tab` (A+B) · `in-call` (A+B+C) — channel **D** is not a profile |
+| **Front door** | Where do people reach the avatar? | `DEPLOY_PROFILE` | `web` (A) · `teams-tab` (A+B) · `in-call` (A+B+C) · `in-call-browser` (A+B+D) |
 | **Brain** | What answers? | `VOICE_BINDING` | agent mode · model mode |
 
 They are orthogonal — **every front door works with either brain**. Both are chosen
@@ -137,9 +137,9 @@ They are not four equal options: **A → B is a ladder** (each additive on the o
 before), while **C and D are rivals** — two implementations of the same capability.
 The [channel hub](docs/channels/README.md) explains how to choose.
 
-Note that `DEPLOY_PROFILE` covers only A–C. **Channel D is switched on separately**
-with `ENABLE_ACS`, because no profile sets it — see
-[d-in-call-headless.md](docs/channels/d-in-call-headless.md#deploying-it).
+Picking a profile is enough on its own: it writes every flag that profile needs and
+resets the ones it does not, so choosing the browser guest turns ACS on *and* turns the
+media bot's Windows VM off. Nothing has to be set by hand.
 
 👉 **Start here: [docs/channels/README.md](docs/channels/README.md)** for the decision
 guide, and **[docs/admin-checklist.md](docs/admin-checklist.md)** for every manual step

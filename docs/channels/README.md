@@ -100,7 +100,8 @@ numbered plan:
 
 ```powershell
 uv run python scripts/set_profile.py       # interactive
-uv run python scripts/set_profile.py --profile in-call
+uv run python scripts/set_profile.py --profile in-call           # channel C
+uv run python scripts/set_profile.py --profile in-call-browser   # channel D
 ```
 
 The profile lives in the azd environment, **not** in an `azd up` prompt. `azd up`
@@ -113,12 +114,13 @@ capability, so environments created before profiles existed are unaffected.
 
 | Flag | Set by profile | Effect |
 | --- | --- | --- |
-| `DEPLOY_PROFILE` | — | `web` · `teams-tab` · `in-call`. Drives everything below. |
+| `DEPLOY_PROFILE` | — | `web` · `teams-tab` · `in-call` · `in-call-browser`. Drives everything below, and resets the flags of whichever profile you did *not* pick. |
 | *(none)* | `web`, `teams-tab` | Channel **A**. Container app, Foundry agent, AI Search, ACR, identity, roles. |
 | `MEETING_BOT_ENABLED` | `in-call` | Serves the media-bot bridge (`/ws/acs/audio`) for **C**. |
 | `DEPLOY_MEETING_BOT_HOST` | `in-call` | Provisions the Windows media host + calling bot registration. |
 | `MEETING_BOT_APP_ID` / `_DNS_LABEL` / `_ADMIN_PASSWORD` | you supply | Required for **C**; the host is skipped if any is missing. |
-| `ENABLE_ACS` | `false` | Provisions `modules/communicationServices.bicep`. **Required by channel D**, the browser joiner at `/acs-join.html`, where a browser tab joins a meeting as an anonymous guest. Channels A–C do not need it: channel C joins via Graph calling, and the `acs` in `/ws/acs/audio` is the bridge protocol's name, not an ACS dependency. Note that **no `DEPLOY_PROFILE` sets it** — see [d-in-call-headless.md](d-in-call-headless.md#deploying-it). |
+| `ENABLE_ACS` | `in-call-browser` | Provisions `modules/communicationServices.bicep`. **Required by channel D**, the browser joiner at `/acs-join.html`, where a browser tab joins a meeting as an anonymous guest. Channels A–C do not need it: channel C joins via Graph calling, and the `acs` in `/ws/acs/audio` is the bridge protocol's name, not an ACS dependency. |
+| `ACS_AVATAR_VIDEO_ENABLED`, `BROWSER_JOIN_VIDEO_ENABLED` | `in-call-browser` | Give **D** a face. Without them the joiner still hears and answers, but publishes no video tile. |
 | `DEPLOY_BING_GROUNDING` | `true` | Provisions `modules/bingGrounding.bicep` (Bing account + site allow-list) and the Foundry connection to it, enabling the agent's web tool. On by default; set `false` to skip. Applies to every channel, but **only in agent mode** — see below. |
 
 > **Provisioning follows `VOICE_BINDING`.** Grounding with Bing is a *managed

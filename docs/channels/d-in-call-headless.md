@@ -449,8 +449,8 @@ media bot has no such dependency, and belongs in the comparison below.
 ## Deploying it
 
 This leg is **additive**: a deployment without it behaves exactly as it does today.
-Nothing here is switched on by a `DEPLOY_PROFILE`, which is deliberate but easy to
-trip over — see the note at the end.
+Pick the profile and everything below is set for you — there is nothing to configure by
+hand.
 
 ### What has to exist
 
@@ -463,18 +463,38 @@ trip over — see the note at the end.
 | `ACS_AVATAR_VIDEO_ENABLED` | `true` | Asks Voice Live to synthesise avatar **video** for in-call sessions. Without it there is no face to publish. |
 | `BROWSER_JOIN_VIDEO_ENABLED` | `true` | Publishes that face as the ACS video tile. Setting it `false` is the safe rollback — her voice keeps working. |
 
-Turn-taking is tuned with `ACS_WAKE_PHRASES`, `ACS_REQUIRE_WAKE_PHRASE` and
-`ACS_FOLLOWUP_WINDOW_S`. Full descriptions and defaults live in
-[`configuration.md`](../configuration.md#teams-in-call-avatar-channels-c-and-d-issue-27).
+The three the profile controls — `ENABLE_ACS`, `ACS_AVATAR_VIDEO_ENABLED` and
+`BROWSER_JOIN_VIDEO_ENABLED` — are set for you, so the table above is a reference for
+what is happening rather than a list of things to type:
 
 ```powershell
-azd env set ENABLE_ACS true
-azd env set ACS_AVATAR_VIDEO_ENABLED true
-azd env set BROWSER_JOIN_VIDEO_ENABLED true
+uv run python scripts/set_profile.py --profile in-call-browser
+uv run python scripts/preflight.py
 azd up
 ```
 
 Then open `https://<app>/acs-join.html`, paste a Teams meeting link, and join.
+
+Turn-taking is tuned separately with `ACS_WAKE_PHRASES`, `ACS_REQUIRE_WAKE_PHRASE` and
+`ACS_FOLLOWUP_WINDOW_S`. Full descriptions and defaults live in
+[`configuration.md`](../configuration.md#teams-in-call-avatar-channels-c-and-d-issue-27).
+
+### Adding it to an environment that already exists
+
+Going from A or A+B to this one is the case worth spelling out, because the obvious
+command is the wrong one. These flags reach the container as **environment variables
+written by Bicep**, so `azd deploy` — which only ships a new image — cannot see them:
+
+```powershell
+uv run python scripts/set_profile.py --profile in-call-browser
+azd provision   # creates ACS, rewrites the container app's env
+azd deploy      # puts your image back
+```
+
+`set_profile.py` detects this case and prints exactly those commands. **Run both.**
+`azd provision` on its own reverts the container app to the placeholder image from
+Bicep and still reports success, which looks like a broken deploy rather than a
+missing step.
 
 > **`ENABLE_ACS` is an infrastructure flag, not a runtime one.** The backend never reads
 > it. `backend/config.py` derives its own gate as
@@ -488,11 +508,13 @@ Then open `https://<app>/acs-join.html`, paste a Teams meeting link, and join.
 > the container app to the Bicep placeholder image — it reports success while the site
 > silently serves the wrong revision. Always follow it with `azd deploy`.
 
-> **No deploy profile turns this on.** `DEPLOY_PROFILE` has exactly three values —
-> `web`, `teams-tab` and `in-call` — and `in-call` provisions the *Graph media bot*,
-> not this. `scripts/channels.py` does not mention ACS at all, so `ENABLE_ACS` must be
-> set by hand. That is a genuine gap in the profile story rather than a design
-> decision, and it should be closed when the channel lettering is settled.
+> **Picking this profile also switches the media bot off.** Profile selection is
+> authoritative rather than cumulative: `set_profile.py` writes the chosen profile's
+> flags and resets every flag belonging to the profiles you did not choose. Moving from
+> `in-call` to `in-call-browser` therefore sets `DEPLOY_MEETING_BOT_HOST=false`, and the
+> next `azd provision` tears the Windows VM down. That is deliberate — the alternative
+> is quietly paying ~$283/month for a host the current profile never wanted — but it
+> does mean the two in-call legs are an either/or through the profile mechanism.
 
 ### Admin steps you must do yourself
 

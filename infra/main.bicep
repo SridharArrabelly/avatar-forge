@@ -186,13 +186,13 @@ param srModel string = 'mai-transcribe-1'
 param recognitionLanguage string = 'auto'
 
 // ───────── channel C in-call media (#27) ─────────
-@description('Deployment profile from `scripts/set_profile.py` — one of "web", "teams-tab", "in-call". Drives which optional channels deploy. Empty keeps the pre-profile behaviour (explicit flags only).')
+@description('Deployment profile from `scripts/set_profile.py` — one of "web", "teams-tab", "in-call" (channel C, Windows media bot) or "in-call-browser" (channel D, ACS browser guest). Drives which optional channels deploy. Empty keeps the pre-profile behaviour (explicit flags only).')
 param deployProfile string = ''
 @description('Enable channel C ACS Call Automation media participant ("true"/"false"). When not "true" (default), no ACS resource is created and the deployment behaves exactly as today.')
 param enableAcs string = 'false'
 @description('ACS data residency geography (NOT an Azure region), e.g. "United States", "Europe", "Africa".')
 param acsDataLocation string = 'United States'
-@description('"true"/"false". Serve the .NET Teams media-bot bridge without an ACS resource (sets MEETING_BOT_ENABLED). Implied by deployProfile="in-call".')
+@description('"true"/"false". Serve the .NET Teams media-bot bridge without an ACS resource (sets MEETING_BOT_ENABLED). Implied by deployProfile="in-call" exactly; "in-call-browser" is channel D and does not imply it.')
 param meetingBotEnabled string = 'false'
 @description('PCM sample rate (Hz) the Teams media bot streams (16000).')
 param acsAudioSampleRate string = ''
@@ -206,7 +206,7 @@ param browserJoinVideoEnabled string = ''
 // ───────── channel C Windows media host (#27) ─────────
 // Deployed only for the in-call channel. Requires its own Entra app — an app can
 // back only ONE Azure Bot resource, so this cannot reuse botAppId.
-@description('"true"/"false". Provision the Windows media host + calling bot registration. Implied by deployProfile="in-call".')
+@description('"true"/"false". Provision the Windows media host + calling bot registration. Implied by deployProfile="in-call" exactly; "in-call-browser" is channel D and needs no host.')
 param deployMeetingBotHost string = 'false'
 @description('Entra app client id of the CALLING bot. Must differ from botAppId.')
 param meetingBotAppId string = ''

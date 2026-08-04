@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.43.8.12551",
-      "templateHash": "17707211365533760275"
+      "templateHash": "18367724207691146042"
     }
   },
   "parameters": {
@@ -336,7 +336,7 @@
       "type": "string",
       "defaultValue": "",
       "metadata": {
-        "description": "Deployment profile from `scripts/set_profile.py` — one of \"web\", \"teams-tab\", \"in-call\". Drives which optional channels deploy. Empty keeps the pre-profile behaviour (explicit flags only)."
+        "description": "Deployment profile from `scripts/set_profile.py` — one of \"web\", \"teams-tab\", \"in-call\" (channel C, Windows media bot) or \"in-call-browser\" (channel D, ACS browser guest). Drives which optional channels deploy. Empty keeps the pre-profile behaviour (explicit flags only)."
       }
     },
     "enableAcs": {
@@ -357,7 +357,7 @@
       "type": "string",
       "defaultValue": "false",
       "metadata": {
-        "description": "\"true\"/\"false\". Serve the .NET Teams media-bot bridge without an ACS resource (sets MEETING_BOT_ENABLED). Implied by deployProfile=\"in-call\"."
+        "description": "\"true\"/\"false\". Serve the .NET Teams media-bot bridge without an ACS resource (sets MEETING_BOT_ENABLED). Implied by deployProfile=\"in-call\" exactly; \"in-call-browser\" is channel D and does not imply it."
       }
     },
     "acsAudioSampleRate": {
@@ -392,7 +392,7 @@
       "type": "string",
       "defaultValue": "false",
       "metadata": {
-        "description": "\"true\"/\"false\". Provision the Windows media host + calling bot registration. Implied by deployProfile=\"in-call\"."
+        "description": "\"true\"/\"false\". Provision the Windows media host + calling bot registration. Implied by deployProfile=\"in-call\" exactly; \"in-call-browser\" is channel D and needs no host."
       }
     },
     "meetingBotAppId": {
