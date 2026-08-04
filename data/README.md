@@ -17,6 +17,27 @@ Supported extensions, auto-detected by [scripts/setup_aisearch_index.py](../scri
 To add another format, register a reader in the `READERS` dict at the top of
 that script.
 
+`README.md` files are skipped — they are repo documentation, not corpus content.
+
+## Folder layout decides `documentType`
+
+The folder a file sits in sets its `documentType`, which is indexed as a
+filterable field **and** prepended into every chunk's text (`Type: …`) so the
+agent can tell the two corpora apart when it answers:
+
+| location | `documentType` | contents |
+| --- | --- | --- |
+| `data/` | `MeetingMinutes` | board and executive meeting minutes |
+| `data/policies/` | `Policy` | official policies, procedures, standards, codes |
+
+So **put policy documents in `data/policies/`, not loose in `data/`** — a policy
+dropped at the top level would be labelled and answered as if it were meeting
+minutes. Meeting minutes keep the `Board Meeting – DD Month YYYY` filename
+pattern, which is what `parse_meeting_date()` reads the date from; policies have
+no date and are not listed in the meeting catalogue.
+
+To add another policy folder, extend `POLICY_DIRS` in that same script.
+
 ## (Re)build the index
 
 ```powershell

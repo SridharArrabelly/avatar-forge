@@ -129,7 +129,8 @@ def run(query: str, k: int, year: int | None = None, month: int | None = None) -
         query_type=QueryType.SEMANTIC,
         semantic_configuration_name=SEMANTIC_CONFIG,
         filter=filter_expr,
-        select=["id", "title", "source", "chunk_index", "content", "meeting_date", "year", "month"],
+        select=["id", "title", "source", "documentType", "chunk_index", "content",
+                "meeting_date", "year", "month"],
         top=k,
     )
 
@@ -143,6 +144,7 @@ def run(query: str, k: int, year: int | None = None, month: int | None = None) -
             snippet = snippet[:240] + "..."
         meeting_date = r.get("meeting_date") or "N/A"
         print(f"\n[{i}] {r.get('title')}  (chunk {r.get('chunk_index')})")
+        print(f"    type   : {r.get('documentType') or 'N/A'}")
         print(f"    source : {r.get('source')}")
         print(f"    date   : {meeting_date}  (year={r.get('year')}, month={r.get('month')})")
         print(f"    score  : {score:.4f}" + (f"   rerank: {rerank:.4f}" if rerank is not None else ""))

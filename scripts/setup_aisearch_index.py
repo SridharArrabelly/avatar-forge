@@ -206,6 +206,8 @@ def build_index(name: str, s: dict) -> SearchIndex:
         SimpleField(name="id", type=SearchFieldDataType.String, key=True, filterable=True),
         SearchableField(name="title", type=SearchFieldDataType.String, filterable=True, sortable=True),
         SimpleField(name="source", type=SearchFieldDataType.String, filterable=True, facetable=True),
+        SimpleField(name="documentType", type=SearchFieldDataType.String,
+                    filterable=True, facetable=True),
         SimpleField(name="meeting_date", type=SearchFieldDataType.DateTimeOffset,
                     filterable=True, sortable=True, facetable=True),
         SimpleField(name="year", type=SearchFieldDataType.Int32,
@@ -396,10 +398,40 @@ def detect_embed_dim(client, deployment: str) -> int:
     return len(resp.data[0].embedding)
 
 
+DOC_TYPE_MINUTES = "MeetingMinutes"
+DOC_TYPE_POLICY = "Policy"
+
+# Sub-directories of data/ whose contents are policy documents rather than minutes.
+POLICY_DIRS = {"policies"}
+
+# Repo documentation that lives alongside the corpus but is NOT corpus content.
+# data/README.md explains how to build the index; indexing it would let build
+# instructions surface as if they were an executive document.
+EXCLUDED_STEMS = {"readme"}
+
+
+def classify_document(path: Path, data_dir: Path) -> str:
+    """Derive documentType from where the file sits under ``data/``.
+
+    Anything beneath ``data/policies/`` is a Policy; everything else is treated as
+    meeting minutes. The value is both indexed as a filterable field and prepended
+    into the chunk text, because only the text form participates in the embedding
+    and the BM25 index -- the field alone cannot influence retrieval.
+    """
+    try:
+        rel = path.relative_to(data_dir)
+    except ValueError:
+        return DOC_TYPE_MINUTES
+    parents = {part.lower() for part in rel.parts[:-1]}
+    return DOC_TYPE_POLICY if parents & POLICY_DIRS else DOC_TYPE_MINUTES
+
+
 def iter_documents(s: dict, aoai) -> Iterable[dict]:
     files = sorted(
         f for f in s["data_dir"].rglob("*")
-        if f.is_file() and f.suffix.lower() in READERS
+        if f.is_file()
+        and f.suffix.lower() in READERS
+        and f.stem.lower() not in EXCLUDED_STEMS
     )
     if not files:
         log.warning("No supported files (%s) found in %s",
@@ -409,7 +441,8 @@ def iter_documents(s: dict, aoai) -> Iterable[dict]:
     for path in files:
         title = path.stem
         reader = READERS[path.suffix.lower()]
-        log.info("Reading %s", path.name)
+        doc_type = classify_document(path, s["data_dir"])
+        log.info("Reading %s  [%s]", path.name, doc_type)
         try:
             raw = reader(path)
         except Exception as e:
@@ -419,11 +452,15 @@ def iter_documents(s: dict, aoai) -> Iterable[dict]:
         # Extract meeting date from filename
         meeting_dt = parse_meeting_date(path.stem)
         if meeting_dt:
-            date_prefix = f"[Document: {title} | Meeting Date: {meeting_dt.strftime('%d %B %Y')}]\n\n"
+            date_prefix = (
+                f"[Document: {title} | Type: {doc_type} | "
+                f"Meeting Date: {meeting_dt.strftime('%d %B %Y')}]\n\n"
+            )
             log.info("  meeting date: %s", meeting_dt.strftime("%Y-%m-%d"))
         else:
-            date_prefix = f"[Document: {title}]\n\n"
-            log.warning("  no date found in filename")
+            date_prefix = f"[Document: {title} | Type: {doc_type}]\n\n"
+            if doc_type == DOC_TYPE_MINUTES:
+                log.warning("  no date found in filename")
 
         chunks = chunk_text(raw, s["chunk_size"], s["chunk_overlap"])
         if not chunks:
@@ -444,6 +481,7 @@ def iter_documents(s: dict, aoai) -> Iterable[dict]:
                     "id": f"{uuid.uuid5(uuid.NAMESPACE_URL, f'{path.name}:{idx}')}",
                     "title": title,
                     "source": path.name,
+                    "documentType": doc_type,
                     "chunk_index": idx,
                     "content": text,
                     "content_vector": vec,
