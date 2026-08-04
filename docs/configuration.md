@@ -95,7 +95,7 @@ agent-creation time; the runtime backend never talks to Bing directly.
 ## AI Search & index build *(provisioning only)*
 
 Read by [`scripts/setup_aisearch_index.py`](../scripts/setup_aisearch_index.py) and
-[`scripts/test_aisearch_query.py`](../scripts/test_aisearch_query.py).
+[`scripts/smoke_aisearch_query.py`](../scripts/smoke_aisearch_query.py).
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -152,7 +152,7 @@ of a deployment name, and it is why callers — including the Foundry agent — 
 > `MODEL_DEPLOYMENT_NAME` automatically, because the agent has to bind to the
 > deployment the template just created. Set it explicitly only for BYO Foundry, where
 > the deployment already exists and this template did not name it.
-> [`scripts/test_agent_model_binding.py`](../scripts/test_agent_model_binding.py) pins
+> [`tests/test_agent_model_binding.py`](../tests/test_agent_model_binding.py) pins
 > that behaviour.
 
 ---
@@ -302,7 +302,7 @@ avatar is called "Simone" everywhere without configuring anything.
 > and the wake phrase all resolve the name with the same rule
 > ([`backend/avatar_identity.py`](../backend/avatar_identity.py)):
 > `AVATAR_DISPLAY_NAME` → the active avatar model's friendly name → `Avatar`.
-> Pinned by `uv run python scripts/test_avatar_identity.py`.
+> Pinned by `uv run python tests/test_avatar_identity.py`.
 
 > **Renaming after a deploy needs one extra step.** The stage, bot, package and
 > wake phrase pick the new name up from the environment, but the assistant's

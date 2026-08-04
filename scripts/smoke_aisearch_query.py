@@ -10,10 +10,10 @@ Also supports --list-meetings to print all unique meetings in the index
 was actually ingested.
 
 Usage:
-    uv run python scripts/test_aisearch_query.py "what was discussed about dividends"
-    uv run python scripts/test_aisearch_query.py "board chair election" -k 3
-    uv run python scripts/test_aisearch_query.py "meeting summary" --year 2025 --month 2
-    uv run python scripts/test_aisearch_query.py --list-meetings
+    uv run python scripts/smoke_aisearch_query.py "what was discussed about dividends"
+    uv run python scripts/smoke_aisearch_query.py "board chair election" -k 3
+    uv run python scripts/smoke_aisearch_query.py "meeting summary" --year 2025 --month 2
+    uv run python scripts/smoke_aisearch_query.py --list-meetings
 
 Env: same as scripts/setup_aisearch_index.py (AZURE_SEARCH_ENDPOINT,
 SEARCH_INDEX_NAME, PROJECT_ENDPOINT, EMBEDDING_DEPLOYMENT, optional

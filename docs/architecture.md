@@ -259,15 +259,34 @@ avatar-forge/
 │   ├── auth.md                    # Identity and RBAC model
 │   └── testing-meetings.md        # Runbook for the two in-meeting paths
 │
-├── scripts/                       # Utility / one-off scripts (not part of the server)
+├── scripts/                       # Operational: these touch Azure, cost money, or gate a deploy
+│   ├── README.md                  # The naming convention — what running each one costs you
 │   ├── channels.py                # Single source of truth for deploy profiles and their steps
 │   ├── set_profile.py             # Step 0: choose a channel, record DEPLOY_PROFILE, print the plan
 │   ├── preflight.py               # Gate before azd up: regions, providers, tooling, per-profile inputs
-│   ├── setup_foundry_agent.py     # Creates the Foundry agent with AI Search + Bing Custom Search tools
+│   ├── rbac_propagation.py        # Retry helper: waits out data-plane RBAC propagation lag
 │   ├── setup_aisearch_index.py    # Creates/updates the AI Search index and ingests data/
-│   ├── test_aisearch_query.py     # Smoke-tests the index (hybrid + semantic query)
-│   ├── test_foundry_agent.py      # Smoke-tests the live agent end-to-end
-│   └── grant_byo_rbac.py          # Idempotently grants BYO runtime RBAC (brownfield)
+│   ├── setup_foundry_agent.py     # Creates the Foundry agent with AI Search + Bing Custom Search tools
+│   ├── grant_byo_rbac.py          # Idempotently grants BYO runtime RBAC (brownfield)
+│   ├── check_media_sdk_age.py     # Fails once the Graph media SDK pin passes 90 days (channel C)
+│   ├── smoke_aisearch_query.py    # Live: queries the index (hybrid + semantic)
+│   ├── smoke_foundry_agent.py     # Live: end-to-end question against the deployed agent
+│   ├── bench_routing_agent.py     # Live: tool-routing + latency benchmark, agent binding
+│   └── bench_routing_model.py     # Live: the same benchmark on the model binding
+│
+├── tests/                         # Offline: no network, no credentials, free to run
+│   ├── README.md                   # How to run them, and why test_ means exactly one thing
+│   ├── test_docs.py                # Links, mermaid, and region drift vs preflight.py
+│   ├── test_preflight.py           # The helpers that settle the deploy target
+│   ├── test_voice_binding.py       # The agent/model switch and its connect() kwargs
+│   ├── test_avatar_identity.py     # Every surface calls the assistant the same name
+│   ├── test_agent_model_binding.py # The agent binds to a model deployment that exists
+│   ├── test_agent_tool_wiring.py   # Required vs optional agent tools degrade correctly
+│   ├── test_build_package.py       # The Teams package builder's manifest and filename
+│   ├── test_build_query.py         # Site scoping renders the operators Web IQ documents
+│   ├── test_prompt_tool_names.py   # Prompt tool-name placeholders match each binding
+│   ├── test_rbac_propagation.py    # The RBAC-propagation wait used by postprovision
+│   └── test_set_profile.py         # Profile flags are authoritative, not cumulative
 │
 ├── teams/                         # Teams app package for channel B (and the optional in-call bot)
 │   ├── manifest.template.json     # Manifest (schema v1.17): staticTabs + optional bots, templated placeholders

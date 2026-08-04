@@ -18,7 +18,7 @@ Grounding-with-Bing-Custom-Search: a single grounded round-trip, no web_search
 fan-out. The model is chosen via ``AGENT_MODEL``; ``gpt-5.4-mini`` and the
 original ``gpt-4.1-mini`` baseline are also supported.
 
-Run ``scripts/test_foundry_agent.py`` after provisioning to smoke-test the
+Run ``scripts/smoke_foundry_agent.py`` after provisioning to smoke-test the
 agent end-to-end.
 
 Required environment variables (see ``.env.example``):

@@ -19,7 +19,7 @@ uv run python scripts/setup_foundry_agent.py
 ```
 
 In **model mode** the prompt ships in the container image (`azd deploy`) — or hand
-the file straight to `scripts/route_test_model.py`, which needs no deployment.
+the file straight to `scripts/bench_routing_model.py`, which needs no deployment.
 
 Then ask each question (live in the browser, or via a harness below) and confirm
 the tool that fires matches the "Expected" column.
@@ -79,16 +79,16 @@ a share price) rather than vague or invented.
 
 The manual checklist above is for a quick eyeball. For repeatable, multi-run
 scoring use the batch harnesses. **The question set itself lives in
-`scripts/route_test.py` and is imported by both** — that module is the single
+`scripts/bench_routing_agent.py` and is imported by both** — that module is the single
 source of truth; this file is the prose rationale behind the questions.
 
 | binding | harness | what it drives |
 | --- | --- | --- |
-| `VOICE_BINDING=agent` | `scripts/route_test.py` | the live Foundry agent, over its per-endpoint OpenAI-protocol URL |
-| `VOICE_BINDING=model` | `scripts/route_test_model.py` | a live Voice Live **model** session over the websocket, registering the app's own in-process tools |
+| `VOICE_BINDING=agent` | `scripts/bench_routing_agent.py` | the live Foundry agent, over its per-endpoint OpenAI-protocol URL |
+| `VOICE_BINDING=model` | `scripts/bench_routing_model.py` | a live Voice Live **model** session over the websocket, registering the app's own in-process tools |
 
-`route_test_model.py` imports `TIERS`, `BOUNDARY` and `classify()` from
-`route_test.py`, so both bindings are scored against **identical questions** and
+`bench_routing_model.py` imports `TIERS`, `BOUNDARY` and `classify()` from
+`bench_routing_agent.py`, so both bindings are scored against **identical questions** and
 the two cannot drift apart.
 
 > This file used to embed a copy of the harness source. It went stale — the copy
@@ -106,7 +106,7 @@ The questions are binding-agnostic; the tool that should fire is not.
 
 `classify()` recognises **both** name sets, which is why one scoring function
 serves both harnesses. Prompts must not hardcode either set: they use
-`{{SEARCH_TOOL}}` / `{{WEB_TOOL}}`, checked by `scripts/test_prompt_tool_names.py`.
+`{{SEARCH_TOOL}}` / `{{WEB_TOOL}}`, checked by `tests/test_prompt_tool_names.py`.
 
 ## Mechanics worth knowing
 
@@ -135,10 +135,10 @@ $env:PYTHONIOENCODING='utf-8'
 $env:AGENT_MODEL='gpt-5.4'
 $env:AGENT_REASONING_EFFORT='none'
 uv run python scripts/setup_foundry_agent.py
-uv run python scripts/route_test.py --runs 3 --label gpt_5_4_none_8_8
+uv run python scripts/bench_routing_agent.py --runs 3 --label gpt_5_4_none_8_8
 
 # Model mode — no provisioning step; the prompt is passed per session
-uv run python scripts/route_test_model.py --runs 5 --tier boundary
+uv run python scripts/bench_routing_model.py --runs 5 --tier boundary
 ```
 
 Notes:

@@ -29,7 +29,7 @@ What it pins:
 
 Run from the repo root:
 
-    uv run python scripts/test_build_package.py
+    uv run python tests/test_build_package.py
 """
 
 from __future__ import annotations
@@ -188,7 +188,7 @@ def main() -> int:
     print("\n2. Name resolution: --name > TEAMS_APP_NAME > resolved persona name")
     # The persona name itself is AVATAR_DISPLAY_NAME, else the active avatar
     # model's friendly name (backend/avatar_identity.py, pinned by
-    # scripts/test_avatar_identity.py). What matters here is that the builder
+    # tests/test_avatar_identity.py). What matters here is that the builder
     # asks for it instead of keeping its own fallback: a package must never be
     # called "Avatar" while the running app calls itself "Simone".
     name_cases = [

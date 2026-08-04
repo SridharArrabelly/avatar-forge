@@ -24,7 +24,7 @@ test suite would otherwise catch:
    separate sentences went on saying 7. The bicep parameter is what actually deploys,
    so it is the source of truth and the prose is checked against it.
 
-Run:  uv run python scripts/test_docs.py
+Run:  uv run python tests/test_docs.py
 """
 
 from __future__ import annotations
@@ -221,7 +221,7 @@ def check_bing_allowlist(files: list[str]) -> int:
     if not array:
         failures.append(
             "could not find `param bingAllowedDomains array = [...]` in "
-            "infra/main.bicep — update the pattern in scripts/test_docs.py"
+            "infra/main.bicep — update the pattern in tests/test_docs.py"
         )
         return 0
 
@@ -241,7 +241,7 @@ def check_bing_allowlist(files: list[str]) -> int:
     if not mentions:
         failures.append(
             "no doc states the Bing allow-list size any more. If the wording changed, "
-            "update ALLOWLIST_COUNT in scripts/test_docs.py — otherwise this check "
+            "update ALLOWLIST_COUNT in tests/test_docs.py — otherwise this check "
             "silently stops guarding anything."
         )
 
@@ -272,7 +272,7 @@ def check_bing_allowlist(files: list[str]) -> int:
     if not host_mentions:
         failures.append(
             "no doc states the derived Web IQ host count any more. If the wording "
-            "changed, update DERIVED_HOST_COUNT in scripts/test_docs.py — otherwise "
+            "changed, update DERIVED_HOST_COUNT in tests/test_docs.py — otherwise "
             "this check silently stops guarding anything."
         )
 

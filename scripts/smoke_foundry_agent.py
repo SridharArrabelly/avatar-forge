@@ -15,7 +15,7 @@ Required environment variables (see ``.env.example``):
 Auth: uses ``DefaultAzureCredential`` - run ``az login`` first.
 
 Usage:
-    uv run python scripts/test_foundry_agent.py
+    uv run python scripts/smoke_foundry_agent.py
 """
 
 from __future__ import annotations

@@ -16,14 +16,14 @@ The no-TTY cases are therefore the load-bearing ones. They are easy to break by
 "simplifying" a helper, and the breakage does not show up in a normal
 interactive run — only in CI or in the hook, where it looks like azd hanging.
 
-    uv run python scripts/test_preflight.py
+    uv run python tests/test_preflight.py
 """
 from __future__ import annotations
 
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
 import preflight as pf  # noqa: E402
 

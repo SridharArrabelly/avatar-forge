@@ -1,8 +1,8 @@
-"""Routing A/B for MODEL mode — the counterpart to ``route_test.py``.
+"""Routing A/B for MODEL mode — the counterpart to ``bench_routing_agent.py``.
 
-``route_test.py`` drives the Foundry *agents* REST endpoint, so it can only ever
-score agent mode. This drives a real Voice Live **model** session over the
-websocket and registers the same in-process tools the app registers
+``bench_routing_agent.py`` drives the Foundry *agents* REST endpoint, so it can
+only ever score agent mode. This drives a real Voice Live **model** session over
+the websocket and registers the same in-process tools the app registers
 (``backend/voice/tools.py``), so a prompt can be scored on the binding it will
 actually run on.
 
@@ -13,8 +13,8 @@ Method, mirroring the agent-mode A/B:
   choice, catalogue injection, model, region — is identical.
 * Arms are **interleaved per round** (``--runs`` rounds, A then B each round) so
   service-side drift lands on both arms rather than on whichever ran second.
-* The questions and the classifier are imported from ``route_test.py`` rather
-  than copied, so the two harnesses cannot silently diverge. ``classify()``
+* The questions and the classifier are imported from ``bench_routing_agent.py``
+  rather than copied, so the two harnesses cannot silently diverge. ``classify()``
   already recognises the model-mode tool names.
 
 What this measures is **routing** — which tool the model reaches for — plus a
@@ -23,7 +23,7 @@ time-to-first-audio; a wordier prompt inflates it directly.
 
 Run from the repo root:
 
-    uv run python scripts/route_test_model.py --runs 5 --tier boundary
+    uv run python scripts/bench_routing_model.py --runs 5 --tier boundary
 """
 
 from __future__ import annotations
@@ -43,12 +43,12 @@ ROOT = next(
     (
         p
         for p in (Path.cwd(), *Path.cwd().parents)
-        if (p / "scripts" / "route_test.py").is_file()
+        if (p / "scripts" / "bench_routing_agent.py").is_file()
     ),
     None,
 )
 if ROOT is None:
-    raise SystemExit("Run this from inside the repo — scripts/route_test.py not found.")
+    raise SystemExit("Run this from inside the repo — scripts/bench_routing_agent.py not found.")
 
 
 def hydrate_azd_env() -> str:
@@ -107,13 +107,15 @@ from backend.voice.tools import (  # noqa: E402
 )
 
 _spec = importlib.util.spec_from_file_location(
-    "route_test", str(ROOT / "scripts" / "route_test.py")
+    "bench_routing_agent", str(ROOT / "scripts" / "bench_routing_agent.py")
 )
-route_test = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(route_test)
+bench_routing_agent = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(bench_routing_agent)
 
-TIERS = route_test.TIERS
-classify = route_test.classify
+# Imported, never copied: the agent benchmark owns the shared question set, so the
+# two bindings cannot silently drift apart and be scored against different questions.
+TIERS = bench_routing_agent.TIERS
+classify = bench_routing_agent.classify
 
 SEPARATOR = "\n---\n"
 TURN_TIMEOUT = 90.0

@@ -20,7 +20,7 @@ What it pins:
 
 Run from the repo root:
 
-    uv run python scripts/test_agent_tool_wiring.py
+    uv run python tests/test_agent_tool_wiring.py
 """
 
 from __future__ import annotations
@@ -32,7 +32,13 @@ from pathlib import Path
 from azure.core.exceptions import ResourceNotFoundError
 
 # setup_foundry_agent.py is a script, not a package module, so load it by path.
-_SCRIPT = Path(__file__).resolve().parent / "setup_foundry_agent.py"
+# It imports its sibling `rbac_propagation` by bare name, which only resolves when
+# scripts/ is on sys.path -- true when azd runs it from there, not when we load it
+# from tests/. Put scripts/ on the path first or the exec below fails on the import.
+_SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
+sys.path.insert(0, str(_SCRIPTS))
+
+_SCRIPT = _SCRIPTS / "setup_foundry_agent.py"
 _spec = importlib.util.spec_from_file_location("setup_foundry_agent", _SCRIPT)
 sfa = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(sfa)

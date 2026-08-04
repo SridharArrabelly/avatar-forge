@@ -15,7 +15,7 @@ Two things here are easy to get wrong and expensive when wrong:
 
 Needs no Azure and no credentials: `azd` is never invoked.
 
-    uv run python scripts/test_set_profile.py
+    uv run python tests/test_set_profile.py
 """
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ import sys
 from contextlib import redirect_stdout
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
 import channels as ch  # noqa: E402
 import set_profile as sp  # noqa: E402

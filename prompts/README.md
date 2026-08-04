@@ -80,7 +80,7 @@ something durable about the two bindings.
 Those markers are Foundry's own citation annotations, and the avatar pronounces them
 aloud character by character. No routing gain, 17% slower, plus that defect.
 
-**Model mode** — the same method via `scripts/route_test_model.py`, driving a real
+**Model mode** — the same method via `scripts/bench_routing_model.py`, driving a real
 Voice Live model session, 5 interleaved rounds, 28 scored answers per arm:
 
 | | `realtime/instructions.md` | the draft |
@@ -108,7 +108,7 @@ To trial a replacement prompt, point the model-mode harness at it directly — i
 arbitrary arms and needs no deployment:
 
 ```powershell
-uv run python scripts/route_test_model.py --runs 5 --arms LIVE=prompts/realtime/instructions.md,TRIAL=<path>
+uv run python scripts/bench_routing_model.py --runs 5 --arms LIVE=prompts/realtime/instructions.md,TRIAL=<path>
 ```
 
 There is deliberately no env override for the prompt path, so promoting one means

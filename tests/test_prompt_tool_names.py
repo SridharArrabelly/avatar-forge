@@ -31,7 +31,7 @@ What it pins:
 
 Run from the repo root::
 
-    uv run python scripts/test_prompt_tool_names.py
+    uv run python tests/test_prompt_tool_names.py
 """
 
 from __future__ import annotations

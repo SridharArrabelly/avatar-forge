@@ -29,7 +29,7 @@ rather than re-implementing it here:
 
 Run from the repo root:
 
-    uv run python scripts/test_agent_model_binding.py
+    uv run python tests/test_agent_model_binding.py
 """
 
 from __future__ import annotations

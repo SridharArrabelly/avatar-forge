@@ -1,7 +1,14 @@
-"""Batch routing test: drive the live Foundry agent with 10 questions and
-report which hosted tool each turn fires (azure_ai_search vs bing_custom_search).
+"""Routing benchmark for AGENT mode — the counterpart to ``bench_routing_model.py``.
 
-Run from the repo root:  uv run python <path to this file>
+Drives the live Foundry agent over its OpenAI-protocol endpoint and reports which
+hosted tool each turn fires (``azure_ai_search`` vs ``bing_custom_search``).
+
+This module also owns the **shared** question set (``CORE``, ``BOUNDARY``,
+``TIERS``) and ``classify()``, which the model-mode benchmark imports rather than
+copies — so both bindings are scored against identical questions and cannot
+silently diverge.
+
+Run from the repo root:  uv run python scripts/bench_routing_agent.py
 """
 from __future__ import annotations
 
@@ -19,14 +26,14 @@ from openai import OpenAI
 # runs from any clone without editing a hardcoded path.
 ROOT = next(
     (p for p in (Path.cwd(), *Path.cwd().parents)
-     if (p / "scripts" / "test_foundry_agent.py").is_file()),
+     if (p / "scripts" / "smoke_foundry_agent.py").is_file()),
     None,
 )
 if ROOT is None:
-    raise SystemExit("Run this from inside the repo — scripts/test_foundry_agent.py not found.")
+    raise SystemExit("Run this from inside the repo — scripts/smoke_foundry_agent.py not found.")
 
 spec = importlib.util.spec_from_file_location(
-    "tfa", str(ROOT / "scripts" / "test_foundry_agent.py")
+    "tfa", str(ROOT / "scripts" / "smoke_foundry_agent.py")
 )
 tfa = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(tfa)

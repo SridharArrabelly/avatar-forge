@@ -251,7 +251,9 @@ Details: **[docs/deployment.md](docs/deployment.md)** ·
 |---|---|
 | **[teams/README.md](teams/README.md)** | Building and sideloading the Teams app package (serves channel B). |
 | **[meeting-bot/README.md](meeting-bot/README.md)** | The .NET/Windows media bot itself (channel C): project layout, configuration, operator runbook, and the traps that cost real debugging time. |
-| **[prompts/README.md](prompts/README.md)** | Agent prompt content, the reasoning/non-reasoning variants, and the edit workflow. |
+| **[prompts/README.md](prompts/README.md)** | Agent and model-mode prompt content, and the edit workflow. |
+| **[scripts/README.md](scripts/README.md)** | Every script that touches Azure, and the prefix convention that tells you what running one costs — which four are wired into `azd up` and must not be renamed. |
+| **[tests/README.md](tests/README.md)** | The offline suites: no network, no credentials, no cost, and what each one pins. |
 | **[docs/testing-meetings.md](docs/testing-meetings.md)** | **How to test the two in-meeting paths** — browser joiner vs. media bot: what each can and cannot hear, runbooks, healthy logs, rollback. |
 
 **Design records** *(archive — why the in-call channel is built the way it is; not needed to deploy)*

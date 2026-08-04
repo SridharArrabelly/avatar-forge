@@ -412,7 +412,7 @@ milliseconds can "win" by answering worse.
 
 ## 8. Testing
 
-`scripts/test_voice_binding.py` pins the switch — 23 checks, no Azure required.
+`tests/test_voice_binding.py` pins the switch — 23 checks, no Azure required.
 
 The load-bearing assertions are the **negative** ones: that agent mode gains none
 of the model-mode keys. That is the property that keeps the default deployment
@@ -422,7 +422,7 @@ It is mutation-verified. Dropping the `DEVELOPER_MODE` gate, the OpenAI-voice
 guard, or the model-mode EOU drop each makes it fail.
 
 ```powershell
-uv run python scripts\test_voice_binding.py
+uv run python tests\test_voice_binding.py
 ```
 
 ---

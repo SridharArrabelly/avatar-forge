@@ -27,7 +27,7 @@ What it pins:
 
 Run from the repo root:
 
-    uv run python scripts/test_avatar_identity.py
+    uv run python tests/test_avatar_identity.py
 """
 
 from __future__ import annotations
@@ -135,7 +135,7 @@ def main() -> int:
         os.environ["PHOTO_AVATAR_NAME"] = "Simone"
         # Imported AFTER the environment is set, and — critically — the module must
         # still pick up a LATER change, which is what the frozen constant broke.
-        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
         import setup_foundry_agent as sfa
 
         prompt = sfa._load_prompt("agent", "instructions.md")
