@@ -13,9 +13,11 @@ prompts/
 │   ├── description.md                 # one-line agent description (UI / catalog)
 │   ├── instructions-nonreasoning.md   # system instructions, gpt-4.x / gpt-4o family
 │   ├── instructions-reasoning.md      # system instructions, o-series / gpt-5 family
+│   ├── instructions01.md              # DRAFT — loaded by nothing, see below
 │   └── routing-test-questions.md      # manual checklist: does each question hit the right tool?
 └── realtime/                          # used when VOICE_BINDING=model
-    └── instructions.md                # system instructions, gpt-realtime family
+    ├── instructions.md                # system instructions, gpt-realtime family
+    └── instructions01.md              # DRAFT — loaded by nothing, see below
 ```
 
 ## Which prompt is used, and when
@@ -58,6 +60,55 @@ Both agent variants share the voice-first output rules, the silent meeting
 catalogue contract, and the `bing_custom_search` query-style-by-intent block.
 They differ on tool-selection rigidity, calls allowed per turn, and whether the
 `X → tool` examples are spelled out.
+
+### `instructions01.md` is a draft — no code path loads it
+
+Both trees contain an `instructions01.md`: one 5,811-byte prompt written to serve
+**both** bindings, on the theory that a shorter, less ambiguous brief would make
+tool decisions faster.
+
+**Neither copy is loaded by anything.** `grep -rn instructions01` over the repo
+returns no matches: `backend/voice/instructions.py` hardcodes
+`realtime/instructions.md`, and `_load_agent_instructions()` only ever reaches for
+the two `instructions-*.md` variants. They are checked-in drafts, not live prompts.
+
+The agent copy has been measured against the live prompt — a clone agent carrying
+only the prompt change, 5 interleaved rounds, 30 answers per arm:
+
+| | `instructions-reasoning.md` | `instructions01.md` |
+| --- | --- | --- |
+| routing | 30/30 | 30/30 — identical |
+| answer latency | 6.90 s | 8.08 s (+17%) |
+| answers leaking a `【n:m†source】` marker | 0/30 | **18/30** |
+
+Those markers are Foundry's own citation annotations, and the avatar pronounces
+them aloud character by character. **Do not promote the agent copy as it stands** —
+it buys no routing improvement, costs 17% latency, and adds that defect.
+
+That verdict is **agent-mode only, and it does not transfer** — measured, not assumed.
+The markers come from the *managed* `azure_ai_search` / `bing_custom_search` tools;
+model mode calls in-process Python returning `{meeting, date, extract}`, so no marker
+of that shape exists to leak.
+
+The realtime copy was then measured the same way, with `scripts/route_test_model.py`
+driving a real Voice Live model session — 5 interleaved rounds, 28 scored answers per
+arm:
+
+| | `realtime/instructions.md` | `instructions01.md` |
+| --- | --- | --- |
+| routing | 16/28 (57%) | **26/28 (93%)** |
+| failed to answer | 7/28 (25%) | **11/28 (39%)** |
+| answers leaking a marker or URL | 0/28 | **0/28** |
+| answer latency | 4.17 s | 4.47 s (+7%) |
+
+**Both halves of that table matter.** The draft routes far better *and* answers less
+often, because the two are the same fact: the live prompt sends public questions to the
+minutes corpus, which usually has an answer, while the draft correctly sends them to
+Web IQ, which often does not. In model mode the prompt is not the binding constraint —
+**web retrieval is** (see issue #78). **Do not promote either copy on this evidence.**
+
+To try either one, swap it over the filename its loader expects and restore
+afterwards — there is deliberately no env override for the prompt path.
 
 ### Sizes, because this is a latency-sensitive path
 
