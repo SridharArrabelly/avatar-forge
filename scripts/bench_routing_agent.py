@@ -39,18 +39,48 @@ tfa = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(tfa)
 
 # (question, expected) where expected in {"internal", "external"}
-CORE = [
+#
+# The core set is three groups of five. Note what the groups do and do NOT test:
+#
+#   minutes  + policies  -> BOTH expect "internal", because both corpora sit
+#                           behind the SAME hosted tool (azure_ai_search) in the
+#                           SAME index. So these five policy questions do NOT
+#                           test corpus separation - that is retrieval-level and
+#                           is measured separately. What they DO test is that a
+#                           policy question does not LEAK TO THE WEB TOOL, which
+#                           is a real and previously-shipped failure: a prompt
+#                           that says "only meeting minutes are internal" sends
+#                           "what is our gift policy" straight to Bing, which
+#                           does not hold MTN's internal policies.
+#   web                  -> expects "external".
+MINUTES = [
     ("What did we decide about dividends in the last board meeting?", "internal"),
     ("What were the action items from the February 2026 board meeting?", "internal"),
     ("Who attended the October 2025 board meeting?", "internal"),
     ("Summarise the customer experience discussion from the October 2025 board meeting.", "internal"),
     ("What strategy did the board agree in the 15 September 2023 meeting?", "internal"),
+]
+
+# Ordered by how strongly the surface form pulls towards the web tool, so a
+# partial pass still says something: Q1 is the canonical phrasing, Q3 sounds
+# like a question about general law rather than an MTN rule.
+POLICIES = [
+    ("What is our gift policy?", "internal"),
+    ("What is the maximum value of a gift I can accept from a supplier?", "internal"),
+    ("Who owns a patent created by one of our employees?", "internal"),
+    ("Am I eligible for a study bursary?", "internal"),
+    ("What does our responsible betting policy say about data breaches?", "internal"),
+]
+
+WEB = [
     ("Who is MTN's Group CFO?", "external"),
     ("What was MTN's FY2025 revenue?", "external"),
     ("What is MTN's share price today?", "external"),
     ("What is Vodacom doing in fintech?", "external"),
     ("What is MTN's Ambition 2025?", "external"),
 ]
+
+CORE = MINUTES + POLICIES + WEB
 
 # The discriminating set. Every one of these is a case where the *surface form*
 # of the question pulls the wrong way, so they separate a prompt that states a
@@ -75,6 +105,18 @@ BOUNDARY = [
 ]
 
 TIERS = {"core": CORE, "boundary": BOUNDARY, "all": CORE + BOUNDARY}
+
+# Reporting only. The question tuples stay 2-wide on purpose: bench_routing_model.py
+# unpacks them as ``for idx, (q, expected) in enumerate(questions)``, so widening
+# the tuple would break the model-mode harness. Grouping therefore lives beside the
+# data, not inside it.
+GROUPS = {"minutes": MINUTES, "policies": POLICIES, "web": WEB}
+_GROUP_OF = {q: name for name, qs in GROUPS.items() for q, _ in qs}
+
+
+def group_of(question: str) -> str:
+    """Which core group a question belongs to; BOUNDARY questions fall through."""
+    return _GROUP_OF.get(question, "boundary")
 
 
 def classify(itype: str) -> str:
@@ -204,6 +246,22 @@ def main() -> int:
     if all_lat:
         print(f"  latency: avg {sum(all_lat)/len(all_lat):.1f}s  "
               f"min {min(all_lat):.1f}s  max {max(all_lat):.1f}s")
+
+    # Per-group breakdown. A headline score hides the failure that matters most:
+    # policies leaking to the web tool shows up as a 5-point drop in ONE group
+    # while minutes and web stay perfect.
+    seen = [g for g in ("minutes", "policies", "web", "boundary")
+            if any(group_of(q) == g for q, _ in QUESTIONS)]
+    if len(seen) > 1:
+        print("  by group:")
+        for g in seen:
+            idxs = [i for i, (q, _) in enumerate(QUESTIONS) if group_of(q) == g]
+            got = sum(correct[i] for i in idxs)
+            want = len(idxs) * args.runs
+            lats = [x for i in idxs for x in qlat[i]]
+            avg = sum(lats) / len(lats) if lats else 0.0
+            flag = "" if got == want else "   <-- "
+            print(f"    {g:<9} {got:>3}/{want:<3}  avg {avg:4.1f}s{flag}")
     print("  per-question pass rate:")
     for idx, (q, expected) in enumerate(QUESTIONS):
         rate = f"{correct[idx]}/{args.runs}"

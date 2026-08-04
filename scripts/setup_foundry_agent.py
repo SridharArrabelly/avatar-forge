@@ -312,6 +312,30 @@ def _model_supports_reasoning(model: str) -> bool:
     return False
 
 
+def _find_connection(project: AIProjectClient, name: str):
+    """Resolve a project connection by name, tolerating a broken ``get()``.
+
+    ``connections.get(name)`` in azure-ai-projects 2.4.0 can raise
+    ``ResourceNotFoundError: (NotFound) Project not found`` for a connection that
+    ``connections.list()`` returns from the *same* client and endpoint moments
+    later. The message blames the project rather than the connection, so the
+    caller's "connection not found" diagnostic pointed at the wrong thing and
+    sent you looking for a config error that does not exist.
+
+    Try ``get()`` first — one call, and correct when it works — then fall back to
+    scanning ``list()``. Only if the name is genuinely absent does this re-raise,
+    so a real missing connection still fails fast with the original message.
+    """
+    try:
+        return project.connections.get(name)
+    except ResourceNotFoundError:
+        for conn in project.connections.list():
+            if getattr(conn, "name", None) == name:
+                print(f"  (resolved connection {name!r} via list(); get() returned NotFound)")
+                return conn
+        raise
+
+
 def create_agent(project: AIProjectClient, settings: dict) -> tuple[object, bool]:
     """Create a new version of the Foundry agent.
 
@@ -358,7 +382,7 @@ def create_agent(project: AIProjectClient, settings: dict) -> tuple[object, bool
         # assignment surfaces as 401 while it propagates. The wait only covers
         # 401/403 — a genuine 404 still falls through to the message below.
         azs_connection = wait_for_data_plane(
-            lambda: project.connections.get(settings["search_connection_name"]),
+            lambda: _find_connection(project, settings["search_connection_name"]),
             what="reading the project's connections",
         )
     except ResourceNotFoundError:
@@ -383,7 +407,7 @@ def create_agent(project: AIProjectClient, settings: dict) -> tuple[object, bool
 
     if bing_connection_name and bing_custom_config_name:
         try:
-            bing_connection = project.connections.get(bing_connection_name)
+            bing_connection = _find_connection(project, bing_connection_name)
         except ResourceNotFoundError:
             print(
                 f"WARNING: Grounding-with-Bing-Custom-Search connection {bing_connection_name!r} "

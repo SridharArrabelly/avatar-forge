@@ -38,6 +38,21 @@ no date and are not listed in the meeting catalogue.
 
 To add another policy folder, extend `POLICY_DIRS` in that same script.
 
+## `data/policies/` is deliberately NOT committed
+
+This repository is **public**, and the policy corpus is real internal corporate
+documentation. `data/policies/` is therefore in `.gitignore` and the files are
+supplied locally.
+
+The meeting minutes in `data/` **are** committed — they are demo content — so a
+clean clone re-indexes minutes only. **Consequence:** after a greenfield
+`azd up` (or any `RECREATE_INDEX` rebuild) on a fresh machine, copy the policy
+PDFs back into `data/policies/` and re-run the index script, or the agent will
+answer minutes questions correctly and refuse every policy question.
+
+The expected chunk counts are a quick check that both corpora are present:
+**111** from minutes + **165** from policies = **275**.
+
 ## (Re)build the index
 
 ```powershell

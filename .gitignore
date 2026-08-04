@@ -34,3 +34,9 @@ build/
 # Routing harness transcripts (prompts/agent/routing-test-questions.md)
 answers_*.txt
 
+# Internal policy corpus. This repo is PUBLIC and these are real corporate
+# documents, so they are supplied locally and never committed. Indexing walks
+# the filesystem (not git), so ignoring them does not affect the corpus build —
+# see data/README.md.
+data/policies/
+

@@ -4,13 +4,22 @@ A quick checklist to verify each turn routes to the correct tool, shared by
 **both** voice bindings. Run it after changing any routing rule in
 `agent/instructions.md` or `realtime/instructions.md`.
 
-- **Internal** questions should hit the **minutes corpus** — `azure_ai_search`
-  in agent mode, `search_minutes` in model mode (board / exec meeting minutes,
-  the only corpus in the AI Search index).
+- **Internal** questions should hit the **AI Search index** — `azure_ai_search`
+  in agent mode, `search_minutes` in model mode. That index holds **two**
+  corpora: board / exec **meeting minutes**, and MTN **policy documents**.
+  Both sit behind the *same* tool, so both are scored `internal`.
 - **External** questions should hit the **curated web** — `bing_custom_search`
   in agent mode, `search_web` in model mode (MTN investor relations, financial
   results, leadership, newsroom/media, JSE market data, and trusted telecom news
   / regulators).
+
+> **What the policy questions do and do not test.** Because minutes and policies
+> share one tool and one index, these questions cannot test *which corpus* a hit
+> came from — that is retrieval-level and is measured separately. What they test
+> is that a policy question **does not leak to the web tool**. That is a real,
+> previously-shipped failure: a prompt asserting "only meeting minutes are
+> internal" sends *"what is our gift policy"* to Bing, which does not hold MTN's
+> internal policies.
 
 In **agent mode** the prompt is stored server-side, so re-provision before testing:
 
@@ -24,9 +33,9 @@ the file straight to `scripts/bench_routing_model.py`, which needs no deployment
 Then ask each question (live in the browser, or via a harness below) and confirm
 the tool that fires matches the "Expected" column.
 
-## Core set (10 questions)
+## Core set (15 questions — 5 minutes / 5 policies / 5 web)
 
-### Internal — expect the minutes tool
+### Minutes — expect the AI Search tool
 
 1. What did we decide about dividends in the last board meeting?
 2. What were the action items from the February 2026 board meeting?
@@ -34,25 +43,56 @@ the tool that fires matches the "Expected" column.
 4. Summarise the customer experience discussion from the October 2025 board meeting.
 5. What strategy did the board agree in the 15 September 2023 meeting?
 
-### External — expect the web tool
+### Policies — expect the AI Search tool (same tool, same index)
 
-6. Who is MTN's Group CFO?
-7. What was MTN's FY2025 revenue?
-8. What is MTN's share price today?
-9. What is Vodacom doing in fintech?
-10. What is MTN's Ambition 2025?
+Ordered by how strongly the surface form pulls towards the web tool, so a
+partial pass still tells you something.
+
+6. What is our gift policy?
+7. What is the maximum value of a gift I can accept from a supplier?
+8. Who owns a patent created by one of our employees?
+9. Am I eligible for a study bursary?
+10. What does our responsible betting policy say about data breaches?
+
+### Web — expect the web tool
+
+11. Who is MTN's Group CFO?
+12. What was MTN's FY2025 revenue?
+13. What is MTN's share price today?
+14. What is Vodacom doing in fintech?
+15. What is MTN's Ambition 2025?
 
 ## Why these matter
 
 - **Q3** — "who attended" must trigger a search, not a deferral ("I need to
   check the record"). This was a real miss before the prompt was tightened.
-- **Q5 vs Q10** — the key contrast: *meeting-scoped* strategy ("what did the
+- **Q5 vs Q15** — the key contrast: *meeting-scoped* strategy ("what did the
   board agree…") is internal, but *general / published* strategy ("MTN's
   Ambition 2025") is public → web.
-- **Q6, Q7** — current leadership and published revenue must come from the
+- **Q11, Q12** — current leadership and published revenue must come from the
   web, never from model memory or the minutes.
 - **Q1, Q2** — relative ("last") and named dates confirm the meeting
   catalogue still resolves dates correctly.
+
+The five policy questions each probe a different way of *not* looking like an
+internal question:
+
+- **Q6** — the canonical phrasing. If this leaks to the web, the prompt's
+  routing rule is simply wrong and nothing below it matters.
+- **Q7** — a rule question that never says the word "policy". Routing must key
+  on *"is this an MTN rule?"*, not on a keyword.
+- **Q8** — **highest leak risk.** Patent ownership sounds like a question about
+  general law, so the pull towards the web is strongest here. MTN's IP policy is
+  what actually answers it.
+- **Q9** — first-person HR shape ("am I eligible…"), which reads as a personal
+  question rather than a document lookup.
+- **Q10** — names the policy explicitly. This one is the regression guard: if
+  *this* misroutes, routing is broken outright rather than merely ambiguous.
+
+Note the deliberate collision with **Q12** ("our revenue" → web) and the
+boundary case *"what's our revenue?"*: the word *our* does **not** decide
+routing. What follows it does — *our revenue* is a published fact, *our gift
+policy* is an internal rule.
 
 ## Boundary / edge cases (optional, manual)
 
@@ -69,9 +109,22 @@ the tool that fires matches the "Expected" column.
 
 ## Pass criteria
 
-All 10 core questions route to the expected tool. Spot-check that answers
-to external questions are tool-grounded (e.g. a named CFO, a revenue figure,
-a share price) rather than vague or invented.
+All 15 core questions route to the expected tool. `bench_routing_agent.py`
+prints a **per-group** breakdown as well as the headline, because the failure
+that matters most hides inside a good total: a prompt that treats only minutes
+as internal still scores 10/15 with minutes and web perfect, and every drop
+concentrated in the policies group. Read the groups, not the total.
+
+Spot-check that answers to web questions are tool-grounded (a named CFO, a
+revenue figure, a share price) rather than vague or invented, and that policy
+answers name the document in human form ("the Gift Policy") rather than a
+filename.
+
+**Not covered here:** whether a policy answer came from the *right* policy, and
+whether the agent refuses a policy-shaped question with no matching document
+(e.g. "what is our work-from-home policy?"). Retrieval always returns
+*something*, so absence has to be handled by the prompt and verified at the
+agent level — routing scores cannot see it.
 
 ---
 
