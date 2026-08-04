@@ -120,16 +120,14 @@ referenced by `BING_CUSTOM_CONFIG_NAME`). An open-ended web-search tool on
 `bing_custom_search` resolves a turn in one call. It is wired via `BING_CONNECTION_NAME`
 + `BING_CUSTOM_CONFIG_NAME` when running `setup_foundry_agent.py`.
 
-**The system prompt.** The provisioning script picks one of two prompt variants based
-on `AGENT_MODEL`: [`instructions-nonreasoning.md`](../prompts/agent/instructions-nonreasoning.md)
-for `gpt-4.x`/`gpt-4o` (literal, hard rules, one tool per turn) and
-[`instructions-reasoning.md`](../prompts/agent/instructions-reasoning.md) for
-o-series/`gpt-5` (softer principles, up to 3 tool calls per turn, refined follow-up
-search allowed). Both share the voice-first output rules, the silent meeting-catalogue
-contract, the intent-aware Bing query block, and the JSE-cents conversion rule. The
-selector uses the same `_model_supports_reasoning()` predicate that gates
-`reasoning.effort`, so prompt and model capability stay in lock-step. Full detail in
-[`prompts/README.md`](../prompts/README.md).
+**The system prompt.** The provisioning script loads a single prompt,
+[`instructions.md`](../prompts/agent/instructions.md), unconditionally — no
+per-model variants and no fallback. It carries the voice-first output rules, the
+silent meeting-catalogue contract, the intent-aware Bing query block, and the
+JSE-cents conversion rule. A second variant for `gpt-4.x`/`gpt-4o` and the
+model-family selector that chose between them were both removed: no deployment
+ever loaded the alternative, so it drifted untested while every measurement was
+taken against this file. Full detail in [`prompts/README.md`](../prompts/README.md).
 
 ## Meeting-catalogue injection
 

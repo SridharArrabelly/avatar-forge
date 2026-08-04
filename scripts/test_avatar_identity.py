@@ -138,7 +138,7 @@ def main() -> int:
         sys.path.insert(0, str(Path(__file__).resolve().parent))
         import setup_foundry_agent as sfa
 
-        prompt = sfa._load_prompt("agent", "instructions-nonreasoning.md")
+        prompt = sfa._load_prompt("agent", "instructions.md")
         check("prompt no longer contains the placeholder",
               "{{AVATAR_NAME}}" in prompt, False)
         check("prompt opens with the resolved name",
@@ -151,7 +151,7 @@ def main() -> int:
         # Change the environment after import: a constant captured at import time
         # would keep returning "Simone" here.
         os.environ["AVATAR_DISPLAY_NAME"] = "Nuru"
-        reread = sfa._load_prompt("agent", "instructions-nonreasoning.md")
+        reread = sfa._load_prompt("agent", "instructions.md")
         check("re-reads the environment after import (not frozen)",
               reread.splitlines()[0].startswith("You are Nuru,"), True)
     finally:

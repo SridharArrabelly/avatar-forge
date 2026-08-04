@@ -140,61 +140,28 @@ def agent_description() -> str:
     """Agent description, brand-substituted at call time (see _apply_brand)."""
     return _load_prompt("agent", "description.md")
 
-# Agent instructions — voice-first, two variants tuned by model family.
+# Agent instructions — one prompt, loaded for every model.
 #
-# Two prompt files live under prompts/agent/:
-#   * instructions-nonreasoning.md — tuned for gpt-4.x / gpt-4o (fast, literal).
-#     Hard rules ("EXACTLY ONE tool per turn"), HARD ANTI-RULE block,
-#     exhaustive "X → tool" examples. These models do what the prompt says,
-#     no more, no less, so the tool-selection contract is stated as hard
-#     rules rather than "use judgement".
-#   * instructions-reasoning.md — tuned for o-series / gpt-5 (deliberate,
-#     multi-step). Softer principles, allows up to 3 tool calls per turn,
-#     one refined follow-up search, no exhaustive anti-rule list. These
-#     models can infer "MTN's own plans live in our minutes, not on the
-#     web" from a short principle.
+# prompts/agent/instructions.md is the only agent prompt, and it is loaded
+# unconditionally: no per-model selection, no variants, no fallback. It carries
+# the voice-first output rules (no URLs / no markdown / ≤70 words), the silent
+# meeting catalogue contract, and the bing_custom_search query style by intent
+# (MTN corporate / telecom industry / share price).
 #
-# Both share: voice-first output rules (no URLs / no markdown / ≤70 words),
-# the silent meeting catalogue contract, and the bing_custom_search query
-# style by intent (MTN corporate / telecom industry / share price).
+# It is tuned against the validated production config — gpt-5.4 with
+# reasoning.effort="none" — and scores 30/30 on the BOUNDARY routing harness
+# there. That effort is "none" by design, for conversational latency, so read
+# this as "the agent prompt", not "the prompt for when reasoning is on".
+#
+# A second file tuned for gpt-4.x / gpt-4o used to live here, selected by model
+# family. No deployment ever loaded it, so it drifted untested while every
+# measurement was taken against this one — the selector made an unmaintained
+# path look supported, which is worse than having a single prompt and re-tuning
+# it if the model ever changes.
 #
 # The external tool is `bing_custom_search` (a grounded round-trip
 # restricted to a curated, server-side domain allow-list) rather than
 # `web_search` — the latter fans out into many calls and bloats context.
-#
-# The variant is selected at create_agent() time from settings["agent_model"]
-# via _model_supports_reasoning() — same predicate that gates the
-# reasoning.effort parameter, so the prompt and the model capability stay
-# in lock-step.
-
-
-def _load_agent_instructions(model: str) -> str:
-    """Pick the prompt variant that matches the model family.
-
-    Reasoning models (o-series, gpt-5) get the deliberate, multi-step prompt;
-    everything else (gpt-4.x, gpt-4o) gets the literal, hard-rule prompt.
-    Falls back to the non-reasoning variant if the reasoning file is missing
-    so a partial deployment never bricks the agent.
-    """
-    if _model_supports_reasoning(model):
-        path = _PROMPTS_DIR / "agent" / "instructions-reasoning.md"
-        if path.is_file():
-            print(
-                f"Loading reasoning prompt variant "
-                f"(prompts/agent/instructions-reasoning.md) for model {model!r}."
-            )
-            return _apply_brand(path.read_text(encoding="utf-8").strip())
-        print(
-            f"WARNING: model {model!r} supports reasoning but "
-            "prompts/agent/instructions-reasoning.md is missing — falling "
-            "back to instructions-nonreasoning.md."
-        )
-    else:
-        print(
-            f"Loading non-reasoning prompt variant "
-            f"(prompts/agent/instructions-nonreasoning.md) for model {model!r}."
-        )
-    return _load_prompt("agent", "instructions-nonreasoning.md")
 
 
 def load_settings() -> dict:
@@ -450,7 +417,7 @@ def create_agent(project: AIProjectClient, settings: dict) -> tuple[object, bool
 
     definition_kwargs = {
         "model": settings["agent_model"],
-        "instructions": _load_agent_instructions(settings["agent_model"]),
+        "instructions": _load_prompt("agent", "instructions.md"),
         "tools": tools,
     }
     effort = settings.get("agent_reasoning_effort")

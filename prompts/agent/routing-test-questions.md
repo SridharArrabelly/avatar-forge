@@ -1,8 +1,7 @@
 # Tool-routing test questions
 
 A quick checklist to verify the agent routes each turn to the correct tool
-after changing the routing rules in `instructions-reasoning.md` /
-`instructions-nonreasoning.md`.
+after changing the routing rules in `instructions.md`.
 
 - **Internal** questions should fire **`azure_ai_search`** (board / exec
   meeting minutes — the only corpus in the AI Search index).
@@ -132,9 +131,8 @@ Notes:
   references the agent by **name** → always uses the latest version. After
   experiments, re-provision the CHOSEN final config so the live agent isn't
   left on an experimental one.
-- The model choice also swaps the prompt variant:
-  `instructions-reasoning.md` for reasoning models (gpt-5.x),
-  `instructions-nonreasoning.md` for gpt-4.1-mini.
+- The model choice no longer swaps the prompt: `instructions.md` is the only
+  agent prompt and it is loaded unconditionally, whatever `AGENT_MODEL` is.
 - The harness locates the repo root by walking up from the working directory,
   so run it from anywhere inside a clone.
 

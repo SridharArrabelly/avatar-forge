@@ -192,8 +192,8 @@ After editing the prompts in [`prompts/agent/`](../prompts/agent/) or changing
 uv run python scripts/setup_foundry_agent.py
 ```
 
-The script selects the prompt variant (reasoning vs non-reasoning) from `AGENT_MODEL`
-and wires the AI Search + Grounding-with-Bing-Custom-Search tools. See
+The script loads the single agent prompt (`prompts/agent/instructions.md`) and
+wires the AI Search + Grounding-with-Bing-Custom-Search tools. See
 [`prompts/README.md`](../prompts/README.md) and
 [architecture.md](architecture.md#tool-calling-accuracy).
 
