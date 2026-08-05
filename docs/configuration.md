@@ -305,21 +305,41 @@ avatar is called "Simone" everywhere without configuring anything.
 > `AVATAR_DISPLAY_NAME` → the active avatar model's friendly name → `Avatar`.
 > Pinned by `uv run python tests/test_avatar_identity.py`.
 
-> **Renaming after a deploy needs one extra step.** The stage, bot, package and
-> wake phrase pick the new name up from the environment, but the assistant's
-> *spoken* persona is baked into the Foundry agent's prompt when the agent is
-> built — so a rename that skips that step leaves her still introducing herself by
-> the old name:
+> **Renaming after a deploy: use the script.** The name lives on three surfaces and
+> all three have to move together, so there is one command for it:
+>
+> ```powershell
+> uv run python scripts/rename_avatar.py Nuru
+> uv run python scripts/rename_avatar.py Nuru --check-only   # verify, change nothing
+> ```
+>
+> It writes the **azd environment** (so a later `azd up` cannot revert the rename),
+> the **container app** (stage name, tagline, wake phrase), and the **Foundry agent**
+> (what she actually *says*) — then reads each surface back independently and exits
+> non-zero if they disagree. See [`scripts/README.md`](../scripts/README.md).
+>
+> The third surface is the one that catches people out: the assistant's *spoken*
+> persona is rendered into the agent's prompt and **frozen into an agent version at
+> push time**, so it does not follow an environment change. Skip it and the stage
+> reads "Nuru" while she introduces herself as "Simone".
+>
+> No `azd up` is needed — the script uses `az containerapp update --set-env-vars`,
+> which merges into the live revision in about a minute. Prefer that to a bare
+> `azd provision`, which can revert the container app to the placeholder image.
+> The equivalent by hand, if you want to see what it does:
 >
 > ```powershell
 > azd env set AVATAR_DISPLAY_NAME Nuru
-> azd up
+> azd env set PHOTO_AVATAR_NAME Nuru
+> az containerapp update -g <rg> -n <app> --set-env-vars AVATAR_DISPLAY_NAME=Nuru PHOTO_AVATAR_NAME=Nuru
 > uv run python scripts/setup_foundry_agent.py   # re-brands the agent prompt
 > ```
 >
-> `azd up` re-runs that script for you when Avatar Forge created the Foundry
+> `azd up` re-runs that last script for you when Avatar Forge created the Foundry
 > account (the greenfield default). Run it by hand after `azd deploy`, or when you
 > brought your own Foundry account — neither triggers the postprovision hook.
+>
+> The final check cannot be automated: open the app and ask *"what is your name?"*
 
 > **Default vs. shipped default.** The Default column is the backend's fallback when
 > a variable is **unset**. The values Avatar Forge actually ships with are different:

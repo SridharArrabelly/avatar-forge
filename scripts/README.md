@@ -14,6 +14,7 @@ The prefix answers one question: **what does running this cost me?**
 | --- | --- | --- | --- |
 | `setup_` | creates or updates an Azure resource | yes | **yes** |
 | `grant_` | assigns RBAC | yes | **yes** |
+| `rename_` | rewrites one setting on every surface that holds a copy of it | yes | **yes** |
 | `check_` | reads a published version and fails a build | network only | no |
 | `smoke_` | one live end-to-end question, to prove a deploy works | yes | no |
 | `bench_` | repeated measurement; long-running, prints numbers | yes | no |
@@ -43,6 +44,7 @@ command), or individually as `uv run python scripts/<name>.py`.
 | script | when you want it |
 | --- | --- |
 | [`set_profile.py`](set_profile.py) | **Step 0.** Pick a delivery channel; records `DEPLOY_PROFILE` and prints the numbered plan. |
+| [`rename_avatar.py`](rename_avatar.py) | Rename the persona (`Simone` → `Nuru`) across all three surfaces that hold the name, then read each one back. `--check-only` verifies without changing anything. |
 | [`smoke_aisearch_query.py`](smoke_aisearch_query.py) | "Did the index actually ingest?" Queries it directly. |
 | [`smoke_foundry_agent.py`](smoke_foundry_agent.py) | "Can the deployed agent answer?" One end-to-end question. |
 | [`bench_routing_agent.py`](bench_routing_agent.py) | Tool-routing accuracy and latency on the **agent** binding. |
@@ -63,7 +65,14 @@ data-plane RBAC propagation lag).
   routing instrument; do not quote it as a time-to-first-token figure.
 - **`setup_foundry_agent.py` bakes the assistant's name into the prompt** at
   provisioning time. Rename the persona and every other surface updates on the next
-  deploy, but the agent keeps the old name until this script re-runs.
+  deploy, but the agent keeps the old name until this script re-runs — so the stage
+  says "Nuru" while she introduces herself as "Simone". Use
+  [`rename_avatar.py`](rename_avatar.py) rather than doing it by hand; that split is
+  exactly what it exists to close.
+- **`rename_avatar.py` verifies the *resolved* name, not the raw variables.** An empty
+  `AVATAR_DISPLAY_NAME` is a legitimate configuration when the name derives from the
+  active avatar model, so asserting on the raw variable would report a correct
+  deployment as broken. It calls the same `resolve_avatar_display_name()` the app does.
 
 See [`../docs/development.md`](../docs/development.md) for the full local-development
 walkthrough.

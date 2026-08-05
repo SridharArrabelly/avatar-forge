@@ -24,6 +24,8 @@ What it pins:
   at call time rather than frozen at import
 * ``backend.config`` and ``/api/config`` agree with the resolver
 * the exact reported case: photo avatar "Simone" -> the agent says "Simone"
+* ``scripts/rename_avatar.py`` still writes enough variables to actually rename a
+  deployed environment
 
 Run from the repo root:
 
@@ -195,6 +197,33 @@ def main() -> int:
                 os.environ.pop(k, None)
             else:
                 os.environ[k] = v
+
+    print("\n7. scripts/rename_avatar.py writes enough to actually rename")
+    # The script is only correct while the variables it writes still outrank
+    # everything else the resolver reads. Adding a new, higher-priority input to
+    # avatar_identity would silently make renames stop taking effect on an
+    # already-deployed environment -- a failure with no error message, which is
+    # the kind this suite exists to catch.
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+    import rename_avatar as ra
+
+    check("every variable it writes is one the resolver reads",
+          set(ra.RENAME_VARS) <= set(_ENV_KEYS), True)
+    # A live environment already branded Simone, with both model gates on and a
+    # stale custom model id lying around: the hostile case for a rename.
+    deployed = {
+        "AVATAR_DISPLAY_NAME": "Simone",
+        "PHOTO_AVATAR_NAME": "Simone",
+        "AVATAR_NAME": "Lisa-casual-sitting",
+        "CUSTOM_AVATAR_NAME": "StaleCustomModel",
+        "IS_PHOTO_AVATAR": "true",
+        "IS_CUSTOM_AVATAR": "true",
+    }
+    applied = dict(zip(ra.RENAME_VARS, ("Nuru", "Nuru")))
+    check("its overrides beat every pre-existing identity variable",
+          resolve({**deployed, **applied}), "Nuru")
+    check("and rename to a Speech id that differs from the persona name",
+          resolve({**deployed, **dict(zip(ra.RENAME_VARS, ("Nuru", "Nuru-v2")))}), "Nuru")
 
     print()
     if _failures:
