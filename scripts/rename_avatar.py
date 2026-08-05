@@ -20,9 +20,14 @@ revert the deployed image, which a bare ``azd provision`` can.
 Usage (from anywhere -- the repo is located from this file)::
 
     uv run python scripts/rename_avatar.py Nuru
-    uv run python scripts/rename_avatar.py Nuru --model Nuru-v2  # Speech id differs
-    uv run python scripts/rename_avatar.py Simone --check-only   # verify only
-    uv run python scripts/rename_avatar.py Nuru -e staging       # non-default azd env
+    uv run python scripts/rename_avatar.py Nuru --model Sakura  # also switch character
+    uv run python scripts/rename_avatar.py Simone --check-only  # verify only
+    uv run python scripts/rename_avatar.py Nuru -e staging      # non-default azd env
+
+The persona name and the Speech character are **separate knobs**: you can run the
+``Simone`` character and call her ``Nuru``. Renaming therefore leaves
+``PHOTO_AVATAR_NAME`` alone unless ``--model`` says otherwise -- it is a model id
+from a fixed catalogue, and an unknown value renders nothing at all, silently.
 
 Exit 0 = every surface agrees on the new name. The last step cannot be
 automated: open the app and ask "what is your name?".
@@ -42,11 +47,17 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
-# The variables a rename has to write. AVATAR_DISPLAY_NAME is the explicit
-# branding knob; PHOTO_AVATAR_NAME moves with it so the derived fallback agrees
-# too, and the name survives someone later clearing the knob.
-# tests/test_avatar_identity.py pins these against the resolver's real inputs.
-RENAME_VARS = ("AVATAR_DISPLAY_NAME", "PHOTO_AVATAR_NAME")
+# The variable a rename writes. AVATAR_DISPLAY_NAME is the branding knob and it
+# outranks every other input to the resolver.
+#
+# PHOTO_AVATAR_NAME is deliberately NOT here. It is a Speech *model id* from a
+# fixed catalogue, not a label: builders.py lowercases it into the character sent
+# to Speech, so pointing it at an arbitrary persona name renders nothing at all.
+# Branding and model are separate knobs by design -- you can run the Simone
+# character and call her Nuru. Change the model only via --model, which is
+# validated against the catalogue.
+# tests/test_avatar_identity.py pins this against the resolver's real inputs.
+RENAME_VARS = ("AVATAR_DISPLAY_NAME",)
 
 GREEN, RED, YEL, DIM, RST = "\033[32m", "\033[31m", "\033[33m", "\033[2m", "\033[0m"
 
@@ -57,6 +68,10 @@ def ok(m: str) -> None:
 
 def bad(m: str) -> None:
     print(f"  {RED}FAIL{RST}  {m}")
+
+
+def warn(m: str) -> None:
+    print(f"  {YEL}WARN{RST}  {m}")
 
 
 def info(m: str) -> None:
@@ -134,6 +149,35 @@ def project_endpoint(env: dict[str, str]) -> str:
     raise SystemExit("No Foundry project endpoint in the azd environment (PROJECT_ENDPOINT).")
 
 
+def valid_photo_characters() -> set[str]:
+    """The photo avatars Speech actually offers, read from the UI's own picker.
+
+    Parsed out of frontend/index.html rather than duplicated here, so this check
+    cannot drift from the list a user can pick in the app.
+    """
+    html = (REPO / "frontend" / "index.html").read_text(encoding="utf-8", errors="replace")
+    block = re.search(r'<select id="photoAvatarName">(.*?)</select>', html, re.S)
+    return set(re.findall(r'value="([^"]+)"', block.group(1))) if block else set()
+
+
+def _flag(env: dict[str, str], key: str) -> bool:
+    return (env.get(key, "") or "").strip().lower() in ("true", "1", "yes", "on")
+
+
+def character_var(env: dict[str, str]) -> str:
+    """Which variable actually reaches Voice Live as the avatar character.
+
+    Mirrors the precedence in frontend/app.js (startSession and
+    updateAvatarScene), so this script validates the value the app really sends
+    rather than a variable that happens to be inert in the current mode.
+    """
+    if _flag(env, "IS_CUSTOM_AVATAR") and (env.get("CUSTOM_AVATAR_NAME") or "").strip():
+        return "CUSTOM_AVATAR_NAME"
+    if _flag(env, "IS_PHOTO_AVATAR"):
+        return "PHOTO_AVATAR_NAME"
+    return "AVATAR_NAME"
+
+
 def live_agent_instructions(env: dict[str, str]) -> tuple[str, str]:
     """Return (version, instructions) for the agent version currently deployed."""
     from azure.ai.projects import AIProjectClient
@@ -177,27 +221,60 @@ def push_agent(env_name: str | None, overrides: dict[str, str]) -> int:
 def main() -> int:
     ap = argparse.ArgumentParser(description="Rename the avatar persona everywhere, then verify.")
     ap.add_argument("name", help='New persona name, e.g. "Nuru"')
-    ap.add_argument("--model", help="Speech photo-avatar id, if it differs from the name")
+    ap.add_argument("--model", help="Also switch the Speech photo-avatar character "
+                                    "(validated); omit to keep the current one")
     ap.add_argument("--check-only", action="store_true", help="Verify only; change nothing")
     ap.add_argument("-e", "--env", help="azd environment name (default: azd's own default)")
     ap.add_argument("--resource-group", help="Override the resource group from the azd env")
     a = ap.parse_args()
 
     display = a.name.strip()
-    model = (a.model or display).strip()
     if not display:
         raise SystemExit("The new name cannot be empty.")
-    overrides = dict(zip(RENAME_VARS, (display, model)))
 
-    print(f"\n{'=' * 74}\nRENAME AVATAR -> {display!r}   (photo-avatar id {model!r})\n{'=' * 74}")
+    print(f"\n{'=' * 74}\nRENAME AVATAR -> {display!r}\n{'=' * 74}")
     print(f"repo: {REPO}")
 
     env = azd_env(a.env)
     env_name = a.env or env.get("AZURE_ENV_NAME", "(default)")
     rg = resolve_rg(env, a.resource_group)
-    print(f"azd env: {env_name}    resource group: {rg}\n")
-    print(f"current: PHOTO_AVATAR_NAME={env.get('PHOTO_AVATAR_NAME')!r}  "
-          f"AVATAR_DISPLAY_NAME={env.get('AVATAR_DISPLAY_NAME')!r}\n")
+
+    # The Speech character is only touched when asked for explicitly. Defaulting
+    # it to the persona name is what broke rendering: the character is a model
+    # id, so "Nuru" is not a character Speech can draw unless it was trained.
+    overrides = {"AVATAR_DISPLAY_NAME": display}
+    model = None
+    char_var = write_var = character_var(env)
+    if a.model:
+        model = a.model.strip()
+        # Only the prebuilt catalogue can be checked locally. With IS_CUSTOM_AVATAR
+        # on, the character is a model trained in your own Speech resource and any
+        # name may be legitimate -- warn, but do not refuse.
+        is_custom = _flag(env, "IS_CUSTOM_AVATAR")
+        valid = valid_photo_characters()
+        if is_custom:
+            if valid and model not in valid:
+                warn(f"{model!r} is not a prebuilt character. IS_CUSTOM_AVATAR is on, so this\n"
+                     "        is only valid if a model of that name exists in your Speech "
+                     "resource.")
+        elif valid and model not in valid:
+            raise SystemExit(
+                f"\n{model!r} is not a photo avatar that Speech offers, so the avatar would\n"
+                f"silently fail to render. Valid characters:\n\n  {', '.join(sorted(valid))}\n\n"
+                f"The persona name and the Speech character are separate knobs: to brand her\n"
+                f"{display!r} while keeping the current character, just omit --model."
+            )
+        # In custom mode CUSTOM_AVATAR_NAME is the name that reaches Voice Live,
+        # so that is what --model has to set -- including when it is still empty,
+        # which is the "custom on, no custom name" silent-blank failure.
+        write_var = "CUSTOM_AVATAR_NAME" if is_custom else char_var
+        overrides[write_var] = model
+
+    print(f"azd env: {env_name}    resource group: {rg}")
+    current_model = env.get(char_var) or ""
+    print(f"speech character: {char_var}={current_model!r}"
+          + (f" -> {write_var}={model!r}" if model else "  (unchanged)"))
+    print(f"current: AVATAR_DISPLAY_NAME={env.get('AVATAR_DISPLAY_NAME')!r}\n")
 
     if not a.check_only:
         # --- 1. azd env: keeps infra-as-code truthful so `azd up` cannot revert it
@@ -214,8 +291,8 @@ def main() -> int:
         print("\n2. container app (new revision, ~1 min)")
         ca = container_app_name(env, rg)
         r = run(["az", "containerapp", "update", "-g", rg, "-n", ca,
-                 "--set-env-vars", f"AVATAR_DISPLAY_NAME={display}",
-                 f"PHOTO_AVATAR_NAME={model}", "-o", "none"])
+                 "--set-env-vars", *[f"{k}={v}" for k, v in overrides.items()],
+                 "-o", "none"])
         (ok if r.returncode == 0 else bad)(f"{ca} env updated")
         if r.returncode != 0:
             info((r.stderr or "")[:400])
@@ -226,6 +303,14 @@ def main() -> int:
         rc = push_agent(a.env, overrides)
         (ok if rc in (0, 3) else bad)(f"setup_foundry_agent.py exit {rc}"
                                       + (" (degraded: web tool off)" if rc == 3 else ""))
+        if rc not in (0, 3):
+            # Steps 1 and 2 already landed, so the deployment is now internally
+            # inconsistent in exactly the way this script exists to prevent. Say so
+            # here rather than leaving it to be inferred from the VERIFY table.
+            print(f"\n{RED}The rename is HALF APPLIED.{RST} Steps 1 and 2 succeeded, so the "
+                  f"stage will show {display!r}\nwhile she still introduces herself by the old "
+                  "name. Fix the error above and re-run:\nthis script is idempotent, so a "
+                  "second run completes the rename.\n")
 
     # --- verification: read every surface back, independently
     print(f"\n{'=' * 74}\nVERIFY\n{'=' * 74}")
@@ -260,6 +345,55 @@ def main() -> int:
         for e in app["properties"]["template"]["containers"][0].get("env", [])
     }
     failures += check_surface("container app", live_env)
+
+    # Drift between the two is the quiet killer: the container app is what runs
+    # today, the azd environment is what the next `azd up` will impose. When they
+    # disagree, a deploy silently reverts working configuration -- and a rename
+    # that only reached one of them looks fine right up until then.
+    identity_vars = ("AVATAR_DISPLAY_NAME", "PHOTO_AVATAR_NAME", "AVATAR_NAME",
+                     "CUSTOM_AVATAR_NAME", "IS_PHOTO_AVATAR", "IS_CUSTOM_AVATAR")
+    drift = [(k, env.get(k, ""), live_env.get(k, "")) for k in identity_vars
+             if (env.get(k, "") or "") != (live_env.get(k, "") or "")]
+    if drift:
+        bad(f"azd env and container app disagree on {len(drift)} identity variable(s); "
+            "the next `azd up` would revert the running app")
+        for k, azd_value, live_value in drift:
+            info(f"       {k}: azd={azd_value!r} vs container app={live_value!r}")
+        failures += 1
+    else:
+        ok("azd env and container app agree on every identity variable")
+
+    # The persona name is free text, but the Speech character is not: an unknown
+    # value renders nothing, with no error anywhere in the app. Which variable
+    # carries the character depends on the mode, so ask character_var rather than
+    # reading PHOTO_AVATAR_NAME -- it is inert whenever a custom avatar is named.
+    catalogue = valid_photo_characters()
+    live_var = character_var(live_env)
+    character = (live_env.get(live_var) or "").strip()
+    live_custom = _flag(live_env, "IS_CUSTOM_AVATAR")
+    if live_custom and not (live_env.get("CUSTOM_AVATAR_NAME") or "").strip():
+        warn(f"IS_CUSTOM_AVATAR is on but CUSTOM_AVATAR_NAME is empty, "
+             f"so the character falls back to {live_var}")
+    if not character:
+        ok("no speech character set (nothing to validate)")
+    elif live_custom:
+        if character in catalogue:
+            # Cannot be settled locally: a custom-trained avatar may legitimately
+            # share a prebuilt name, and the Speech resource has disableLocalAuth
+            # so it cannot be listed. Warn loudly, but do not fail -- this shape
+            # is only wrong if the avatar was never trained under that name.
+            warn(f"{live_var}={character!r} is also a PREBUILT name while "
+                 "IS_CUSTOM_AVATAR is on -- Voice Live looks it up in your own resource "
+                 "only. If no custom avatar of that name was trained, every session "
+                 "fails with avatar_verification_failed.")
+        else:
+            ok(f"speech character {character!r} ({live_var}) is custom -- not a prebuilt name")
+    elif character in catalogue:
+        ok(f"speech character {character!r} ({live_var}) is a real prebuilt avatar")
+    else:
+        bad(f"speech character {character!r} ({live_var}) is not a prebuilt avatar and "
+            "IS_CUSTOM_AVATAR is off -- the avatar will not render")
+        failures += 1
 
     version, text = live_agent_instructions(env)
     first = text.splitlines()[0] if text else "<empty>"

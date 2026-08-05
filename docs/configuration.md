@@ -318,6 +318,36 @@ avatar is called "Simone" everywhere without configuring anything.
 > (what she actually *says*) — then reads each surface back independently and exits
 > non-zero if they disagree. See [`scripts/README.md`](../scripts/README.md).
 >
+> **Whether a rename touches the avatar's face depends on the mode.**
+> `AVATAR_DISPLAY_NAME` is always branding, but the character Speech renders comes
+> from a *different* variable, and which one it reads is decided by `IS_CUSTOM_AVATAR`:
+>
+> | mode | character comes from | is the name the face? |
+> | --- | --- | --- |
+> | `IS_CUSTOM_AVATAR=false` | `PHOTO_AVATAR_NAME` — a **model id** from the fixed catalogue the picker in [`../frontend/index.html`](../frontend/index.html) lists | **No.** A rename leaves the character alone and she keeps her appearance under the new name. |
+> | `IS_CUSTOM_AVATAR=true` | `CUSTOM_AVATAR_NAME` — looked up in **your own** Speech resource | **Yes.** The name *is* the character. That is why a custom deployment sets `CUSTOM_AVATAR_NAME`, `PHOTO_AVATAR_NAME` and `AVATAR_DISPLAY_NAME` to the same string. |
+>
+> The script resolves the character with the same precedence the app uses, so it
+> validates the value Voice Live actually receives rather than one that happens to be
+> inert in the current mode. To change the character explicitly:
+>
+> ```powershell
+> uv run python scripts/rename_avatar.py Nuru --model Elise
+> ```
+>
+> **A flag/name mismatch fails in two very different ways, and one of them is silent:**
+>
+> - **custom on, prebuilt name** — Voice Live rejects the session with
+>   `avatar_verification_failed` ("Cannot find custom avatar *X* in your resources")
+>   and the handshake times out. Loud in the container logs, but the container itself
+>   stays healthy, so it presents as an app fault rather than a configuration one.
+> - **custom off, custom name** — Speech renders **nothing at all and reports no
+>   error**. Silent on every surface.
+>
+> So the script refuses a `--model` the prebuilt catalogue does not offer, and *warns*
+> instead of refusing when `IS_CUSTOM_AVATAR=true` — there the catalogue is your own
+> Speech resource, which it cannot enumerate.
+>
 > The third surface is the one that catches people out: the assistant's *spoken*
 > persona is rendered into the agent's prompt and **frozen into an agent version at
 > push time**, so it does not follow an environment change. Skip it and the stage
@@ -330,8 +360,7 @@ avatar is called "Simone" everywhere without configuring anything.
 >
 > ```powershell
 > azd env set AVATAR_DISPLAY_NAME Nuru
-> azd env set PHOTO_AVATAR_NAME Nuru
-> az containerapp update -g <rg> -n <app> --set-env-vars AVATAR_DISPLAY_NAME=Nuru PHOTO_AVATAR_NAME=Nuru
+> az containerapp update -g <rg> -n <app> --set-env-vars AVATAR_DISPLAY_NAME=Nuru
 > uv run python scripts/setup_foundry_agent.py   # re-brands the agent prompt
 > ```
 >

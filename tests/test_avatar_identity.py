@@ -25,7 +25,8 @@ What it pins:
 * ``backend.config`` and ``/api/config`` agree with the resolver
 * the exact reported case: photo avatar "Simone" -> the agent says "Simone"
 * ``scripts/rename_avatar.py`` still writes enough variables to actually rename a
-  deployed environment
+  deployed environment, and leaves the avatar's *character* alone -- whichever
+  variable holds it in the current mode
 
 Run from the repo root:
 
@@ -209,21 +210,64 @@ def main() -> int:
 
     check("every variable it writes is one the resolver reads",
           set(ra.RENAME_VARS) <= set(_ENV_KEYS), True)
-    # A live environment already branded Simone, with both model gates on and a
-    # stale custom model id lying around: the hostile case for a rename.
+    # A branding rename must never move the avatar's *character*: point the
+    # renderer at a character Speech cannot resolve and the avatar stops
+    # appearing with no error on any surface. Which variable holds the character
+    # depends on the mode, so the default rename touches none of them -- only an
+    # explicit --model may, and only the variable that mode actually reads.
+    check("does NOT touch the prebuilt photo character",
+          "PHOTO_AVATAR_NAME" in ra.RENAME_VARS, False)
+    check("does NOT touch the custom-trained character",
+          "CUSTOM_AVATAR_NAME" in ra.RENAME_VARS, False)
+
+    # The prebuilt catalogue is parsed out of the UI's own picker so it cannot
+    # drift from what a user can select. It is authoritative ONLY while
+    # IS_CUSTOM_AVATAR is false: a custom-trained avatar lives in your own Speech
+    # resource and is absent from this list by definition, so absence here says
+    # nothing about whether that avatar exists.
+    catalogue = ra.valid_photo_characters()
+    check("the prebuilt catalogue parses out of the UI picker",
+          "Simone" in catalogue and len(catalogue) > 20, True)
+
+    # The flag/name combinations, and which variable each one puts on the wire.
+    # Transcribed from frontend/app.js, which is what actually decides. Two of
+    # the mismatched combinations fail *silently*, which is why the script has to
+    # check the effective variable rather than a variable that is merely present.
+    photo_custom = {"IS_PHOTO_AVATAR": "true", "IS_CUSTOM_AVATAR": "true"}
+    photo_only = {"IS_PHOTO_AVATAR": "true", "IS_CUSTOM_AVATAR": "false"}
+    check("custom on: reads CUSTOM_AVATAR_NAME, so PHOTO_AVATAR_NAME is inert",
+          ra.character_var({**photo_custom, "CUSTOM_AVATAR_NAME": "Nuru",
+                            "PHOTO_AVATAR_NAME": "Simone"}),
+          "CUSTOM_AVATAR_NAME")
+    check("custom on but no custom name: falls back to PHOTO_AVATAR_NAME",
+          ra.character_var({**photo_custom, "CUSTOM_AVATAR_NAME": "",
+                            "PHOTO_AVATAR_NAME": "Simone"}),
+          "PHOTO_AVATAR_NAME")
+    check("custom off: reads PHOTO_AVATAR_NAME even with a custom name present",
+          ra.character_var({**photo_only, "CUSTOM_AVATAR_NAME": "Nuru",
+                            "PHOTO_AVATAR_NAME": "Simone"}),
+          "PHOTO_AVATAR_NAME")
+    check("both gates off: reads AVATAR_NAME",
+          ra.character_var({"IS_PHOTO_AVATAR": "false", "IS_CUSTOM_AVATAR": "false",
+                            "CUSTOM_AVATAR_NAME": "Nuru", "PHOTO_AVATAR_NAME": "Simone"}),
+          "AVATAR_NAME")
+
+    # A live environment already branded Simone, with both gates on and a
+    # character trained in its own Speech resource: the hostile case for a
+    # rename, and the shape the running deployment actually has.
     deployed = {
         "AVATAR_DISPLAY_NAME": "Simone",
         "PHOTO_AVATAR_NAME": "Simone",
         "AVATAR_NAME": "Lisa-casual-sitting",
-        "CUSTOM_AVATAR_NAME": "StaleCustomModel",
+        "CUSTOM_AVATAR_NAME": "TrainedCharacter",
         "IS_PHOTO_AVATAR": "true",
         "IS_CUSTOM_AVATAR": "true",
     }
-    applied = dict(zip(ra.RENAME_VARS, ("Nuru", "Nuru")))
+    renamed = {**deployed, **{k: "Nuru" for k in ra.RENAME_VARS}}
     check("its overrides beat every pre-existing identity variable",
-          resolve({**deployed, **applied}), "Nuru")
-    check("and rename to a Speech id that differs from the persona name",
-          resolve({**deployed, **dict(zip(ra.RENAME_VARS, ("Nuru", "Nuru-v2")))}), "Nuru")
+          resolve(renamed), "Nuru")
+    check("and the *effective* Speech character is left untouched",
+          renamed[ra.character_var(renamed)], "TrainedCharacter")
 
     print()
     if _failures:
