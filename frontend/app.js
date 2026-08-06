@@ -94,6 +94,7 @@ let intentionalDisconnect = false;
 let onboardingHintText = 'Tap the mic to ask me anything';
 let avatarTaglineText = '';
 let avatarDisplayNameText = '';
+let avatarSpeakingStyleEnabled = false;
 // Server-resolved persona name (/api/config -> assistantName): AVATAR_DISPLAY_NAME
 // if set, else the active avatar model's friendly name. Never empty. Used as the
 // stage-label fallback so the label can never come out blank, and so it agrees
@@ -276,6 +277,11 @@ async function fetchServerConfig() {
         textInputEnabled = (d.enableTextInput ?? true) && !isEmbeddedInTeams();
         stopButtonEnabled = d.enableStopButton ?? true;
         suggestedPromptsEnabled = d.enableSuggestedPrompts ?? true;
+        avatarSpeakingStyleEnabled = d.enableAvatarSpeakingStyle ?? false;
+        document.querySelector('.avatar-stage')?.classList.toggle(
+            'speaking-style-enabled',
+            avatarSpeakingStyleEnabled,
+        );
         // Hint is modality-aware and follows the EFFECTIVE composer state above
         // (so Teams, where the composer is hidden, never says "…or type…"). An
         // explicit ONBOARDING_HINT from the backend always wins.
@@ -2816,9 +2822,10 @@ function onTranscriptEmpty(itemId) {
         if (msg) msg.remove();
     }
     // The speech segment produced nothing — if the user hasn't really
-    // interacted yet, bring the onboarding hint back.
+    // interacted yet, bring the onboarding hint back. Do not show a toast:
+    // Voice Live can emit empty VAD segments while a following segment
+    // contains the question that is answered successfully.
     maybeRestoreOnboarding();
-    showToast("Didn't catch that — please try again.", 'warning', 2500);
 }
 
 // ===== Utilities =====

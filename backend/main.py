@@ -194,7 +194,7 @@ app.add_middleware(SelectiveGZipMiddleware, minimum_size=1024, compresslevel=6)
 
 app.include_router(routes.router)
 app.include_router(ws.router)
-# Teams in-call media participant (channel C, issue #27). Additive + opt-in: every
+# Teams in-call media participants (channels C/D, issue #27). Additive + opt-in: every
 # ACS endpoint returns 503 when ACS is not configured, so this never changes a
 # non-ACS deploy. Mounted before the static SPA so /api/acs/* + /ws/acs/* resolve.
 app.include_router(build_acs_router())

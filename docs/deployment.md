@@ -15,7 +15,7 @@ For local development see [development.md](development.md); for env vars see
 - **Azure AI Foundry** (account + project + model deployment) — created or BYO
 - **Azure AI Search** (Basic, AAD auth) — created or BYO
 - **Windows VM + NSG + public FQDN, and a second Azure Bot with the Teams calling
-  channel** *(channel C only)* — the media host; created only when the in-call profile
+  channel** *(channel D only)* — the media host; created only when the in-call profile
   is selected and its inputs are set. This is the one costly addition (~$283/month).
 
 Everything after the first six lines is additive and conditional: a `web` profile
@@ -82,21 +82,35 @@ azd env new <environment-name>
 #    Skip it and preflight asks; either way it is validated before azd runs.
 azd env set AZURE_LOCATION swedencentral
 
-# 4. Choose the channel AND the brain. Records DEPLOY_PROFILE (web · teams-tab ·
+# 4. Choose the avatar for a new deployment. These are the canonical settings.
+#    Types: standard-video, standard-photo, custom-video, custom-photo.
+#    AVATAR_MODEL is a catalogue name, or your custom Speech model id.
+azd env set AVATAR_TYPE standard-photo
+azd env set AVATAR_MODEL Simone
+# Optional branding; this does not select the face.
+# azd env set AVATAR_DISPLAY_NAME Nuru
+
+# 5. Choose the channel AND the brain. Records DEPLOY_PROFILE (web · teams-tab ·
 #    in-call · in-call-browser) and VOICE_BINDING (agent · model), sets every flag
 #    those imply and resets the ones they do not, and
 #    prints the full numbered plan marking who performs each step.
 #    channels/README.md to choose the channel; voice-binding.md to choose the brain.
 uv run python scripts/set_profile.py
 
-# 5. Verify you can actually finish that plan — regions, providers, tooling and every
+# 6. Verify you can actually finish that plan — regions, providers, tooling and every
 #    input your profile needs. Also settles the deploy target (subscription, region,
 #    resource group) so step 6 never stops to ask.
 uv run python scripts/preflight.py
 
-# 6. Provision infra + build + deploy app
+# 7. Provision infra + build + deploy app
 azd up
 ```
+
+`azd` reads these values from its environment, not from the local `.env` file.
+If you omit them, the legacy avatar variables remain supported and the template
+derives the same effective avatar from those values. See
+[configuration.md](configuration.md#selecting-an-avatar) for the four modes and
+the legacy mapping.
 
 Preflight also runs automatically as the `preprovision` hook, so a doomed `azd up`
 stops in seconds instead of failing twenty minutes in — skipping step 5 only means you
@@ -360,7 +374,7 @@ uv run python scripts/setup_foundry_agent.py      # re-register the agent + tool
 ## Teams (tab + in-call)
 
 The deployed Container App HTTPS URL is the Teams tab `contentUrl` and the bridge
-endpoint channel C's media bot connects back to. Building the package and sideloading
+endpoint channel D's media bot connects back to. Building the package and sideloading
 are in [`teams/README.md`](../teams/README.md); the calling bot's registration and host
 are in [`../meeting-bot/README.md`](../meeting-bot/README.md). Both are **opt-in**: with
 no Teams package built and no in-call flags set, the deploy is the channel A web app.

@@ -292,7 +292,7 @@ PROFILES: dict[str, Profile] = {
     "in-call": Profile(
         key="in-call",
         title="Web + tab + in-call meeting avatar",
-        channels="A + B + C",
+        channels="A + B + D",
         summary=(
             "The avatar joins a Teams meeting, hears the room and answers aloud with a lip-synced "
             "camera tile. Highest capability and highest administrator burden."
@@ -385,7 +385,7 @@ PROFILES: dict[str, Profile] = {
                     "Build and upload the Teams app package (optional for D)",
                     YOU,
                     AFTER,
-                    "The calling bot joins through Graph application permissions, so channel C "
+                    "The calling bot joins through Graph application permissions, so channel D "
                     "works WITHOUT installing anything in Teams. Build the package only if you "
                     "also want the app's in-meeting presence; --enable-calling sets "
                     "supportsCalling=true in the manifest.",
@@ -425,13 +425,13 @@ PROFILES: dict[str, Profile] = {
     "in-call-browser": Profile(
         key="in-call-browser",
         title="Web + tab + in-call avatar (browser guest)",
-        channels="A + B + D",
+        channels="A + B + C",
         summary=(
             "The avatar joins a Teams meeting as an anonymous guest from a browser tab, "
             "hears the room and answers aloud with a lip-synced camera tile. No Windows "
             "host and no administrator of any kind — but the tab has to stay open."
         ),
-        # Everything channel D needs. ENABLE_ACS provisions the resource; the other two
+        # Everything channel C needs. ENABLE_ACS provisions the resource; the other two
         # give her a face, and without them the joiner still works but publishes no video.
         flags={
             "ENABLE_ACS": "true",

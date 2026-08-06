@@ -8,6 +8,8 @@ from dotenv import load_dotenv
 from .avatar_identity import (
     DEFAULT_PHOTO_AVATAR,
     DEFAULT_STANDARD_AVATAR,
+    avatar_model,
+    avatar_type,
     resolve_avatar_display_name,
 )
 
@@ -116,7 +118,7 @@ REALTIME_MAX_TOKENS = int(os.getenv("REALTIME_MAX_TOKENS", "1200"))
 # the filler is what made model mode start speaking at ~1.0s against agent
 # mode's ~2.4s. Time to the *substantive answer* was 2.42s vs 2.45s — identical.
 # Muting the filler therefore removes a perceived-latency win without changing
-# any real one. Channel C (in-call audio) has no screen to put an indicator on
+# any real one. Channels C/D (in-call audio) have no screen to put an indicator on
 # and will need a spoken cue, so this is expected to come back — as a tuned set
 # of triggers and phrasings rather than a blanket preamble.
 #
@@ -135,7 +137,7 @@ REALTIME_INTERIM_THRESHOLD_MS = int(os.getenv("REALTIME_INTERIM_THRESHOLD_MS", "
 # Channel C is the live in-call avatar. It is ADDITIVE and OPT-IN: every endpoint
 # and the media bridge are gated on ACS being configured, so a deploy without ACS
 # behaves exactly as the web app alone. Two legs share the same Voice Live pipeline:
-#   1. the .NET Graph media bot on a Windows VM  -> wss://.../ws/acs/audio
+#   1. the .NET Graph media bot on a Windows VM  -> wss://.../ws/acs/audio (D)
 #      (hears every participant; this is the real one)
 #   2. the browser joiner /acs-join.html         -> wss://.../ws/acs/browser
 #      ACS Calling SDK joins as an anonymous interop guest via the meeting lobby,
@@ -194,7 +196,7 @@ ACS_IDLE_TIMEOUT_S = float(os.getenv("ACS_IDLE_TIMEOUT_S", "0"))
 ACS_AVATAR_VIDEO_ENABLED = os.getenv(
     "ACS_AVATAR_VIDEO_ENABLED", "false"
 ).strip().lower() in ("1", "true", "yes", "on")
-# In-call media bot: the .NET/Windows Graph media bot connects to the
+# In-call media bot (channel D): the .NET/Windows Graph media bot connects to the
 # ``/ws/acs/audio`` bridge endpoint and speaks the AcsVoiceBridge protocol. That
 # path needs Voice Live only — NOT an ACS resource — so this flag enables the
 # bridge endpoint independently of ACS_ENDPOINT/ACS_CONNECTION_STRING. (The
@@ -239,7 +241,7 @@ MEETING_BOT_VIDEO_FPS = int(os.getenv("MEETING_BOT_VIDEO_FPS", "15"))
 BROWSER_JOIN_VIDEO_ENABLED = os.getenv(
     "BROWSER_JOIN_VIDEO_ENABLED", "false"
 ).strip().lower() in ("1", "true", "yes", "on")
-# True when channel C in-call media is configured: either an ACS resource is set,
+# True when channel C/D in-call media is configured: either an ACS resource is set,
 # or the Graph media bot bridge is explicitly enabled.
 ACS_ENABLED = bool(ACS_ENDPOINT or ACS_CONNECTION_STRING or MEETING_BOT_ENABLED)
 
@@ -286,6 +288,20 @@ def get_ui_defaults() -> dict:
     (DEVELOPER_MODE=false) where the side panel is hidden and the session
     auto-starts with whatever is configured here.
     """
+    selected_avatar_type = avatar_type()
+    selected_avatar_model = avatar_model()
+    is_photo_avatar = selected_avatar_type.endswith("-photo")
+    is_custom_avatar = selected_avatar_type.startswith("custom-")
+    legacy_avatar_name = _str("AVATAR_NAME", DEFAULT_STANDARD_AVATAR)
+    legacy_custom_avatar_name = _str("CUSTOM_AVATAR_NAME", "")
+    legacy_photo_avatar_name = _str("PHOTO_AVATAR_NAME", DEFAULT_PHOTO_AVATAR)
+    if selected_avatar_type == "standard-video":
+        legacy_avatar_name = selected_avatar_model
+    elif selected_avatar_type == "standard-photo":
+        legacy_photo_avatar_name = selected_avatar_model
+    else:
+        legacy_custom_avatar_name = selected_avatar_model
+
     return {
         # Conversation
         "srModel": _str("SR_MODEL", "mai-transcribe-1"),
@@ -306,12 +322,15 @@ def get_ui_defaults() -> dict:
         # Avatar
         "avatarEnabled": _bool("AVATAR_ENABLED", True),
         "avatarOutputMode": _str("AVATAR_OUTPUT_MODE", "webrtc"),
-        "isPhotoAvatar": _bool("IS_PHOTO_AVATAR", False),
-        "isCustomAvatar": _bool("IS_CUSTOM_AVATAR", False),
-        "avatarName": _str("AVATAR_NAME", DEFAULT_STANDARD_AVATAR),
-        "customAvatarName": _str("CUSTOM_AVATAR_NAME", ""),
-        "photoAvatarName": _str("PHOTO_AVATAR_NAME", DEFAULT_PHOTO_AVATAR),
+        "avatarType": selected_avatar_type,
+        "avatarModel": selected_avatar_model,
+        "isPhotoAvatar": is_photo_avatar,
+        "isCustomAvatar": is_custom_avatar,
+        "avatarName": legacy_avatar_name,
+        "customAvatarName": legacy_custom_avatar_name,
+        "photoAvatarName": legacy_photo_avatar_name,
         "avatarBackgroundImageUrl": _str("AVATAR_BACKGROUND_IMAGE_URL", ""),
+        "enableAvatarSpeakingStyle": _bool("ENABLE_AVATAR_SPEAKING_STYLE", False),
         # Avatar identity shown top-left on the stage. Two related keys:
         #
         #   avatarDisplayName — the RAW knob, empty when unset. Deliberately not

@@ -74,7 +74,7 @@ for key in ch.PROFILE_ORDER:
     }
     check(f"{key}: every flag matches the profile", not wrong)
 
-print("\nChannel D needs nothing from you and switches on all three ACS flags")
+print("\nChannel C needs nothing from you and switches on all three ACS flags")
 written, _ = run({}, "in-call-browser")
 check("ENABLE_ACS=true", written.get("ENABLE_ACS") == "true")
 check("ACS_AVATAR_VIDEO_ENABLED=true", written.get("ACS_AVATAR_VIDEO_ENABLED") == "true")

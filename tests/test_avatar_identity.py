@@ -43,6 +43,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from backend.avatar_identity import (  # noqa: E402
     active_avatar_model,
+    avatar_model,
+    avatar_type,
     resolve_avatar_display_name,
 )
 
@@ -50,6 +52,8 @@ from backend.avatar_identity import (  # noqa: E402
 # a developer's own shell/.env cannot make the suite pass or fail spuriously.
 _ENV_KEYS = (
     "AVATAR_DISPLAY_NAME",
+    "AVATAR_TYPE",
+    "AVATAR_MODEL",
     "AVATAR_NAME",
     "CUSTOM_AVATAR_NAME",
     "PHOTO_AVATAR_NAME",
@@ -88,6 +92,17 @@ def main() -> int:
           "Lisa")
 
     print("\n2. Derived from the active avatar model")
+    check("canonical standard photo type",
+          avatar_type({"AVATAR_TYPE": "standard-photo"}), "standard-photo")
+    check("canonical custom photo model wins over legacy fields",
+          avatar_model({"AVATAR_TYPE": "custom-photo", "AVATAR_MODEL": "Nuru",
+                        "CUSTOM_AVATAR_NAME": "Stale"}),
+          "Nuru")
+    check("canonical custom photo resolves display name",
+          resolve({"AVATAR_TYPE": "custom-photo", "AVATAR_MODEL": "Nuru"}), "Nuru")
+    check("canonical values override legacy flags",
+          avatar_type({"AVATAR_TYPE": "standard-video", "IS_PHOTO_AVATAR": "true"}),
+          "standard-video")
     # The reported case: nothing branded, photo avatar Simone selected.
     check("REPORTED CASE photo avatar Simone -> Simone",
           resolve({"IS_PHOTO_AVATAR": "true", "PHOTO_AVATAR_NAME": "Simone"}), "Simone")
@@ -209,7 +224,7 @@ def main() -> int:
     import rename_avatar as ra
 
     check("every variable it writes is one the resolver reads",
-          set(ra.RENAME_VARS) <= set(_ENV_KEYS), True)
+          (set(ra.RENAME_VARS) | {"AVATAR_MODEL"}) <= set(_ENV_KEYS), True)
     # A branding rename must never move the avatar's *character*: point the
     # renderer at a character Speech cannot resolve and the avatar stops
     # appearing with no error on any surface. Which variable holds the character
@@ -268,6 +283,9 @@ def main() -> int:
           resolve(renamed), "Nuru")
     check("and the *effective* Speech character is left untouched",
           renamed[ra.character_var(renamed)], "TrainedCharacter")
+    canonical = {"AVATAR_TYPE": "custom-photo", "AVATAR_MODEL": "OldModel"}
+    check("canonical --model target is AVATAR_MODEL",
+          ra.character_var(canonical), "AVATAR_MODEL")
 
     print()
     if _failures:

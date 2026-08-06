@@ -91,11 +91,12 @@ param photoAvatarName string = ''
 param isPhotoAvatar string = ''
 param isCustomAvatar string = ''
 param avatarBackgroundImageUrl string = ''
+param enableAvatarSpeakingStyle string = 'false'
 param srModel string = 'mai-transcribe-1'
 param recognitionLanguage string = 'auto'
 
 // ───────── channel C in-call media (#27) ─────────
-@description('Enable channel C ACS Call Automation media participant ("true"/"false"). When not "true" (default), no ACS resource is created and the container behaves as today.')
+@description('Enable channel C ACS browser guest media participant ("true"/"false"). When not "true" (default), no ACS resource is created and the container behaves as today.')
 param enableAcs string = 'false'
 @description('ACS data residency geography (NOT an Azure region), e.g. "United States", "Europe", "Africa".')
 param acsDataLocation string = 'United States'
@@ -335,6 +336,7 @@ module app 'modules/containerApp.bicep' = {
     isPhotoAvatar: isPhotoAvatar
     isCustomAvatar: isCustomAvatar
     avatarBackgroundImageUrl: avatarBackgroundImageUrl
+    enableAvatarSpeakingStyle: enableAvatarSpeakingStyle
     srModel: srModel
     recognitionLanguage: recognitionLanguage
     acsEndpoint: acsEnabled ? acs!.outputs.endpoint : ''
@@ -366,4 +368,3 @@ output acsEndpoint string = acsEnabled ? acs!.outputs.endpoint : ''
 // they pass through whatever was supplied (possibly empty = web tool disabled).
 output bingConnectionName string = createBing ? bingConnectionNameEffective : bingConnectionName
 output bingCustomConfigName string = createBing ? bingCustomConfigNameEffective : bingCustomConfigName
-

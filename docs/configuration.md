@@ -289,12 +289,15 @@ avatar is called "Simone" everywhere without configuring anything.
 |---|---|---|
 | `AVATAR_ENABLED` | `true` | Show the avatar at all. |
 | `AVATAR_OUTPUT_MODE` | `webrtc` | `webrtc` \| `websocket`. |
-| `IS_PHOTO_AVATAR` | `false` | Render a photo-realistic avatar (`vasa-1`) instead of the standard video avatar. |
-| `IS_CUSTOM_AVATAR` | `false` | Use an avatar trained in your own Speech resource. A **modifier, not a separate type**: it combines with `IS_PHOTO_AVATAR` (see the combinations below). |
-| `AVATAR_NAME` | `Lisa-casual-sitting` | Standard avatar character (used when both flags are false). |
-| `CUSTOM_AVATAR_NAME` | — | Custom avatar **model** id; free-text, must match a model provisioned in your Speech resource. Used whenever `IS_CUSTOM_AVATAR=true` (custom video **or** custom photo); case is preserved and no style suffix is parsed. Pointing at a non-existent model breaks rendering. |
-| `PHOTO_AVATAR_NAME` | `Anika` | Prebuilt photo-realistic character. Used when `IS_PHOTO_AVATAR=true` and no custom name applies. |
+| `AVATAR_TYPE` | *(unset; inferred for compatibility)* | **Canonical selector:** `standard-video`, `standard-photo`, `custom-video`, or `custom-photo`. |
+| `AVATAR_MODEL` | *(unset; inferred for compatibility)* | **Canonical model id:** a standard catalogue name or the custom model provisioned in your Speech resource. |
+| `IS_PHOTO_AVATAR` | `false` | **Legacy compatibility input.** Derived automatically from `AVATAR_TYPE` when the canonical selector is set. |
+| `IS_CUSTOM_AVATAR` | `false` | **Legacy compatibility input.** Derived automatically from `AVATAR_TYPE` when the canonical selector is set. |
+| `AVATAR_NAME` | `Lisa-casual-sitting` | **Legacy compatibility input** for a standard video model. |
+| `CUSTOM_AVATAR_NAME` | — | **Legacy compatibility input** for a custom video or custom photo model. |
+| `PHOTO_AVATAR_NAME` | `Anika` | **Legacy compatibility input** for a standard photo model. |
 | `AVATAR_BACKGROUND_IMAGE_URL` | — | Optional background image behind the avatar. |
+| `ENABLE_AVATAR_SPEAKING_STYLE` | `false` | Opt into the grayscale idle / full-color speaking treatment with a yellow speaking tint. Disabled preserves the avatar's original appearance. |
 | **`AVATAR_DISPLAY_NAME`** | *(the avatar model's name)* | **The branding knob.** Sets the bold name on the avatar stage, the name the assistant calls itself, the Teams bot name, the wake phrase and the Teams package name. Purely cosmetic — does **not** select the avatar model. **Unset it falls back to the friendly name of the *active* avatar model** (`Simone`, or `Lisa-casual-sitting` → `Lisa`), so every surface agrees without setting anything; `Avatar` only if that is empty too. Set it to override, e.g. run the `Lisa` avatar but call her `Nuru`. |
 | `AVATAR_TAGLINE` | `Your Digital Assistant` | Italic tagline under the name in the stage identity lockup. Company-agnostic by default; set a branded value (e.g. `Your MTN Digital Assistant`) per deployment. Empty hides the tagline line. |
 
@@ -304,6 +307,22 @@ avatar is called "Simone" everywhere without configuring anything.
 > ([`backend/avatar_identity.py`](../backend/avatar_identity.py)):
 > `AVATAR_DISPLAY_NAME` → the active avatar model's friendly name → `Avatar`.
 > Pinned by `uv run python tests/test_avatar_identity.py`.
+
+### Selecting an avatar
+
+For a new deployment, set only the canonical pair:
+
+```dotenv
+AVATAR_TYPE=custom-photo
+AVATAR_MODEL=Nuru
+AVATAR_DISPLAY_NAME=Nuru
+```
+
+The application translates that into the old internal fields (`IS_PHOTO_AVATAR`,
+`IS_CUSTOM_AVATAR`, and the matching model name). You do **not** copy the model
+into several variables. Existing deployments can keep their old variables; they
+are used only when `AVATAR_TYPE` or `AVATAR_MODEL` is absent. If both forms are
+present, the canonical pair wins.
 
 > **Renaming after a deploy: use the script.** The name lives on three surfaces and
 > all three have to move together, so there is one command for it:
@@ -374,24 +393,22 @@ avatar is called "Simone" everywhere without configuring anything.
 > a variable is **unset**. The values Avatar Forge actually ships with are different:
 > both [`.env.example`](../.env.example) and the `azd` parameters
 > ([`infra/main.parameters.json`](../infra/main.parameters.json)) set
-> `IS_PHOTO_AVATAR=true` and `PHOTO_AVATAR_NAME=Simone`, so a stock local run or
+> `AVATAR_TYPE=standard-photo` and `AVATAR_MODEL=Simone`, so a stock local run or
 > deploy renders the **Simone photo avatar**, not `Lisa-casual-sitting`.
 
-### Avatar flag combinations
+### Legacy compatibility mapping
 
-`IS_PHOTO_AVATAR` and `IS_CUSTOM_AVATAR` are independent, so all four combinations are valid.
+The old two-flag configuration remains supported during migration:
 
-| `IS_PHOTO_AVATAR` | `IS_CUSTOM_AVATAR` | Renders | Name taken from |
-|---|---|---|---|
-| `false` | `false` | Standard video avatar | `AVATAR_NAME` |
-| `false` | `true` | Custom video avatar | `CUSTOM_AVATAR_NAME` |
-| `true` | `false` | Prebuilt photo avatar (`vasa-1`) | `PHOTO_AVATAR_NAME` |
-| `true` | `true` | Custom photo avatar (`vasa-1` with `customized=true`) | `CUSTOM_AVATAR_NAME` |
+| Legacy settings | Canonical equivalent |
+|---|---|
+| `IS_PHOTO_AVATAR=false`, `IS_CUSTOM_AVATAR=false` | `standard-video` + `AVATAR_NAME` |
+| `IS_PHOTO_AVATAR=true`, `IS_CUSTOM_AVATAR=false` | `standard-photo` + `PHOTO_AVATAR_NAME` |
+| `IS_PHOTO_AVATAR=false`, `IS_CUSTOM_AVATAR=true` | `custom-video` + `CUSTOM_AVATAR_NAME` |
+| `IS_PHOTO_AVATAR=true`, `IS_CUSTOM_AVATAR=true` | `custom-photo` + `CUSTOM_AVATAR_NAME` |
 
-When `IS_CUSTOM_AVATAR=true` but `CUSTOM_AVATAR_NAME` is empty, the name falls back
-to `PHOTO_AVATAR_NAME` (photo mode) or `AVATAR_NAME` (video mode) instead of sending
-an empty character. That fallback only prevents a blank avatar; it does not select
-your custom model, so always set `CUSTOM_AVATAR_NAME` when you enable the flag.
+Do not configure both forms with different values. The canonical pair is the
+source of truth whenever it is present.
 
 ---
 
@@ -443,11 +460,11 @@ The `ACS_*` prefix is historical: these settings govern the in-call media bridge
 regardless of which transport feeds it (the Graph media bot on `/ws/acs/audio`, or the
 browser joiner on `/ws/acs/browser`). `MEETING_BOT_ENABLED=true` is enough on its own —
 it serves the media bot **without** provisioning an ACS resource. See
-[`docs/channels/c-in-call-media-bot.md`](channels/c-in-call-media-bot.md).
+[`docs/channels/d-in-call-media-bot.md`](channels/d-in-call-media-bot.md).
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `ENABLE_ACS` | `false` | **azd/infra only, and the one flag that provisions ACS.** When `true`, deploys the conditional `communicationServices.bicep` and passes `ACS_ENDPOINT` to the container. **Required by channel D** (the browser guest joiner); channels A–C do not need it. Set for you by `DEPLOY_PROFILE=in-call-browser`. |
+| `ENABLE_ACS` | `false` | **azd/infra only, and the one flag that provisions ACS.** When `true`, deploys the conditional `communicationServices.bicep` and passes `ACS_ENDPOINT` to the container. **Required by channel C** (the browser guest joiner); channels A–B and D do not need it. Set for you by `DEPLOY_PROFILE=in-call-browser`. |
 | `ACS_DATA_LOCATION` | `United States` | **azd/infra only.** Data residency geography for the ACS resource. |
 | `ACS_ENDPOINT` | — | ACS resource endpoint (`https://<acs>.communication.azure.com/`). Set automatically by infra when `ENABLE_ACS=true`. Auth via the container's managed identity (needs a role on the ACS resource). |
 | `ACS_CONNECTION_STRING` | — | Alternative to `ACS_ENDPOINT` + managed identity (includes endpoint + key). Takes precedence when set; simplest for local/dev. |
@@ -463,18 +480,18 @@ it serves the media bot **without** provisioning an ACS resource. See
 >
 > - **The ACS *resource*** — `ENABLE_ACS`, `ACS_DATA_LOCATION`, `ACS_ENDPOINT`,
 >   `ACS_CONNECTION_STRING`, `ACS_CALLBACK_BASE_URL`. These provision and address the
->   ACS resource, and they are needed by **channel D only** — the browser guest
+>   ACS resource, and they are needed by **channel C only** — the browser guest
 >   joiner at `/acs-join.html`, where a browser tab joins a meeting as an anonymous
->   guest. Channels A–C never touch them. Choosing `DEPLOY_PROFILE=in-call-browser`
+>   guest. Channels A–B and D never touch them. Choosing `DEPLOY_PROFILE=in-call-browser`
 >   sets `ENABLE_ACS` for you, so you should not normally set it by hand. See
->   [`channels/d-in-call-headless.md`](channels/d-in-call-headless.md#deploying-it).
+>   [`channels/c-in-call-headless.md`](channels/c-in-call-headless.md#deploying-it).
 > - **The audio *bridge*** — `ACS_AUDIO_SAMPLE_RATE`, `ACS_WAKE_PHRASES`,
 >   `ACS_REQUIRE_WAKE_PHRASE`, `ACS_IDLE_TIMEOUT_S`, `ACS_FOLLOWUP_WINDOW_S`. These
->   are read by `backend/acs/bridge.py` and **do apply to channel C**, which speaks
+>   are read by `backend/acs/bridge.py` and **do apply to channel D**, which speaks
 >   the same wire protocol over `/ws/acs/audio`. The turn-taking ones are the knobs
 >   you will actually tune in a live meeting.
 >
-> Channel C joins through Graph calling on the Windows host and never touches the ACS
+> Channel D joins through Graph calling on the Windows host and never touches the ACS
 > resource; the `acs` in the paths is the protocol's name, not a dependency.
 
 ### The avatar's face in the meeting

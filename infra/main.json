@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.43.8.12551",
-      "templateHash": "12126610585998438323"
+      "templateHash": "3931787809561143851"
     }
   },
   "parameters": {
@@ -286,6 +286,27 @@
       "type": "string",
       "defaultValue": "text-embedding-3-small"
     },
+    "avatarType": {
+      "type": "string",
+      "defaultValue": "",
+      "allowedValues": [
+        "",
+        "standard-video",
+        "standard-photo",
+        "custom-video",
+        "custom-photo"
+      ],
+      "metadata": {
+        "description": "Canonical avatar type. Use standard-video, standard-photo, custom-video, or custom-photo. Leave empty to use the legacy avatar variables below."
+      }
+    },
+    "avatarModel": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Canonical avatar model id. For custom avatars this is the model provisioned in the Speech resource."
+      }
+    },
     "avatarName": {
       "type": "string",
       "defaultValue": "Lisa-casual-sitting"
@@ -324,6 +345,13 @@
       "type": "string",
       "defaultValue": ""
     },
+    "enableAvatarSpeakingStyle": {
+      "type": "string",
+      "defaultValue": "false",
+      "metadata": {
+        "description": "Enable the grayscale idle / color speaking avatar treatment (\"true\"/\"false\"). Disabled by default to preserve the avatar original appearance."
+      }
+    },
     "srModel": {
       "type": "string",
       "defaultValue": "mai-transcribe-1"
@@ -336,14 +364,14 @@
       "type": "string",
       "defaultValue": "",
       "metadata": {
-        "description": "Deployment profile from `scripts/set_profile.py` — one of \"web\", \"teams-tab\", \"in-call\" (channel C, Windows media bot) or \"in-call-browser\" (channel D, ACS browser guest). Drives which optional channels deploy. Empty keeps the pre-profile behaviour (explicit flags only)."
+        "description": "Deployment profile from `scripts/set_profile.py` — one of \"web\", \"teams-tab\", \"in-call\" (channel D, Windows media bot) or \"in-call-browser\" (channel C, ACS browser guest). Drives which optional channels deploy. Empty keeps the pre-profile behaviour (explicit flags only)."
       }
     },
     "enableAcs": {
       "type": "string",
       "defaultValue": "false",
       "metadata": {
-        "description": "Enable channel C ACS Call Automation media participant (\"true\"/\"false\"). When not \"true\" (default), no ACS resource is created and the deployment behaves exactly as today."
+        "description": "Enable channel C ACS browser guest media participant (\"true\"/\"false\"). When not \"true\" (default), no ACS resource is created and the deployment behaves exactly as today."
       }
     },
     "acsDataLocation": {
@@ -357,7 +385,7 @@
       "type": "string",
       "defaultValue": "false",
       "metadata": {
-        "description": "\"true\"/\"false\". Serve the .NET Teams media-bot bridge without an ACS resource (sets MEETING_BOT_ENABLED). Implied by deployProfile=\"in-call\" exactly; \"in-call-browser\" is channel D and does not imply it."
+        "description": "\"true\"/\"false\". Serve the .NET Teams media-bot bridge without an ACS resource (sets MEETING_BOT_ENABLED). Implied by deployProfile=\"in-call\" exactly; \"in-call-browser\" is channel C and does not imply it."
       }
     },
     "acsAudioSampleRate": {
@@ -392,7 +420,7 @@
       "type": "string",
       "defaultValue": "false",
       "metadata": {
-        "description": "\"true\"/\"false\". Provision the Windows media host + calling bot registration. Implied by deployProfile=\"in-call\" exactly; \"in-call-browser\" is channel D and needs no host."
+        "description": "\"true\"/\"false\". Provision the Windows media host + calling bot registration. Implied by deployProfile=\"in-call\" exactly; \"in-call-browser\" is channel C and needs no host."
       }
     },
     "meetingBotAppId": {
@@ -467,6 +495,19 @@
     "bingHostsRaw": "[map(parameters('bingAllowedDomains'), lambda('d', split(replace(replace(lambdaVariables('d').domain, 'https://', ''), 'http://', ''), '/')[0]))]",
     "bingHosts": "[map(variables('bingHostsRaw'), lambda('h', if(startsWith(lambdaVariables('h'), 'www.'), substring(lambdaVariables('h'), 4), lambdaVariables('h'))))]",
     "webIqEffectiveDomains": "[if(empty(parameters('webIqAllowedDomains')), join(union(variables('bingHosts'), variables('bingHosts')), ','), parameters('webIqAllowedDomains'))]",
+    "truthyValues": [
+      "1",
+      "true",
+      "yes",
+      "on"
+    ],
+    "resolvedAvatarType": "[if(not(empty(trim(parameters('avatarType')))), toLower(trim(parameters('avatarType'))), if(contains(variables('truthyValues'), toLower(trim(parameters('isCustomAvatar')))), if(contains(variables('truthyValues'), toLower(trim(parameters('isPhotoAvatar')))), 'custom-photo', 'custom-video'), if(contains(variables('truthyValues'), toLower(trim(parameters('isPhotoAvatar')))), 'standard-photo', 'standard-video')))]",
+    "resolvedAvatarModel": "[if(not(empty(trim(parameters('avatarModel')))), trim(parameters('avatarModel')), if(or(equals(variables('resolvedAvatarType'), 'custom-video'), equals(variables('resolvedAvatarType'), 'custom-photo')), parameters('customAvatarName'), if(equals(variables('resolvedAvatarType'), 'standard-photo'), parameters('photoAvatarName'), parameters('avatarName'))))]",
+    "effectiveAvatarName": "[if(equals(variables('resolvedAvatarType'), 'standard-video'), variables('resolvedAvatarModel'), parameters('avatarName'))]",
+    "effectiveCustomAvatarName": "[if(or(equals(variables('resolvedAvatarType'), 'custom-video'), equals(variables('resolvedAvatarType'), 'custom-photo')), variables('resolvedAvatarModel'), parameters('customAvatarName'))]",
+    "effectivePhotoAvatarName": "[if(equals(variables('resolvedAvatarType'), 'standard-photo'), variables('resolvedAvatarModel'), parameters('photoAvatarName'))]",
+    "effectiveIsPhotoAvatar": "[if(or(equals(variables('resolvedAvatarType'), 'standard-photo'), equals(variables('resolvedAvatarType'), 'custom-photo')), 'true', 'false')]",
+    "effectiveIsCustomAvatar": "[if(or(equals(variables('resolvedAvatarType'), 'custom-video'), equals(variables('resolvedAvatarType'), 'custom-photo')), 'true', 'false')]",
     "resourceToken": "[toLower(uniqueString(subscription().id, parameters('environmentName'), parameters('location')))]",
     "tags": {
       "azd-env-name": "[parameters('environmentName')]",
@@ -481,13 +522,7 @@
     "wantMeetingBotHost": "[or(variables('profileInCall'), equals(toLower(parameters('deployMeetingBotHost')), 'true'))]",
     "meetingBotInputsReady": "[and(and(not(empty(parameters('meetingBotAppId'))), not(empty(parameters('meetingBotDnsLabel')))), not(empty(parameters('meetingBotAdminPassword'))))]",
     "deployHost": "[and(variables('wantMeetingBotHost'), variables('meetingBotInputsReady'))]",
-    "truthyValues": [
-      "1",
-      "true",
-      "yes",
-      "on"
-    ],
-    "activeAvatarModel": "[if(contains(variables('truthyValues'), toLower(trim(parameters('isCustomAvatar')))), parameters('customAvatarName'), if(contains(variables('truthyValues'), toLower(trim(parameters('isPhotoAvatar')))), parameters('photoAvatarName'), parameters('avatarName')))]",
+    "activeAvatarModel": "[variables('resolvedAvatarModel')]",
     "derivedAvatarName": "[split(variables('activeAvatarModel'), '-')[0]]",
     "resolvedAvatarDisplayName": "[if(not(empty(parameters('avatarDisplayName'))), parameters('avatarDisplayName'), if(empty(variables('derivedAvatarName')), 'Avatar', variables('derivedAvatarName')))]"
   },
@@ -617,10 +652,10 @@
             "value": "[parameters('embeddingDeployment')]"
           },
           "avatarName": {
-            "value": "[parameters('avatarName')]"
+            "value": "[variables('effectiveAvatarName')]"
           },
           "customAvatarName": {
-            "value": "[parameters('customAvatarName')]"
+            "value": "[variables('effectiveCustomAvatarName')]"
           },
           "avatarDisplayName": {
             "value": "[parameters('avatarDisplayName')]"
@@ -629,16 +664,19 @@
             "value": "[parameters('avatarTagline')]"
           },
           "photoAvatarName": {
-            "value": "[parameters('photoAvatarName')]"
+            "value": "[variables('effectivePhotoAvatarName')]"
           },
           "isPhotoAvatar": {
-            "value": "[parameters('isPhotoAvatar')]"
+            "value": "[variables('effectiveIsPhotoAvatar')]"
           },
           "isCustomAvatar": {
-            "value": "[parameters('isCustomAvatar')]"
+            "value": "[variables('effectiveIsCustomAvatar')]"
           },
           "avatarBackgroundImageUrl": {
             "value": "[parameters('avatarBackgroundImageUrl')]"
+          },
+          "enableAvatarSpeakingStyle": {
+            "value": "[parameters('enableAvatarSpeakingStyle')]"
           },
           "srModel": {
             "value": "[parameters('srModel')]"
@@ -673,7 +711,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.43.8.12551",
-              "templateHash": "6673048578718943267"
+              "templateHash": "6828111390757326302"
             }
           },
           "parameters": {
@@ -870,6 +908,10 @@
               "type": "string",
               "defaultValue": ""
             },
+            "enableAvatarSpeakingStyle": {
+              "type": "string",
+              "defaultValue": "false"
+            },
             "srModel": {
               "type": "string",
               "defaultValue": "mai-transcribe-1"
@@ -882,7 +924,7 @@
               "type": "string",
               "defaultValue": "false",
               "metadata": {
-                "description": "Enable channel C ACS Call Automation media participant (\"true\"/\"false\"). When not \"true\" (default), no ACS resource is created and the container behaves as today."
+                "description": "Enable channel C ACS browser guest media participant (\"true\"/\"false\"). When not \"true\" (default), no ACS resource is created and the container behaves as today."
               }
             },
             "acsDataLocation": {
@@ -2476,6 +2518,9 @@
                   "avatarBackgroundImageUrl": {
                     "value": "[parameters('avatarBackgroundImageUrl')]"
                   },
+                  "enableAvatarSpeakingStyle": {
+                    "value": "[parameters('enableAvatarSpeakingStyle')]"
+                  },
                   "srModel": {
                     "value": "[parameters('srModel')]"
                   },
@@ -2506,7 +2551,7 @@
                     "_generator": {
                       "name": "bicep",
                       "version": "0.43.8.12551",
-                      "templateHash": "12555570511420734749"
+                      "templateHash": "17341730366819233633"
                     }
                   },
                   "parameters": {
@@ -2657,6 +2702,10 @@
                       "type": "string",
                       "defaultValue": ""
                     },
+                    "enableAvatarSpeakingStyle": {
+                      "type": "string",
+                      "defaultValue": "false"
+                    },
                     "srModel": {
                       "type": "string",
                       "defaultValue": "mai-transcribe-1",
@@ -2675,7 +2724,7 @@
                       "type": "string",
                       "defaultValue": "",
                       "metadata": {
-                        "description": "ACS endpoint for the Call Automation media participant. Empty disables channel C in the container."
+                        "description": "ACS endpoint for the channel C browser guest media participant. Empty disables channel C in the container."
                       }
                     },
                     "meetingBotEnabled": {
@@ -2792,7 +2841,7 @@
                                 "cpu": "[json('2.0')]",
                                 "memory": "4.0Gi"
                               },
-                              "env": "[concat(createArray(createObject('name', 'PORT', 'value', '3000'), createObject('name', 'AZURE_CLIENT_ID', 'value', parameters('uamiClientId')), createObject('name', 'DEVELOPER_MODE', 'value', parameters('developerMode')), createObject('name', 'AZURE_VOICELIVE_ENDPOINT', 'value', parameters('voiceliveEndpoint')), createObject('name', 'PROJECT_ENDPOINT', 'value', parameters('projectEndpoint')), createObject('name', 'AGENT_NAME', 'value', parameters('agentName')), createObject('name', 'AGENT_PROJECT_NAME', 'value', parameters('agentProjectName')), createObject('name', 'AGENT_MODEL', 'value', parameters('agentModel')), createObject('name', 'EMBEDDING_DEPLOYMENT', 'value', parameters('embeddingDeployment')), createObject('name', 'AZURE_SEARCH_ENDPOINT', 'value', parameters('searchEndpoint')), createObject('name', 'SEARCH_CONNECTION_NAME', 'value', parameters('searchConnectionName')), createObject('name', 'SEARCH_INDEX_NAME', 'value', parameters('searchIndexName')), createObject('name', 'VOICELIVE_VOICE', 'value', parameters('voiceLiveVoice')), createObject('name', 'BING_CONNECTION_NAME', 'value', parameters('bingConnectionName')), createObject('name', 'BING_CUSTOM_CONFIG_NAME', 'value', parameters('bingCustomConfigName')), createObject('name', 'AVATAR_NAME', 'value', parameters('avatarName')), createObject('name', 'CUSTOM_AVATAR_NAME', 'value', parameters('customAvatarName')), createObject('name', 'AVATAR_DISPLAY_NAME', 'value', parameters('avatarDisplayName')), createObject('name', 'AVATAR_TAGLINE', 'value', parameters('avatarTagline')), createObject('name', 'PHOTO_AVATAR_NAME', 'value', parameters('photoAvatarName')), createObject('name', 'IS_PHOTO_AVATAR', 'value', parameters('isPhotoAvatar')), createObject('name', 'IS_CUSTOM_AVATAR', 'value', parameters('isCustomAvatar')), createObject('name', 'AVATAR_BACKGROUND_IMAGE_URL', 'value', parameters('avatarBackgroundImageUrl')), createObject('name', 'SR_MODEL', 'value', parameters('srModel')), createObject('name', 'RECOGNITION_LANGUAGE', 'value', parameters('recognitionLanguage')), createObject('name', 'APPLICATIONINSIGHTS_CONNECTION_STRING', 'value', parameters('appInsightsConnectionString'))), concat(variables('acsEnv'), variables('meetingBotEnv'), variables('voiceBindingEnv'), variables('webIqEnv')))]",
+                              "env": "[concat(createArray(createObject('name', 'PORT', 'value', '3000'), createObject('name', 'AZURE_CLIENT_ID', 'value', parameters('uamiClientId')), createObject('name', 'DEVELOPER_MODE', 'value', parameters('developerMode')), createObject('name', 'AZURE_VOICELIVE_ENDPOINT', 'value', parameters('voiceliveEndpoint')), createObject('name', 'PROJECT_ENDPOINT', 'value', parameters('projectEndpoint')), createObject('name', 'AGENT_NAME', 'value', parameters('agentName')), createObject('name', 'AGENT_PROJECT_NAME', 'value', parameters('agentProjectName')), createObject('name', 'AGENT_MODEL', 'value', parameters('agentModel')), createObject('name', 'EMBEDDING_DEPLOYMENT', 'value', parameters('embeddingDeployment')), createObject('name', 'AZURE_SEARCH_ENDPOINT', 'value', parameters('searchEndpoint')), createObject('name', 'SEARCH_CONNECTION_NAME', 'value', parameters('searchConnectionName')), createObject('name', 'SEARCH_INDEX_NAME', 'value', parameters('searchIndexName')), createObject('name', 'VOICELIVE_VOICE', 'value', parameters('voiceLiveVoice')), createObject('name', 'BING_CONNECTION_NAME', 'value', parameters('bingConnectionName')), createObject('name', 'BING_CUSTOM_CONFIG_NAME', 'value', parameters('bingCustomConfigName')), createObject('name', 'AVATAR_NAME', 'value', parameters('avatarName')), createObject('name', 'CUSTOM_AVATAR_NAME', 'value', parameters('customAvatarName')), createObject('name', 'AVATAR_DISPLAY_NAME', 'value', parameters('avatarDisplayName')), createObject('name', 'AVATAR_TAGLINE', 'value', parameters('avatarTagline')), createObject('name', 'PHOTO_AVATAR_NAME', 'value', parameters('photoAvatarName')), createObject('name', 'IS_PHOTO_AVATAR', 'value', parameters('isPhotoAvatar')), createObject('name', 'IS_CUSTOM_AVATAR', 'value', parameters('isCustomAvatar')), createObject('name', 'AVATAR_BACKGROUND_IMAGE_URL', 'value', parameters('avatarBackgroundImageUrl')), createObject('name', 'ENABLE_AVATAR_SPEAKING_STYLE', 'value', parameters('enableAvatarSpeakingStyle')), createObject('name', 'SR_MODEL', 'value', parameters('srModel')), createObject('name', 'RECOGNITION_LANGUAGE', 'value', parameters('recognitionLanguage')), createObject('name', 'APPLICATIONINSIGHTS_CONNECTION_STRING', 'value', parameters('appInsightsConnectionString'))), concat(variables('acsEnv'), variables('meetingBotEnv'), variables('voiceBindingEnv'), variables('webIqEnv')))]",
                               "probes": [
                                 {
                                   "type": "Liveness",
@@ -3436,6 +3485,14 @@
       "type": "string",
       "value": "[parameters('embeddingDeployment')]"
     },
+    "AVATAR_TYPE": {
+      "type": "string",
+      "value": "[variables('resolvedAvatarType')]"
+    },
+    "AVATAR_MODEL": {
+      "type": "string",
+      "value": "[variables('resolvedAvatarModel')]"
+    },
     "VOICELIVE_VOICE": {
       "type": "string",
       "value": "[parameters('voiceLiveVoice')]"
@@ -3450,15 +3507,15 @@
     },
     "AVATAR_NAME": {
       "type": "string",
-      "value": "[parameters('avatarName')]"
+      "value": "[variables('effectiveAvatarName')]"
     },
     "CUSTOM_AVATAR_NAME": {
       "type": "string",
-      "value": "[parameters('customAvatarName')]"
+      "value": "[variables('effectiveCustomAvatarName')]"
     },
     "PHOTO_AVATAR_NAME": {
       "type": "string",
-      "value": "[parameters('photoAvatarName')]"
+      "value": "[variables('effectivePhotoAvatarName')]"
     },
     "AVATAR_DISPLAY_NAME": {
       "type": "string",
@@ -3474,11 +3531,11 @@
     },
     "IS_PHOTO_AVATAR": {
       "type": "string",
-      "value": "[parameters('isPhotoAvatar')]"
+      "value": "[variables('effectiveIsPhotoAvatar')]"
     },
     "IS_CUSTOM_AVATAR": {
       "type": "string",
-      "value": "[parameters('isCustomAvatar')]"
+      "value": "[variables('effectiveIsCustomAvatar')]"
     }
   }
 }

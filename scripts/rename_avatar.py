@@ -47,6 +47,8 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
+from backend.avatar_identity import avatar_type  # noqa: E402
+
 # The variable a rename writes. AVATAR_DISPLAY_NAME is the branding knob and it
 # outranks every other input to the resolver.
 #
@@ -171,6 +173,10 @@ def character_var(env: dict[str, str]) -> str:
     updateAvatarScene), so this script validates the value the app really sends
     rather than a variable that happens to be inert in the current mode.
     """
+    if (env.get("AVATAR_TYPE") or "").strip() or (env.get("AVATAR_MODEL") or "").strip():
+        return "AVATAR_MODEL"
+    # Preserve the legacy fallback exactly for environments that have not opted
+    # into the canonical selector yet.
     if _flag(env, "IS_CUSTOM_AVATAR") and (env.get("CUSTOM_AVATAR_NAME") or "").strip():
         return "CUSTOM_AVATAR_NAME"
     if _flag(env, "IS_PHOTO_AVATAR"):
@@ -250,7 +256,7 @@ def main() -> int:
         # Only the prebuilt catalogue can be checked locally. With IS_CUSTOM_AVATAR
         # on, the character is a model trained in your own Speech resource and any
         # name may be legitimate -- warn, but do not refuse.
-        is_custom = _flag(env, "IS_CUSTOM_AVATAR")
+        is_custom = avatar_type(env).startswith("custom-")
         valid = valid_photo_characters()
         if is_custom:
             if valid and model not in valid:
@@ -267,7 +273,9 @@ def main() -> int:
         # In custom mode CUSTOM_AVATAR_NAME is the name that reaches Voice Live,
         # so that is what --model has to set -- including when it is still empty,
         # which is the "custom on, no custom name" silent-blank failure.
-        write_var = "CUSTOM_AVATAR_NAME" if is_custom else char_var
+        write_var = "AVATAR_MODEL" if (env.get("AVATAR_TYPE") or "").strip() else (
+            "CUSTOM_AVATAR_NAME" if is_custom else char_var
+        )
         overrides[write_var] = model
 
     print(f"azd env: {env_name}    resource group: {rg}")

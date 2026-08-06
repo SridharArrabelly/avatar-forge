@@ -1,4 +1,4 @@
-# Teams Meeting Bot — design & architecture (channel C, issue #27)
+# Teams Meeting Bot — design & architecture (channel D, issue #27)
 
 > **Goal in one sentence:** let the avatar (Nuru) **join a Teams meeting, hear every
 > participant — including remote callers — and answer their spoken questions aloud**,
@@ -26,7 +26,7 @@ Python service and a .NET service on purpose, and that decision needs to be defe
 ## 1. The problem, precisely
 
 The avatar already answers spoken questions beautifully **on the web** (mic → Azure Voice
-Live → Foundry agent with AI Search RAG + Bing news → spoken answer). Channel C is **not**
+Live → Foundry agent with AI Search RAG + Bing news → spoken answer). Channel D is **not**
 about answering — that pipeline is reused untouched. The hard, new problem is **meeting
 media transport**: getting *the room's* audio into that pipeline and the avatar's voice
 back into *the room*.
@@ -236,7 +236,7 @@ The .NET bot does **not** implement any of this — it just carries audio and ho
 | ACS resource | optional | Only if a fallback ACS path is kept; not required for option (b). |
 
 All new infra is **additive and conditional** (mirrors
-`communicationServices.bicep`): a deploy **without** channel C enabled behaves exactly as
+`communicationServices.bicep`): a deploy **without** channel D enabled behaves exactly as
 today. The Windows host is the one piece that is materially new and carries ongoing cost.
 
 **Recommended first host:** a single **Windows Server VM** (simplest to stand up and debug
@@ -289,7 +289,7 @@ re-confirmed before any production use.
 > and deploy with `azd up`; the .NET bot lives under `meeting-bot/`; the Python↔.NET
 > bridge contract (`VoiceLiveBridgeClient`) is unit-tested. The bot joins real
 > meetings, hears every participant, and answers aloud. Operating instructions:
-> [`c-in-call-media-bot.md`](./c-in-call-media-bot.md); code-local detail and the
+> [`d-in-call-media-bot.md`](./d-in-call-media-bot.md); code-local detail and the
 > traps that cost debugging time: [`meeting-bot/README.md`](../../meeting-bot/README.md).
 
 ### Step 2 — **Face**: Nuru is visible in the meeting
@@ -310,7 +310,7 @@ Same bot foundation; a second slice. The route is **decided**:
 
 **The full Route A design — architecture, data flow, why audio and video must share one
 synthesis, component changes, the aiortc↔Voice Live feasibility risk, and the phased
-increments — is in [`c-design-avatar-video.md`](./c-design-avatar-video.md).**
+increments — is in [`d-design-avatar-video.md`](./d-design-avatar-video.md).**
 
 **Build order (as executed):** audio leg → video scaffold (flag-gated
 `VideoSocket` + placeholder NV12 tile) → the hard increment (server-side avatar WebRTC
@@ -321,7 +321,7 @@ work, and `Bot:EnableVideo=false` still yields the byte-for-byte audio-only sess
 > adds the outbound NV12 `VideoSocket`; `CallHandler` runs the playout loop; the bridge
 > carries `VideoData` frames decoded from Voice Live's avatar stream in Python. Lip-sync
 > is driven by both streams coming from one synthesis, as designed. Implementation
-> detail: [`c-design-avatar-video.md`](./c-design-avatar-video.md).
+> detail: [`d-design-avatar-video.md`](./d-design-avatar-video.md).
 ---
 
 ## 11. Risks, costs & open questions
@@ -361,7 +361,7 @@ existed.
   ACS SDK apparently declining to hand you a track* with *the client not receiving the
   audio at all*. The client plainly does receive it — that is how the call is audible —
   and intercepting `HTMLMediaElement.prototype.srcObject` reaches it. Verified live; see
-  [d-in-call-headless.md](./d-in-call-headless.md). Note the "declining" half was also
+  [c-in-call-headless.md](./c-in-call-headless.md). Note the "declining" half was also
   wrong: the code called `getMediaStreamTrack()`, which is not a member of
   `RemoteAudioStream` (it exposes `getMediaStream()`), from a function nothing called —
   so the SDK was never asked. The media bot's real advantage is that it reads the room
@@ -370,5 +370,5 @@ existed.
 ---
 
 *See also: [`architecture.md`](../architecture.md) for the overall system, and
-[`c-in-call-media-bot.md`](./c-in-call-media-bot.md) for the operator steps and admin
+[`d-in-call-media-bot.md`](./d-in-call-media-bot.md) for the operator steps and admin
 requests.*

@@ -37,6 +37,8 @@
 
     "agentModel":             { "value": "${AGENT_MODEL=}" },
     "embeddingDeployment":    { "value": "${EMBEDDING_DEPLOYMENT=text-embedding-3-small}" },
+    "avatarType":             { "value": "${AVATAR_TYPE=}" },
+    "avatarModel":            { "value": "${AVATAR_MODEL=}" },
     "avatarName":             { "value": "${AVATAR_NAME=Lisa-casual-sitting}" },
     "customAvatarName":       { "value": "${CUSTOM_AVATAR_NAME=}" },
     "avatarDisplayName":      { "value": "${AVATAR_DISPLAY_NAME=}" },
@@ -45,6 +47,7 @@
     "isPhotoAvatar":          { "value": "${IS_PHOTO_AVATAR=true}" },
     "isCustomAvatar":         { "value": "${IS_CUSTOM_AVATAR=false}" },
     "avatarBackgroundImageUrl": { "value": "${AVATAR_BACKGROUND_IMAGE_URL=}" },
+    "enableAvatarSpeakingStyle": { "value": "${ENABLE_AVATAR_SPEAKING_STYLE=false}" },
     "srModel":             { "value": "${SR_MODEL=mai-transcribe-1}" },
     "recognitionLanguage": { "value": "${RECOGNITION_LANGUAGE=auto}" },
 

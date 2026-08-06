@@ -1,4 +1,4 @@
-# Channel D — In-call avatar (ACS browser guest)
+# Channel C — In-call avatar (ACS browser guest)
 
 **Two things share this page, and they are at very different stages.** Keeping them
 apart is the single most useful thing this document does.
@@ -13,11 +13,9 @@ Every media question — can it join, can it hear the room, can it publish a fac
 answered by the leg that is built, and none of those answers would change if the same
 page later ran without a human watching it.
 
-> **Channel lettering is under review.** The owner has proposed making this leg **C**
-> and the [Graph media bot](c-in-call-media-bot.md) **D**, so the ladder runs from
-> zero-admin to most-admin. Deferred deliberately: the letters are referenced from
-> issue #27, the open PR, `meeting-bot/` and three design pages, so renaming is one
-> clean sweep for later rather than churn now. Read D as "the ACS browser guest".
+> **Channel lettering:** ACS browser guest is **C** and the
+> [Graph media bot](d-in-call-media-bot.md) is **D**, so the ladder runs from
+> zero-admin to most-admin.
 
 ---
 
@@ -41,7 +39,7 @@ She appears in the roster as `<AVATAR_DISPLAY_NAME> (AI assistant)`.
 application access policy — that is the whole reason this leg exists. The price is
 that she has no Teams identity: she cannot post in the meeting chat as herself, she
 cannot be @mentioned, and she shows as an external guest. A first-class Teams identity
-is what [the Graph media bot](c-in-call-media-bot.md) is for, and it is why that
+is what [the Graph media bot](d-in-call-media-bot.md) is for, and it is why that
 channel is kept despite costing an administrator.
 
 ## How it hears the room
@@ -443,7 +441,7 @@ rate while backgrounded. That is the throttling-immune path doing its job.
 > operational advice below stands unchanged.
 
 **Operationally: keep the joiner tab visible** — a second monitor, or side by side
-with Teams. This is a genuine disadvantage of D versus C, where a server-side
+with Teams. This is a genuine disadvantage of C versus D, where a server-side
 media bot has no such dependency, and belongs in the comparison below.
 
 ## Deploying it
@@ -571,13 +569,13 @@ flowchart LR
     API <-- "audio up · answer down<br/>function call = act" --> VL
 ```
 
-Two things this diagram implies that [channel C](c-in-call-media-bot.md) does not:
+Two things this diagram implies that [channel D](d-in-call-media-bot.md) does not:
 
 - **The join is scheduled, not operator-triggered.** A calendar watcher finds the
   meeting via Graph and launches a browser session. C needs a human to `POST /api/join`.
   That watcher is net-new work, and reading the calendar is itself a Graph permission.
 - **The whole thing runs in a container**, so it can scale to zero between meetings —
-  the single biggest cost argument against C's always-on Windows VM.
+  the single biggest cost argument against D's always-on Windows VM.
 
 > **Discrepancy to resolve before building.** The reference diagram says *ACS Web SDK
 > join*, but the description above says *Teams web client*. These are different
@@ -613,13 +611,13 @@ Chromium session, so concurrency is expensive.
 
 ## Why it is worth evaluating
 
-Channel C works, but its cost is not the VM — it is the **admin dependency**. C
+Channel D works, but its cost is not the VM — it is the **admin dependency**. D
 requires Graph application permissions, admin consent, and a Teams application
 access policy that only a Teams administrator can grant. In tenants where those
-are unobtainable, C is simply unavailable regardless of engineering effort.
+are unobtainable, D is simply unavailable regardless of engineering effort.
 
 The hypothesis under test: **a browser joins as a guest, so none of that applies.**
-If true, D removes every hard blocker in C. That is the entire case for it.
+If true, C removes every hard blocker in D. That is the entire case for it.
 
 ## What is unknown
 
@@ -634,48 +632,47 @@ own share of them by being built:
 - Whether meeting policy permits anonymous/guest join in the target tenant
 - Whether a camera tile can be published (the avatar's *face*, not just voice) —
   C achieves this; a browser may be limited to screen share
-- Audio fidelity and added latency versus C's measured budget
+- Audio fidelity and added latency versus D's measured budget
 - Stability over long meetings, and behaviour when the lobby is enabled
-- Container cost and whether it can scale to zero (a real advantage over C's
+- Container cost and whether it can scale to zero (a real advantage over D's
   always-on VM at ~$283/month)
 - Whether it violates any acceptable-use terms — **check this first**, because a
   negative answer ends the evaluation immediately
 
 ## <a id="comparison"></a>Comparison criteria — agreed up front
 
-Both options are scored on the same axes. Fill this in after building D; do not
-add or drop criteria afterwards.
+Both options are scored on the same axes. Do not add or drop criteria afterwards.
 
-| Criterion | C — Graph media bot | D — headless browser |
+| Criterion | C — ACS browser guest | D — Graph media bot |
 | --- | --- | --- |
-| **Admin dependency** *(decisive)* | Entra admin consent for `Calls.*.All` (the Teams access policy is only needed for short `/meet/` links) | **None — verified.** Joined, heard a participant and answered aloud with no consent of any kind |
-| Hears the whole room | Yes | **Yes** — verified in a real meeting via the `srcObject` hook (single remote participant so far) |
-| Publishes a camera tile (the face) | Yes | Yes — already built in `acs-join.js` |
-| Added latency over the Voice Live budget | ~125 ms transport | ? |
-| Audio fidelity | Verified clean | ? |
-| Idle cost | ~$283/month VM (`D4s_v5`), no scale-to-zero | ? |
-| Operational fragility | Native Windows media stack; documented traps | ? |
-| Terms-of-use standing | Supported, first-party API | ? |
-| Effort to reach parity | Built | ? |
+| **Admin dependency** *(decisive)* | **None — verified.** Anonymous guest join; no Entra consent | Entra admin consent for `Calls.*.All` (the Teams access policy is only needed for short `/meet/` links) |
+| Hears the whole room | **Yes** — verified in a real meeting via the `srcObject` hook | **Yes** — verified through the first-party media API |
+| Publishes a camera tile (the face) | Yes — built in `acs-join.js` | Yes — built in the media bot |
+| Added latency over the Voice Live budget | ~125 ms transport | Measured in the media bot runbook |
+| Audio fidelity | Verified clean | Verified clean |
+| Idle cost | No VM; browser/container cost depends on hosting | ~$283/month VM (`D4s_v5`), no scale-to-zero |
+| Operational fragility | ACS SDK `srcObject` implementation detail; may break silently | Native Windows media stack; documented traps |
+| Terms-of-use standing | Anonymous guest/browser hosting requires tenant review | Supported, first-party API |
+| Effort to reach parity | Built media leg; headless host remains | Built |
 
 **Decision rule — both are kept (owner's call, 2026-08-03).** An earlier version of
-this page said that if D cleared the admin dependency it "supersedes C and C should be
-retired rather than kept in parallel". **That is overridden.** C is a genuine design
+this page said that if C cleared the admin dependency it "supersedes D and D should be
+retired rather than kept in parallel". **That is overridden.** D is a genuine design
 that works, and the two fail in *different directions*:
 
-| | C — Graph media bot | D — headless browser |
+| | C — ACS browser guest | D — Graph media bot |
 | --- | --- | --- |
-| Authorisation | admin consent once, then **any** meeting from a link | none — but the tenant must permit anonymous guest join |
-| Platform standing | supported, first-party API | tries the documented `getMediaStream()` first, falls back to the `srcObject` **implementation detail** — the fallback is the path proven live |
-| Breaks when | no administrator is available | the SDK changes how it renders remote audio, or anonymous join is disabled |
+| Authorisation | none — but the tenant must permit anonymous guest join | admin consent once, then **any** meeting from a link |
+| Platform standing | tries the documented `getMediaStream()` first, falls back to the `srcObject` **implementation detail** — the fallback is the path proven live | supported, first-party API |
+| Breaks when | the SDK changes how it renders remote audio, or anonymous join is disabled | no administrator is available |
 
-That makes them complementary rather than redundant: C is the robust path wherever an
-administrator exists, D is the only path where one does not. The cost of keeping both
-is real and is accepted deliberately rather than by drift — C carries the
-[three-month media-SDK treadmill](c-in-call-media-bot.md), D carries an unsupported
+That makes them complementary rather than redundant: D is the robust path wherever an
+administrator exists, C is the only path where one does not. The cost of keeping both
+is real and is accepted deliberately rather than by drift — D carries the
+[three-month media-SDK treadmill](d-in-call-media-bot.md), C carries an unsupported
 touchpoint that can fail silently. Neither is free.
 
 ## When to build it
 
-After channel C is documented and stable — which it now is. Track under the
+After channel D is documented and stable — which it now is. Track under the
 follow-up to issue #27.

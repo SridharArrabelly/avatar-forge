@@ -6,7 +6,7 @@ Four identities show up in this repo and they are easy to confuse. Start here:
 | --- | --- | --- | --- |
 | **Backend principal** | your signed-in user locally; the **user-assigned managed identity** in Azure | Voice Live, the Foundry agent/model, AI Search queries | `az login` / assigned by the template |
 | **Deploying principal** | whoever runs `azd up` | creating resources, stamping RBAC, building the index, registering the agent | `az login` + `azd auth login` |
-| **Calling bot** *(channel C only)* | an Entra app registration behind an Azure Bot | the Teams calling/Graph channel | [`../meeting-bot/README.md`](../meeting-bot/README.md) |
+| **Calling bot** *(channel D only)* | an Entra app registration behind an Azure Bot | the Teams calling/Graph channel | [`../meeting-bot/README.md`](../meeting-bot/README.md) |
 | **Web IQ key** *(model mode only)* | a service API key, not an Entra identity | the web-search tool | `WEBIQ_API_KEY` in your env |
 
 The first two are what almost everything below is about. They are usually *different*
@@ -99,7 +99,7 @@ scope at startup, not one per SDK call. In Azure with managed identity those
 acquisitions are in-process HTTP calls to IMDS (cached ~1 hour) rather than subprocess
 spawns.
 
-## Calling bot identity (channel C)
+## Calling bot identity (channel D)
 
 The calling bot is the one identity that is **not** the backend principal: an Entra app
 registration (client id + secret) registered as an Azure Bot resource. Only the Graph

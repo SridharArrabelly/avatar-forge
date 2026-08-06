@@ -36,8 +36,8 @@ flowchart LR
         direction TB
         A["<b>A</b> · Web browser"]
         B["<b>B</b> · Teams personal tab"]
-        C["<b>C</b> · In-call media bot"]
-        D["<b>D</b> · In-call ACS guest"]
+        C["<b>C</b> · In-call ACS guest"]
+        D["<b>D</b> · In-call media bot"]
     end
 
     subgraph Brain["One brain — Python / FastAPI on Azure Container Apps"]
@@ -75,8 +75,8 @@ flowchart LR
         direction TB
         A2["<b>A</b> · Web browser"]
         B2["<b>B</b> · Teams personal tab"]
-        C2["<b>C</b> · In-call media bot"]
-        D2["<b>D</b> · In-call ACS guest"]
+        C2["<b>C</b> · In-call ACS guest"]
+        D2["<b>D</b> · In-call media bot"]
     end
 
     subgraph Brain2["Same host, different middle"]
@@ -130,8 +130,8 @@ administrator access you need**.
 |---|---|---|---|---|---|
 | **A** | **Web** (standalone) | ✅ Shipped | — *(the core)* | **None** | [a-web.md](docs/channels/a-web.md) |
 | **B** | **Teams — personal tab** | ✅ Shipped | **None** | Upload a Teams app package | [b-teams-tab.md](docs/channels/b-teams-tab.md) |
-| **C** | **Teams — in-call avatar** (Graph media bot) | ✅ Working | Azure Bot + **Windows VM** + DNS + TLS | **Highest** — incl. **Teams app access policy** | [c-in-call-media-bot.md](docs/channels/c-in-call-media-bot.md) |
-| **D** | **Teams — in-call avatar** (ACS browser guest) | ✅ Media leg working | ACS resource (`ENABLE_ACS`) | **None** — joins as an anonymous guest | [d-in-call-headless.md](docs/channels/d-in-call-headless.md) |
+| **C** | **Teams — in-call avatar** (ACS browser guest) | ✅ Media leg working | ACS resource (`ENABLE_ACS`) | **None** — joins as an anonymous guest | [c-in-call-headless.md](docs/channels/c-in-call-headless.md) |
+| **D** | **Teams — in-call avatar** (Graph media bot) | ✅ Working | Azure Bot + **Windows VM** + DNS + TLS | **Highest** — incl. **Teams app access policy** | [d-in-call-media-bot.md](docs/channels/d-in-call-media-bot.md) |
 
 They are not four equal options: **A → B is a ladder** (each additive on the one
 before), while **C and D are rivals** — two implementations of the same capability.
@@ -148,6 +148,64 @@ tell you in one page which channels are available to you.
 
 All Teams surfaces are **additive** — the standalone web app is unaffected, and the
 Teams JS SDK is never loaded outside Teams.
+
+## Deploy to Azure
+
+Deploying is a *sequence*, not one command: some steps Bicep performs, some only a
+person with the right directory role can, and they interleave. Rather than make you
+discover that halfway through, the tooling tells you the whole sequence up front.
+
+> **Platform: Windows + PowerShell.** All commands are written for PowerShell; on
+> macOS or Linux the `azd` and Python steps work unchanged, but you translate the
+> shell syntax yourself ([details](docs/channels/README.md)). Channel D requires
+> Windows regardless — the Teams Real-Time Media Platform runs on nothing else.
+
+```powershell
+azd auth login
+azd env new <environment-name>
+
+# Pick the region. Only these four support both Voice Live and the avatar:
+#   eastus2 · southeastasia · swedencentral · westus2
+azd env set AZURE_LOCATION swedencentral
+
+# 1. Choose the avatar. Types: standard-video, standard-photo, custom-video,
+#    custom-photo. AVATAR_MODEL is a catalogue name or custom Speech model id.
+azd env set AVATAR_TYPE standard-photo
+azd env set AVATAR_MODEL Simone
+
+# 2. Choose which channel you are deploying. Sets DEPLOY_PROFILE and prints
+#    the full numbered plan, marking who performs each step.
+uv run python scripts/set_profile.py
+
+# 3. Check you can actually finish it — region support, providers, tooling and
+#    every input your channel needs. Cheap now; expensive after a 20-minute deploy.
+#    Also settles subscription, region and resource group if you have not, so
+#    step 4 does not stop halfway to ask.
+uv run python scripts/preflight.py
+
+# 4. Deploy. Preflight runs again automatically and blocks a doomed deploy.
+azd up
+```
+
+`azd` reads these values from its environment, not from the local `.env` file.
+For the full avatar options and legacy compatibility mapping, see
+**[docs/configuration.md](docs/configuration.md#selecting-an-avatar)**.
+
+`azd up` ends by printing the steps that remain for your channel — the manual and
+administrator ones. Re-print them at any time:
+
+```powershell
+uv run python scripts/preflight.py --steps-only    # the whole plan
+uv run python scripts/preflight.py --remaining     # only what is left
+```
+
+Profiles map onto the channel ladder: `web` · `teams-tab` · `in-call`.
+The profile is stored in the azd environment rather than prompted for at deploy time,
+so `azd up` stays non-interactive and re-deploys and CI keep working.
+
+Details: **[docs/deployment.md](docs/deployment.md)** ·
+**[docs/channels/README.md](docs/channels/README.md)** ·
+**[docs/admin-checklist.md](docs/admin-checklist.md)**.
 
 ## Quickstart (local)
 
@@ -170,55 +228,6 @@ uv run avatar-forge         # → http://localhost:3000
 
 Full walkthrough — building the search index, smoke tests, developer mode — in
 **[docs/development.md](docs/development.md)**.
-
-## Deploy to Azure
-
-Deploying is a *sequence*, not one command: some steps Bicep performs, some only a
-person with the right directory role can, and they interleave. Rather than make you
-discover that halfway through, the tooling tells you the whole sequence up front.
-
-> **Platform: Windows + PowerShell.** All commands are written for PowerShell; on
-> macOS or Linux the `azd` and Python steps work unchanged, but you translate the
-> shell syntax yourself ([details](docs/channels/README.md)). Channel C requires
-> Windows regardless — the Teams Real-Time Media Platform runs on nothing else.
-
-```powershell
-azd auth login
-azd env new <environment-name>
-
-# Pick the region. Only these four support both Voice Live and the avatar:
-#   eastus2 · southeastasia · swedencentral · westus2
-azd env set AZURE_LOCATION swedencentral
-
-# 1. Choose which channel you are deploying. Sets DEPLOY_PROFILE and prints
-#    the full numbered plan, marking who performs each step.
-uv run python scripts/set_profile.py
-
-# 2. Check you can actually finish it — region support, providers, tooling and
-#    every input your channel needs. Cheap now; expensive after a 20-minute deploy.
-#    Also settles subscription, region and resource group if you have not, so
-#    step 3 does not stop halfway to ask.
-uv run python scripts/preflight.py
-
-# 3. Deploy. Preflight runs again automatically and blocks a doomed deploy.
-azd up
-```
-
-`azd up` ends by printing the steps that remain for your channel — the manual and
-administrator ones. Re-print them at any time:
-
-```powershell
-uv run python scripts/preflight.py --steps-only    # the whole plan
-uv run python scripts/preflight.py --remaining     # only what is left
-```
-
-Profiles map onto the channel ladder: `web` · `teams-tab` · `in-call`.
-The profile is stored in the azd environment rather than prompted for at deploy time,
-so `azd up` stays non-interactive and re-deploys and CI keep working.
-
-Details: **[docs/deployment.md](docs/deployment.md)** ·
-**[docs/channels/README.md](docs/channels/README.md)** ·
-**[docs/admin-checklist.md](docs/admin-checklist.md)**.
 
 ## Documentation
 
@@ -250,7 +259,7 @@ Details: **[docs/deployment.md](docs/deployment.md)** ·
 | Doc | What's in it |
 |---|---|
 | **[teams/README.md](teams/README.md)** | Building and sideloading the Teams app package (serves channel B). |
-| **[meeting-bot/README.md](meeting-bot/README.md)** | The .NET/Windows media bot itself (channel C): project layout, configuration, operator runbook, and the traps that cost real debugging time. |
+| **[meeting-bot/README.md](meeting-bot/README.md)** | The .NET/Windows media bot itself (channel D): project layout, configuration, operator runbook, and the traps that cost real debugging time. |
 | **[prompts/README.md](prompts/README.md)** | Agent and model-mode prompt content, and the edit workflow. |
 | **[scripts/README.md](scripts/README.md)** | Every script that touches Azure, and the prefix convention that tells you what running one costs — which four are wired into `azd up` and must not be renamed. |
 | **[tests/README.md](tests/README.md)** | The offline suites: no network, no credentials, no cost, and what each one pins. |
@@ -260,8 +269,8 @@ Details: **[docs/deployment.md](docs/deployment.md)** ·
 
 | Doc | What's in it |
 |---|---|
-| **[docs/channels/c-design-media-bot.md](docs/channels/c-design-media-bot.md)** | The three in-call options evaluated, why Python + a thin .NET/Windows media bot, and the final architecture. |
-| **[docs/channels/c-design-avatar-video.md](docs/channels/c-design-avatar-video.md)** | The avatar's synced video face as a meeting camera tile, and why audio + video share one synthesis. |
+| **[docs/channels/d-design-media-bot.md](docs/channels/d-design-media-bot.md)** | The three in-call options evaluated, why Python + a thin .NET/Windows media bot, and the final architecture. |
+| **[docs/channels/d-design-avatar-video.md](docs/channels/d-design-avatar-video.md)** | The avatar's synced video face as a meeting camera tile, and why audio + video share one synthesis. |
 
 ## References & Acknowledgements
 
