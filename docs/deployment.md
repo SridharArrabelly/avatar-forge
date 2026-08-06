@@ -89,6 +89,9 @@ azd env set AVATAR_TYPE standard-photo
 azd env set AVATAR_MODEL Simone
 # Optional branding; this does not select the face.
 # azd env set AVATAR_DISPLAY_NAME Nuru
+# Agent mode creates a Foundry agent named AvatarAgent by default.
+# Optional: choose a different name before the first deployment.
+# azd env set AGENT_NAME ContosoAvatarAgent
 
 # 5. Choose the channel AND the brain. Records DEPLOY_PROFILE (web · teams-tab ·
 #    in-call-browser · in-call) and VOICE_BINDING (agent · model), sets every flag
@@ -99,7 +102,7 @@ uv run python scripts/set_profile.py
 
 # 6. Verify you can actually finish that plan — regions, providers, tooling and every
 #    input your profile needs. Also settles the deploy target (subscription, region,
-#    resource group) so step 6 never stops to ask.
+#    resource group) so step 7 never stops to ask.
 uv run python scripts/preflight.py
 
 # 7. Provision infra + build + deploy app
