@@ -188,7 +188,7 @@ azd up
 ```
 
 `azd` reads these values from its environment, not from the local `.env` file.
-For the full avatar options and legacy compatibility mapping, see
+For the full avatar options, see
 **[docs/configuration.md](docs/configuration.md#selecting-an-avatar)**.
 
 `azd up` ends by printing the steps that remain for your channel — the manual and

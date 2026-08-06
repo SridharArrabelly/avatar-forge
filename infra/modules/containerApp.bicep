@@ -35,17 +35,12 @@ param appInsightsConnectionString string
 param searchEndpoint string = ''
 param agentModel string = ''
 param embeddingDeployment string = ''
-param avatarName string = ''
-param customAvatarName string = ''
+param avatarType string = 'standard-video'
+param avatarModel string = ''
 @description('Assistant persona / display name (e.g. "Nuru") for the bot welcome message. Purely cosmetic; does NOT select the avatar model. Empty falls back to "Avatar".')
 param avatarDisplayName string = ''
 @description('Identity tagline under the avatar name (e.g. "Your MTN Digital Assistant"). Empty uses the company-agnostic default.')
 param avatarTagline string = ''
-param photoAvatarName string = ''
-@description('"true"/"false" string — frontend treats prebuilt as photo avatar when "true".')
-param isPhotoAvatar string = ''
-@description('"true"/"false" string — frontend treats avatar as custom when "true".')
-param isCustomAvatar string = ''
 param avatarBackgroundImageUrl string = ''
 param enableAvatarSpeakingStyle string = 'false'
 @description('Speech recognition model. Defaults to mai-transcribe-1; cascaded options include azure-speech, gpt-4o-transcribe.')
@@ -197,13 +192,10 @@ resource app 'Microsoft.App/containerApps@2024-10-02-preview' = {
             { name: 'VOICELIVE_VOICE', value: voiceLiveVoice }
             { name: 'BING_CONNECTION_NAME', value: bingConnectionName }
             { name: 'BING_CUSTOM_CONFIG_NAME', value: bingCustomConfigName }
-            { name: 'AVATAR_NAME', value: avatarName }
-            { name: 'CUSTOM_AVATAR_NAME', value: customAvatarName }
+            { name: 'AVATAR_TYPE', value: avatarType }
+            { name: 'AVATAR_MODEL', value: avatarModel }
             { name: 'AVATAR_DISPLAY_NAME', value: avatarDisplayName }
             { name: 'AVATAR_TAGLINE', value: avatarTagline }
-            { name: 'PHOTO_AVATAR_NAME', value: photoAvatarName }
-            { name: 'IS_PHOTO_AVATAR', value: isPhotoAvatar }
-            { name: 'IS_CUSTOM_AVATAR', value: isCustomAvatar }
             { name: 'AVATAR_BACKGROUND_IMAGE_URL', value: avatarBackgroundImageUrl }
             { name: 'ENABLE_AVATAR_SPEAKING_STYLE', value: enableAvatarSpeakingStyle }
             { name: 'SR_MODEL', value: srModel }

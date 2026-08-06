@@ -83,13 +83,10 @@ param modelCapacity int
 // App runtime extras
 param agentModel string = ''
 param embeddingDeployment string = ''
-param avatarName string = ''
-param customAvatarName string = ''
+param avatarType string = 'standard-video'
+param avatarModel string = ''
 param avatarDisplayName string = ''
 param avatarTagline string = ''
-param photoAvatarName string = ''
-param isPhotoAvatar string = ''
-param isCustomAvatar string = ''
 param avatarBackgroundImageUrl string = ''
 param enableAvatarSpeakingStyle string = 'false'
 param srModel string = 'mai-transcribe-1'
@@ -328,13 +325,10 @@ module app 'modules/containerApp.bicep' = {
     appInsightsConnectionString: appInsightsConnectionStringEffective
     agentModel: agentModel
     embeddingDeployment: embeddingDeployment
-    avatarName: avatarName
-    customAvatarName: customAvatarName
+    avatarType: avatarType
+    avatarModel: avatarModel
     avatarDisplayName: avatarDisplayName
     avatarTagline: avatarTagline
-    photoAvatarName: photoAvatarName
-    isPhotoAvatar: isPhotoAvatar
-    isCustomAvatar: isCustomAvatar
     avatarBackgroundImageUrl: avatarBackgroundImageUrl
     enableAvatarSpeakingStyle: enableAvatarSpeakingStyle
     srModel: srModel

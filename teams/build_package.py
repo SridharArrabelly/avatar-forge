@@ -234,7 +234,7 @@ def _resolve_names(raw_name: str | None, raw_full: str | None) -> dict[str, str]
     """Derive the manifest name/description fields from the persona name.
 
     The display name is the assistant's brand/persona (e.g. "Nuru"), kept
-    deliberately separate from the avatar-model binding (CUSTOM_AVATAR_NAME).
+    deliberately separate from the avatar-model binding (AVATAR_MODEL).
     Enforces the Teams v1.17 length limits (short name 30, full name 100,
     short description 80, full description 4000).
     """

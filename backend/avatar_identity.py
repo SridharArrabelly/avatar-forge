@@ -9,8 +9,7 @@ roster all fell back to the literal ``"Avatar"``. A deployment showing "Simone"
 on screen therefore introduced itself as "Avatar".
 
 Avatar selection uses the canonical ``AVATAR_TYPE`` and ``AVATAR_MODEL`` pair.
-The legacy ``IS_*`` flags and model names are inferred only when the canonical
-values are absent. Display-name resolution then uses:
+Display-name resolution then uses:
 
 1. ``AVATAR_DISPLAY_NAME`` — the explicit branding knob. Used verbatim.
 2. The leading segment of the active avatar model.
@@ -28,8 +27,7 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping
 
-# Last-resort persona name. Only reached when the branding knob is unset AND the
-# active avatar model is empty (i.e. IS_CUSTOM_AVATAR=true with no model id set).
+# Last-resort persona name for an incomplete custom-avatar configuration.
 DEFAULT_AVATAR_NAME = "Avatar"
 
 # Defaults for the avatar model variables. These live here rather than in
@@ -46,48 +44,31 @@ AVATAR_TYPES = (
     "custom-photo",
 )
 
-# Same truthy spellings backend.config._bool accepts, so a value that switches the
-# avatar model on also switches the name derivation.
-_TRUE_VALUES = ("1", "true", "yes", "on")
-
-
 def _env(env: Mapping[str, str] | None) -> Mapping[str, str]:
     return os.environ if env is None else env
 
 
-def _flag(env: Mapping[str, str], name: str) -> bool:
-    return (env.get(name) or "").strip().lower() in _TRUE_VALUES
-
-
 def avatar_type(env: Mapping[str, str] | None = None) -> str:
-    """Return the canonical avatar type, inferring it from legacy flags."""
+    """Return the configured avatar type, or the standard-video default."""
     env = _env(env)
     configured = (env.get("AVATAR_TYPE") or "").strip().lower()
     if configured in AVATAR_TYPES:
         return configured
-    is_custom = _flag(env, "IS_CUSTOM_AVATAR")
-    is_photo = _flag(env, "IS_PHOTO_AVATAR")
-    if is_custom and is_photo:
-        return "custom-photo"
-    if is_custom:
-        return "custom-video"
-    if is_photo:
-        return "standard-photo"
     return DEFAULT_AVATAR_TYPE
 
 
 def avatar_model(env: Mapping[str, str] | None = None) -> str:
-    """Return the canonical model, falling back to the legacy model fields."""
+    """Return the configured model, or the default for the selected type."""
     env = _env(env)
     configured = (env.get("AVATAR_MODEL") or "").strip()
     if configured:
         return configured
     kind = avatar_type(env)
     if kind.startswith("custom-"):
-        return (env.get("CUSTOM_AVATAR_NAME") or "").strip()
+        return ""
     if kind == "standard-photo":
-        return (env.get("PHOTO_AVATAR_NAME") or "").strip() or DEFAULT_PHOTO_AVATAR
-    return (env.get("AVATAR_NAME") or "").strip() or DEFAULT_STANDARD_AVATAR
+        return DEFAULT_PHOTO_AVATAR
+    return DEFAULT_STANDARD_AVATAR
 
 
 def active_avatar_model(env: Mapping[str, str] | None = None) -> str:
