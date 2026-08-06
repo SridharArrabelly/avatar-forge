@@ -119,6 +119,7 @@ async def handle_event(handler, event, connection):
 
         # Response lifecycle
         elif event_type == ServerEventType.RESPONSE_CREATED:
+            handler._response_active = True
             handler._t_response_created_ms = _now_ms()
             handler._first_audio_logged = False
             handler._first_video_logged = False
@@ -136,6 +137,7 @@ async def handle_event(handler, event, connection):
             })
 
         elif event_type == ServerEventType.RESPONSE_DONE:
+            handler._response_active = False
             # Surface WHY a response ended — critical for diagnosing empty/cut-off
             # turns (the "awkward silence"). The realtime response carries a
             # status ("completed"/"cancelled"/"failed"/"incomplete") and, when it
@@ -254,6 +256,15 @@ async def handle_event(handler, event, connection):
 
         # Errors
         elif event_type == ServerEventType.ERROR:
+            error = getattr(event, "error", None)
+            error_code = (
+                error.get("code")
+                if isinstance(error, dict)
+                else getattr(error, "code", None)
+            )
+            if error_code == "response_cancel_not_active":
+                logger.debug("Voice Live response was already stopped before cancellation")
+                return
             error_msg = str(event)
             logger.error(f"Voice Live error: {error_msg}")
             await handler.send_message({

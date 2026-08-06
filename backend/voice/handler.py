@@ -131,6 +131,7 @@ class VoiceSessionHandler:
         self._stopping = False
         self._audio_chunk_count = 0
         self._video_chunk_count = 0
+        self._response_active = False
 
     def _build_connect_kwargs(self) -> dict:
         """Assemble the arguments handed to ``voicelive.connect()``.
@@ -521,10 +522,19 @@ class VoiceSessionHandler:
         """
         if not self.connection:
             return
-        try:
-            await self.connection.response.cancel()
-        except Exception as e:
-            logger.debug(f"response.cancel during interrupt (often no active response): {e}")
+        logger.info(
+            "Manual interrupt requested (response_active=%s, avatar_enabled=%s)",
+            self._response_active,
+            self.config.get("avatarEnabled", False),
+        )
+        if self._response_active:
+            # Claim the active response before awaiting so repeated interrupt
+            # messages cannot both send response.cancel for the same turn.
+            self._response_active = False
+            try:
+                await self.connection.response.cancel()
+            except Exception as e:
+                logger.debug(f"response.cancel during interrupt failed: {e}")
         # output_audio_buffer.clear() is ONLY valid in avatar mode; calling it on a
         # non-avatar session (e.g. the Teams meeting bot) returns an
         # ``avatar_not_configured`` error on every barge-in/suppression. response.cancel()
@@ -598,6 +608,8 @@ class VoiceSessionHandler:
                 if etype != ServerEventType.RESPONSE_AUDIO_DELTA:
                     logger.debug(f"[RECV-WAIT] {etype}")
                 if event.type in wanted_types:
+                    if event.type == ServerEventType.RESPONSE_DONE:
+                        self._response_active = False
                     return event
                 # Continue handling other events while waiting
                 await handle_event(self, event, connection)
