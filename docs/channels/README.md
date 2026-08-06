@@ -114,7 +114,7 @@ capability, so environments created before profiles existed are unaffected.
 
 | Flag | Set by profile | Effect |
 | --- | --- | --- |
-| `DEPLOY_PROFILE` | — | `web` · `teams-tab` · `in-call` · `in-call-browser`. Drives everything below, and resets the flags of whichever profile you did *not* pick. |
+| `DEPLOY_PROFILE` | — | `web` · `teams-tab` · `in-call-browser` · `in-call` (channels A–D). Drives everything below, and resets the flags of whichever profile you did *not* pick. |
 | *(none)* | `web`, `teams-tab` | Channel **A**. Container app, Foundry agent, AI Search, ACR, identity, roles. |
 | `MEETING_BOT_ENABLED` | `in-call` | Serves the media-bot bridge (`/ws/acs/audio`) for **D**. |
 | `DEPLOY_MEETING_BOT_HOST` | `in-call` | Provisions the Windows media host + calling bot registration. |

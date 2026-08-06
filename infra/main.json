@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.43.8.12551",
-      "templateHash": "13918546158217176347"
+      "templateHash": "18287462382143947693"
     }
   },
   "parameters": {
@@ -343,7 +343,7 @@
       "type": "string",
       "defaultValue": "",
       "metadata": {
-        "description": "Deployment profile from `scripts/set_profile.py` — one of \"web\", \"teams-tab\", \"in-call\" (channel D, Windows media bot) or \"in-call-browser\" (channel C, ACS browser guest). Drives which optional channels deploy. Empty keeps the pre-profile behaviour (explicit flags only)."
+        "description": "Deployment profile from `scripts/set_profile.py` — one of \"web\", \"teams-tab\", \"in-call-browser\" (channel C, ACS browser guest) or \"in-call\" (channel D, Windows media bot). Drives which optional channels deploy. Empty keeps the pre-profile behaviour (explicit flags only)."
       }
     },
     "enableAcs": {
