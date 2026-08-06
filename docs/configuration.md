@@ -35,7 +35,7 @@ Set with `uv run python scripts/set_profile.py` rather than by hand.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `DEPLOY_PROFILE` | *(empty)* | `web` · `teams-tab` · `in-call` · `in-call-browser`. Selects which channel deploys, and drives the numbered step plan `scripts/preflight.py` prints. Empty keeps the pre-profile behaviour (explicit flags only). **Selecting a profile is authoritative**: it writes that profile's flags and resets the others, so switching away from `in-call` also switches off its Windows VM. |
+| `DEPLOY_PROFILE` | *(empty)* | `web` · `teams-tab` · `in-call-browser` · `in-call` (channels A–D). Selects which channel deploys, and drives the numbered step plan `scripts/preflight.py` prints. Empty keeps the pre-profile behaviour (explicit flags only). **Selecting a profile is authoritative**: it writes that profile's flags and resets the others, so switching away from `in-call` also switches off its Windows VM. |
 | `PREFLIGHT_SKIP` | `false` | `true` bypasses the preprovision preflight gate. An escape hatch — nobody should be stuck behind their own tooling. |
 
 ---

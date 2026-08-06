@@ -91,7 +91,7 @@ azd env set AVATAR_MODEL Simone
 # azd env set AVATAR_DISPLAY_NAME Nuru
 
 # 5. Choose the channel AND the brain. Records DEPLOY_PROFILE (web · teams-tab ·
-#    in-call · in-call-browser) and VOICE_BINDING (agent · model), sets every flag
+#    in-call-browser · in-call) and VOICE_BINDING (agent · model), sets every flag
 #    those imply and resets the ones they do not, and
 #    prints the full numbered plan marking who performs each step.
 #    channels/README.md to choose the channel; voice-binding.md to choose the brain.

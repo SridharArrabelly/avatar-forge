@@ -8,9 +8,10 @@ never drift apart from what the templates actually deploy.
 
 Profiles map onto the channel ladder documented in `docs/channels/README.md`:
 
-    web         A            the core web app
-    teams-tab   A + B        adds a Teams personal tab (no extra Azure resources)
-    in-call     A + B + C    adds the live in-meeting avatar (media bot)
+    web              A            the core web app
+    teams-tab        A + B        adds a Teams personal tab (no extra Azure resources)
+    in-call-browser  A + B + C    adds the ACS browser guest
+    in-call          A + B + D    adds the Graph media bot
 
 `teams-tab` provisions exactly the same Azure resources as `web` — the difference
 is entirely in the Teams app package and who has to upload it. That is a feature,
@@ -489,7 +490,7 @@ PROFILES: dict[str, Profile] = {
 }
 
 DEFAULT_PROFILE = "web"
-PROFILE_ORDER = ["web", "teams-tab", "in-call", "in-call-browser"]
+PROFILE_ORDER = ["web", "teams-tab", "in-call-browser", "in-call"]
 
 # Every flag any profile sets, mapped to the value that means "off".
 #
