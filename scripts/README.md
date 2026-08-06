@@ -49,7 +49,7 @@ command), or individually as `uv run python scripts/<name>.py`.
 | [`smoke_foundry_agent.py`](smoke_foundry_agent.py) | "Can the deployed agent answer?" One end-to-end question. |
 | [`bench_routing_agent.py`](bench_routing_agent.py) | Tool-routing accuracy and latency on the **agent** binding. |
 | [`bench_routing_model.py`](bench_routing_model.py) | The same benchmark on the **model** binding. |
-| [`check_media_sdk_age.py`](check_media_sdk_age.py) | Fails once the Graph media SDK pin passes 90 days. Wired into [`../meeting-bot/MeetingBot.csproj`](../meeting-bot/MeetingBot.csproj), so a channel-C build runs it for you. |
+| [`check_media_sdk_age.py`](check_media_sdk_age.py) | Fails once the Graph media SDK pin passes 90 days. Wired into [`../meeting-bot/MeetingBot.csproj`](../meeting-bot/MeetingBot.csproj), so a channel-D build runs it for you. |
 
 Two files have no prefix because they are **libraries**, imported rather than run:
 [`channels.py`](channels.py) (the single source of truth for profiles, their flags and
