@@ -1,8 +1,8 @@
 # Configuration reference
 
 Every environment variable Avatar Forge reads, grouped by concern. This is the
-**single source of truth** — [`.env.example`](../.env.example) is the copy-and-fill
-template that mirrors it.
+**single source of truth**. [`.env.example`](../.env.example) is the copy-and-fill
+template for local runtime and BYO tooling; `azd`-only settings remain here.
 
 Copy the template, then fill in the required values:
 
