@@ -146,7 +146,8 @@ After `azd up` the URL of the running container app is printed (and stored as
 The two big-ticket resources — **Azure AI Foundry** and **Azure AI Search** — can be
 created fresh (default) or reused. Each has its own independent switch. A new Foundry
 project paired with BYO Search still gets its Search connection, RBAC, and configured
-index automatically:
+index automatically. The deploy also enables the Search service's system identity and
+grants it embedding access on Foundry, which query-time vectorization requires:
 
 ```bicep
 // infra/main.bicep

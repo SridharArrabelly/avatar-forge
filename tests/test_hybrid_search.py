@@ -68,6 +68,16 @@ check(
     and '"Search Index Data Contributor"' in RBAC,
 )
 check(
+    "BYO Search gets an identity and Foundry vectorization access",
+    '"--identity-type", "SystemAssigned"' in RBAC
+    and '"Cognitive Services OpenAI User"' in RBAC
+    and "AZURE_VOICELIVE_ENDPOINT" in RBAC,
+)
+check(
+    "greenfield Foundry role scope uses azd's resource-group output",
+    'os.environ.get("AZURE_RESOURCE_GROUP", "")' in RBAC,
+)
+check(
     "index creation waits for new Search data-plane roles to propagate",
     "creating/updating Search index" in INDEX_SETUP
     and "lambda: ensure_index(s)" in INDEX_SETUP,
