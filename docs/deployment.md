@@ -63,8 +63,10 @@ azd env set FOUNDRY_LOCATION eastus2
 
 > **Load your documents first.** The `postprovision` hook indexes every `data/*.docx`
 > into the freshly-created AI Search service. Drop your documents into
-> [`data/`](../data/) **before** `azd up`; otherwise the index is empty and you must
-> rerun `scripts/setup_aisearch_index.py` manually. BYO Search skips this.
+> [`data/`](../data/) **before** `azd up`; otherwise the index is created empty and you
+> must rerun `scripts/setup_aisearch_index.py` after adding documents. When Foundry is
+> new, this also creates/populates the configured index on a BYO Search service and
+> wires its Foundry project connection automatically.
 
 Steps 4 and 5 are what make the rest predictable — they are not optional extras. Some
 steps Bicep performs and some only an administrator can, and they interleave, so the
@@ -142,7 +144,9 @@ After `azd up` the URL of the running container app is printed (and stored as
 ## Bring-your-own Foundry / Search (brownfield)
 
 The two big-ticket resources — **Azure AI Foundry** and **Azure AI Search** — can be
-created fresh (default) or reused. Each has its own independent switch:
+created fresh (default) or reused. Each has its own independent switch. A new Foundry
+project paired with BYO Search still gets its Search connection, RBAC, and configured
+index automatically:
 
 ```bicep
 // infra/main.bicep

@@ -298,6 +298,7 @@ module resources 'resources.bicep' = {
     existingFoundryAccountName: foundryAccountName
     existingFoundryProjectEndpoint: foundryProjectEndpoint
     existingSearchServiceName: searchServiceName
+    existingSearchResourceGroup: searchResourceGroup
     existingAppInsightsName: appInsightsName
     existingAppInsightsResourceGroup: appInsightsResourceGroup
     agentName: agentName

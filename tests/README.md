@@ -41,6 +41,7 @@ wrong reason. Open a fresh terminal rather than debugging it.
 | [`test_agent_tool_wiring.py`](test_agent_tool_wiring.py) | That a missing **optional** tool degrades gracefully while a missing **required** one fails loudly. |
 | [`test_build_package.py`](test_build_package.py) | The Teams manifest and the environment-scoped package filename. |
 | [`test_build_query.py`](test_build_query.py) | That site scoping renders the operators Web IQ documents (a `-domain` exclusion is `-site:domain`, not `site:-domain`). |
+| [`test_hybrid_search.py`](test_hybrid_search.py) | That a new Foundry project paired with BYO Search creates the project connection, cross-RG roles and index before creating the agent. |
 | [`test_prompt_tool_names.py`](test_prompt_tool_names.py) | That prompt tool-name placeholders match the tools each binding really registers. |
 | [`test_rbac_propagation.py`](test_rbac_propagation.py) | The retry/backoff used by `postprovision` — including that 404 is *not* retried, so a missing optional connection fails fast instead of stalling for 20 minutes. |
 | [`test_set_profile.py`](test_set_profile.py) | That profile flags are authoritative rather than cumulative, so switching profiles clears the previous one's flags instead of leaving you paying for its resources. |

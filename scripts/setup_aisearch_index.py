@@ -531,7 +531,23 @@ def main() -> None:
     )
     log.info("Embedding dim (detected): %d", s["embed_dim"])
 
-    ensure_index(s)
+    # BYO Search roles may have been assigned moments ago by postprovision.
+    # Foundry and Search propagate independently, so the successful embedding
+    # probe above does not imply that index management is authorized yet.
+    wait_for_data_plane(
+        lambda: ensure_index(s),
+        what=f"creating/updating Search index '{s['index_name']}'",
+        log=log.info,
+    )
+    # Index management and document access use different Search data roles.
+    # Probe the document plane separately before doing any potentially expensive
+    # embedding work, rather than discovering propagation on the first upload.
+    search = make_search_client(s)
+    wait_for_data_plane(
+        search.get_document_count,
+        what=f"accessing documents in Search index '{s['index_name']}'",
+        log=log.info,
+    )
     n = upload(s, iter_documents(s, aoai))
     log.info("Done. Indexed %d chunks into '%s'.", n, s["index_name"])
 

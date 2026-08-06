@@ -141,7 +141,7 @@ test checklist + model-shootout results live in
 ## Automated tests
 
 Everything above is a *smoke test* — it needs live Azure resources. Most of the suite
-does not: **eleven checks run fully offline**, with no Azure, no credentials and no
+does not: **twelve checks run fully offline**, with no Azure, no credentials and no
 network. They live in [`tests/`](../tests/README.md) — in this repo the `test_` prefix
 means exactly that, and anything that costs money to run sits in
 [`scripts/`](../scripts/README.md) under a `setup_` / `grant_` / `smoke_` / `bench_`
@@ -152,6 +152,7 @@ uv run python tests/test_docs.py             # links, mermaid, and region drift 
 uv run python tests/test_preflight.py        # the helpers that settle the deploy target
 uv run python tests/test_voice_binding.py    # the agent/model binding switch
 uv run python tests/test_build_query.py      # site scoping renders the operators Web IQ documents
+uv run python tests/test_hybrid_search.py    # new Foundry + BYO Search wiring and index setup
 uv run python tests/test_avatar_identity.py  # every surface calls the assistant the same name
 uv run python tests/test_build_package.py    # the Teams package builder's manifest
 uv run python tests/test_agent_model_binding.py  # the agent binds to a deployment that exists
