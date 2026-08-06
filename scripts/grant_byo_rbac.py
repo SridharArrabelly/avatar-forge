@@ -179,6 +179,32 @@ def main() -> int:
         _grant("Search Index Data Reader",  uami_pid, ROLES["search_index_data_reader"],  search_scope)
         _grant("Search Service Contributor", uami_pid, ROLES["search_service_contributor"], search_scope)
 
+        # A BYO service may be empty. The postprovision index builder runs as the
+        # deploying human, so control-plane Owner/Contributor is not enough.
+        deployer_pid = _deployer_object_id()
+        if deployer_pid:
+            print(f"Granting deployer ({deployer_pid}) index-build access on BYO Search:")
+            _grant(
+                "Search Index Data Contributor",
+                deployer_pid,
+                ROLES["search_index_data_contributor"],
+                search_scope,
+                principal_type="User",
+            )
+            _grant(
+                "Search Service Contributor",
+                deployer_pid,
+                ROLES["search_service_contributor"],
+                search_scope,
+                principal_type="User",
+            )
+        else:
+            print(
+                "WARN: could not determine the deploying user's object id, so the deployer was\n"
+                "      NOT granted index-build access on BYO Search.",
+                file=sys.stderr,
+            )
+
     # Both-BYO symmetry: Foundry project SMI also needs access to the BYO Search index
     # so the agents `azure_ai_search` tool can read at runtime. (Greenfield handles this
     # in-Bicep via searchRoleForProject.)

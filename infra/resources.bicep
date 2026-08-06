@@ -16,6 +16,7 @@ param existingFoundryAccountName string
 param existingFoundryProjectEndpoint string
 
 param existingSearchServiceName string
+param existingSearchResourceGroup string
 
 @description('Name of an existing Application Insights component to reuse. Leave empty to create a new one.')
 param existingAppInsightsName string = ''
@@ -191,10 +192,10 @@ module foundry 'modules/foundry.bicep' = if (createFoundry) {
     deployAgentModel: agentBinding
     modelSkuName: modelSkuName
     modelCapacity: modelCapacity
-    searchServiceName: createSearch ? search!.outputs.name : ''
-    searchEndpoint: createSearch ? search!.outputs.endpoint : ''
-    searchResourceId: createSearch ? search!.outputs.id : ''
-    searchConnectionName: createSearch ? searchConnectionName : ''
+    searchServiceName: searchServiceNameEffective
+    searchEndpoint: searchEndpointEffective
+    searchResourceId: searchResourceIdEffective
+    searchConnectionName: searchConnectionName
     bingAccountId: createBing ? bingGrounding!.outputs.accountId : ''
     bingAccountName: createBing ? bingGrounding!.outputs.accountName : ''
     bingConnectionName: createBing ? bingConnectionNameEffective : ''
@@ -218,6 +219,12 @@ module search 'modules/aiSearch.bicep' = if (createSearch) {
 }
 
 // BYO Search: role assignment handled by scripts/grant_byo_rbac.py (see note above).
+
+var searchServiceNameEffective = createSearch ? search!.outputs.name : existingSearchServiceName
+var searchEndpointEffective = createSearch ? search!.outputs.endpoint : 'https://${existingSearchServiceName}.search.windows.net/'
+var searchResourceIdEffective = createSearch
+  ? search!.outputs.id
+  : resourceId(existingSearchResourceGroup, 'Microsoft.Search/searchServices', existingSearchServiceName)
 
 // ───────── Grounding with Bing Custom Search (conditional) ─────────
 // On by default, and additive: with deployBingGrounding=false nothing here is created and the
@@ -248,9 +255,17 @@ module searchRoleForProject 'modules/searchRoleForProject.bicep' = if (createSea
   }
 }
 
-// Brownfield symmetry: when both Foundry AND Search are BYO, granting the existing
-// Foundry project SMI access to the existing Search service is handled by
-// scripts/grant_byo_rbac.py (idempotent, swallows duplicate-assignment errors).
+// A new Foundry project still needs data-plane access when Search is BYO. Scope
+// this deployment to the Search resource group; the both-BYO case remains in the
+// idempotent postprovision script because neither identity is created here.
+module byoSearchRoleForNewProject 'modules/searchRoleForProject.bicep' = if (!createSearch && createFoundry) {
+  name: 'byo-search-role-for-foundry-project'
+  scope: resourceGroup(existingSearchResourceGroup)
+  params: {
+    searchServiceName: existingSearchServiceName
+    foundryProjectPrincipalId: foundry!.outputs.projectPrincipalId
+  }
+}
 
 // Grant Search service SMI Cognitive Services OpenAI User on Foundry account (vectorizer query-time embeddings).
 module foundryRoleForSearch 'modules/foundryRoleForSearch.bicep' = if (createSearch && createFoundry) {
@@ -286,7 +301,6 @@ module acsRoleForApp 'modules/acsRoleForApp.bicep' = if (acsEnabled) {
 // ───────── Container App ─────────
 var foundryEndpointEffective = createFoundry ? foundry!.outputs.accountEndpoint : 'https://${existingFoundryAccountName}.services.ai.azure.com/'
 var foundryProjectEndpointEffective = createFoundry ? foundry!.outputs.projectEndpoint : existingFoundryProjectEndpoint
-var searchEndpointEffective = createSearch ? search!.outputs.endpoint : 'https://${existingSearchServiceName}.search.windows.net/'
 
 // Container App names are capped at 32 characters, must not contain '--' and must end
 // in an alphanumeric. The 'ca-' prefix plus the 13-char resourceToken consume 17, so the

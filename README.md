@@ -173,6 +173,10 @@ azd env set AZURE_LOCATION swedencentral
 azd env set AVATAR_TYPE standard-photo
 azd env set AVATAR_MODEL Simone
 
+# Optional: agent mode creates a Foundry agent named AvatarAgent by default.
+# Set this before deployment only if you want a different name.
+# azd env set AGENT_NAME ContosoAvatarAgent
+
 # 2. Choose which channel you are deploying. Sets DEPLOY_PROFILE and prints
 #    the full numbered plan, marking who performs each step.
 uv run python scripts/set_profile.py

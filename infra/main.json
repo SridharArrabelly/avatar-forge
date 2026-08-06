@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.43.8.12551",
-      "templateHash": "18287462382143947693"
+      "templateHash": "8493538879484498107"
     }
   },
   "parameters": {
@@ -544,6 +544,9 @@
           "existingSearchServiceName": {
             "value": "[parameters('searchServiceName')]"
           },
+          "existingSearchResourceGroup": {
+            "value": "[parameters('searchResourceGroup')]"
+          },
           "existingAppInsightsName": {
             "value": "[parameters('appInsightsName')]"
           },
@@ -670,7 +673,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.43.8.12551",
-              "templateHash": "7447183650360179191"
+              "templateHash": "13077109271009867827"
             }
           },
           "parameters": {
@@ -709,6 +712,9 @@
               "type": "string"
             },
             "existingSearchServiceName": {
+              "type": "string"
+            },
+            "existingSearchResourceGroup": {
               "type": "string"
             },
             "existingAppInsightsName": {
@@ -1416,10 +1422,12 @@
                   "modelCapacity": {
                     "value": "[parameters('modelCapacity')]"
                   },
-                  "searchServiceName": "[if(parameters('createSearch'), createObject('value', reference(resourceId('Microsoft.Resources/deployments', 'search'), '2025-04-01').outputs.name.value), createObject('value', ''))]",
-                  "searchEndpoint": "[if(parameters('createSearch'), createObject('value', reference(resourceId('Microsoft.Resources/deployments', 'search'), '2025-04-01').outputs.endpoint.value), createObject('value', ''))]",
-                  "searchResourceId": "[if(parameters('createSearch'), createObject('value', reference(resourceId('Microsoft.Resources/deployments', 'search'), '2025-04-01').outputs.id.value), createObject('value', ''))]",
-                  "searchConnectionName": "[if(parameters('createSearch'), createObject('value', parameters('searchConnectionName')), createObject('value', ''))]",
+                  "searchServiceName": "[if(parameters('createSearch'), createObject('value', reference(resourceId('Microsoft.Resources/deployments', 'search'), '2025-04-01').outputs.name.value), createObject('value', parameters('existingSearchServiceName')))]",
+                  "searchEndpoint": "[if(parameters('createSearch'), createObject('value', reference(resourceId('Microsoft.Resources/deployments', 'search'), '2025-04-01').outputs.endpoint.value), createObject('value', format('https://{0}.search.windows.net/', parameters('existingSearchServiceName'))))]",
+                  "searchResourceId": "[if(parameters('createSearch'), createObject('value', reference(resourceId('Microsoft.Resources/deployments', 'search'), '2025-04-01').outputs.id.value), createObject('value', resourceId(parameters('existingSearchResourceGroup'), 'Microsoft.Search/searchServices', parameters('existingSearchServiceName'))))]",
+                  "searchConnectionName": {
+                    "value": "[parameters('searchConnectionName')]"
+                  },
                   "bingAccountId": "[if(variables('createBing'), createObject('value', reference(resourceId('Microsoft.Resources/deployments', 'bing-grounding'), '2025-04-01').outputs.accountId.value), createObject('value', ''))]",
                   "bingAccountName": "[if(variables('createBing'), createObject('value', reference(resourceId('Microsoft.Resources/deployments', 'bing-grounding'), '2025-04-01').outputs.accountName.value), createObject('value', ''))]",
                   "bingConnectionName": "[if(variables('createBing'), createObject('value', variables('bingConnectionNameEffective')), createObject('value', ''))]"
@@ -2154,6 +2162,83 @@
               "dependsOn": [
                 "[resourceId('Microsoft.Resources/deployments', 'foundry')]",
                 "[resourceId('Microsoft.Resources/deployments', 'search')]"
+              ]
+            },
+            {
+              "condition": "[and(not(parameters('createSearch')), parameters('createFoundry'))]",
+              "type": "Microsoft.Resources/deployments",
+              "apiVersion": "2025-04-01",
+              "name": "byo-search-role-for-foundry-project",
+              "resourceGroup": "[parameters('existingSearchResourceGroup')]",
+              "properties": {
+                "expressionEvaluationOptions": {
+                  "scope": "inner"
+                },
+                "mode": "Incremental",
+                "parameters": {
+                  "searchServiceName": {
+                    "value": "[parameters('existingSearchServiceName')]"
+                  },
+                  "foundryProjectPrincipalId": {
+                    "value": "[reference(resourceId('Microsoft.Resources/deployments', 'foundry'), '2025-04-01').outputs.projectPrincipalId.value]"
+                  }
+                },
+                "template": {
+                  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+                  "contentVersion": "1.0.0.0",
+                  "metadata": {
+                    "_generator": {
+                      "name": "bicep",
+                      "version": "0.43.8.12551",
+                      "templateHash": "13349662924222051267"
+                    }
+                  },
+                  "parameters": {
+                    "searchServiceName": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "AI Search service name (in this resource group)."
+                      }
+                    },
+                    "foundryProjectPrincipalId": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "Foundry project SMI principalId. Granted Search Index Data Contributor + Search Service Contributor so the agents azure_ai_search tool can read the index at runtime."
+                      }
+                    }
+                  },
+                  "variables": {
+                    "indexDataContribRoleId": "8ebe5a00-799e-43f5-93ac-243d3dce84a7",
+                    "serviceContribRoleId": "7ca78c08-252a-4471-8644-bb5ff32d4ba0"
+                  },
+                  "resources": [
+                    {
+                      "type": "Microsoft.Authorization/roleAssignments",
+                      "apiVersion": "2022-04-01",
+                      "scope": "[resourceId('Microsoft.Search/searchServices', parameters('searchServiceName'))]",
+                      "name": "[guid(resourceId('Microsoft.Search/searchServices', parameters('searchServiceName')), parameters('foundryProjectPrincipalId'), variables('indexDataContribRoleId'))]",
+                      "properties": {
+                        "principalId": "[parameters('foundryProjectPrincipalId')]",
+                        "principalType": "ServicePrincipal",
+                        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('indexDataContribRoleId'))]"
+                      }
+                    },
+                    {
+                      "type": "Microsoft.Authorization/roleAssignments",
+                      "apiVersion": "2022-04-01",
+                      "scope": "[resourceId('Microsoft.Search/searchServices', parameters('searchServiceName'))]",
+                      "name": "[guid(resourceId('Microsoft.Search/searchServices', parameters('searchServiceName')), parameters('foundryProjectPrincipalId'), variables('serviceContribRoleId'))]",
+                      "properties": {
+                        "principalId": "[parameters('foundryProjectPrincipalId')]",
+                        "principalType": "ServicePrincipal",
+                        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('serviceContribRoleId'))]"
+                      }
+                    }
+                  ]
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Resources/deployments', 'foundry')]"
               ]
             },
             {

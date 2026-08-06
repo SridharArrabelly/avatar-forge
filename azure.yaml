@@ -56,7 +56,7 @@ hooks:
 
   # Runs after every successful `azd provision` / `azd up`. Four jobs:
   #   1. Grant BYO RBAC idempotently (handles RoleAssignmentExists gracefully).
-  #   2. Build the AI Search index from data/*.docx (greenfield search only).
+  #   2. Build the AI Search index when either Search or Foundry is greenfield.
   #   3. Create/update the Foundry agent (greenfield foundry only).
   #   4. Print the steps that remain for the selected channel — the manual and
   #      administrator ones Bicep cannot perform.
@@ -85,26 +85,28 @@ hooks:
           if ($LASTEXITCODE -ne 0) { Write-Warning "BYO RBAC grant failed (exit $LASTEXITCODE)." }
         }
 
-        if ($greenfieldSearch) {
-          Write-Host "[greenfield] Building AI Search index from data/*.docx ..." -ForegroundColor Cyan
-          $docs = @(Get-ChildItem -Path data -Filter *.docx -ErrorAction SilentlyContinue)
-          if ($docs.Count -eq 0) {
-            Write-Warning "data/ has no .docx files - skipping index build. Drop your documents into data/ and run: uv run python scripts/setup_aisearch_index.py"
+        if ($greenfieldSearch -or $greenfieldFoundry) {
+          Write-Host "[greenfield] Creating/updating AI Search index '$env:SEARCH_INDEX_NAME' ..." -ForegroundColor Cyan
+          $docs = @(Get-ChildItem -Path data -File -Recurse -ErrorAction SilentlyContinue |
+            Where-Object { $_.Extension -in '.docx', '.pdf', '.md', '.markdown', '.txt' -and $_.BaseName -ne 'README' })
+          uv run python scripts/setup_aisearch_index.py
+          if ($LASTEXITCODE -ne 0) {
+            Write-Warning "AI Search index build failed (exit $LASTEXITCODE). Run it manually after fixing the issue."
+            $indexState = 'failed'
+          } elseif ($docs.Count -eq 0) {
+            Write-Warning "Created an empty index because data/ has no supported documents. Add documents and re-run: uv run python scripts/setup_aisearch_index.py"
             $indexState = 'empty'
           } else {
-            uv run python scripts/setup_aisearch_index.py
-            if ($LASTEXITCODE -ne 0) {
-              Write-Warning "AI Search index build failed (exit $LASTEXITCODE). Run it manually after fixing the issue."
-              $indexState = 'failed'
-            } else {
-              $indexState = 'ok'
-            }
+            $indexState = 'ok'
           }
         } else {
           Write-Host "[brownfield] Skipping AI Search index build - using existing index '$env:SEARCH_INDEX_NAME'." -ForegroundColor Yellow
         }
 
-        if ($greenfieldFoundry -and $agentBinding) {
+        if ($indexState -eq 'failed') {
+          Write-Warning "Skipping Foundry agent creation because the required Search index was not created."
+          $agentState = 'blocked'
+        } elseif ($greenfieldFoundry -and $agentBinding) {
           Write-Host "[greenfield] Creating Foundry agent '$env:AGENT_NAME' ..." -ForegroundColor Cyan
           uv run python scripts/setup_foundry_agent.py
           # Exit 3 is deliberate: the agent exists and answers, but an OPTIONAL
@@ -142,7 +144,7 @@ hooks:
         Write-Host "--- Data plane ---" -ForegroundColor Cyan
         switch ($indexState) {
           'ok'     { Write-Host "  Search index : built" -ForegroundColor Green }
-          'empty'  { Write-Host "  Search index : EMPTY - add .docx files to data/ and run: uv run python scripts/setup_aisearch_index.py" -ForegroundColor Yellow }
+          'empty'  { Write-Host "  Search index : created but EMPTY - add documents to data/ and run: uv run python scripts/setup_aisearch_index.py" -ForegroundColor Yellow }
           'failed' { Write-Host "  Search index : FAILED - re-run: uv run python scripts/setup_aisearch_index.py" -ForegroundColor Red }
           default  { Write-Host "  Search index : reusing existing '$env:SEARCH_INDEX_NAME'" -ForegroundColor Yellow }
         }
@@ -153,6 +155,7 @@ hooks:
                        Write-Host "                 set BING_CONNECTION_NAME + BING_CUSTOM_CONFIG_NAME, then re-run:" -ForegroundColor Yellow
                        Write-Host "                 uv run python scripts/setup_foundry_agent.py" -ForegroundColor Yellow }
           'failed'   { Write-Host "  Agent        : NOT CREATED" -ForegroundColor Red }
+          'blocked'  { Write-Host "  Agent        : NOT CREATED - Search index setup failed first" -ForegroundColor Red }
           'not-applicable' { Write-Host "  Agent        : not used - VOICE_BINDING=model binds '$env:VOICELIVE_MODEL' directly" -ForegroundColor Cyan }
           default    { Write-Host "  Agent        : reusing existing '$env:AGENT_NAME'" -ForegroundColor Yellow }
         }
@@ -162,6 +165,11 @@ hooks:
         Write-Host "  uv run python scripts/setup_aisearch_index.py"
         Write-Host "  uv run python scripts/setup_foundry_agent.py"
 
+        if ($indexState -eq 'failed') {
+          Write-Host ""
+          Write-Error "Infrastructure deployed, but the Search index was NOT created. Fix the error above, then run: azd hooks run postprovision. Your Azure resources are fine; nothing needs re-provisioning."
+          exit 1
+        }
         if ($agentState -eq 'failed') {
           Write-Host ""
           Write-Error "Infrastructure deployed, but the Foundry agent was NOT created - the app cannot answer. Fix the error above, then run: uv run python scripts/setup_foundry_agent.py (or: azd hooks run postprovision). Your Azure resources are fine; nothing needs re-provisioning."
@@ -184,24 +192,32 @@ hooks:
           uv run python scripts/grant_byo_rbac.py || echo "WARN: BYO RBAC grant failed."
         fi
 
-        if [ -z "$SEARCH_SERVICE_NAME" ]; then
-          echo "[greenfield] Building AI Search index from data/*.docx ..."
-          if ls data/*.docx >/dev/null 2>&1; then
-            if uv run python scripts/setup_aisearch_index.py; then
+        if [ -z "$SEARCH_SERVICE_NAME" ] || [ -z "$FOUNDRY_ACCOUNT_NAME" ]; then
+          echo "[greenfield] Creating/updating AI Search index '$SEARCH_INDEX_NAME' ..."
+          if find data -type f \( -iname '*.docx' -o -iname '*.pdf' -o -iname '*.md' -o -iname '*.markdown' -o -iname '*.txt' \) ! -iname 'README.*' -print -quit 2>/dev/null | grep -q .; then
+            has_docs=true
+          else
+            has_docs=false
+          fi
+          if uv run python scripts/setup_aisearch_index.py; then
+            if [ "$has_docs" = "true" ]; then
               index_state=ok
             else
-              echo "WARN: AI Search index build failed. Re-run manually."
-              index_state=failed
+              echo "WARN: Created an empty index because data/ has no supported documents. Add documents and re-run: uv run python scripts/setup_aisearch_index.py"
+              index_state=empty
             fi
           else
-            echo "WARN: data/ has no .docx files - skipping index build. Drop your documents into data/ and run: uv run python scripts/setup_aisearch_index.py"
-            index_state=empty
+            echo "WARN: AI Search index build failed. Re-run manually."
+            index_state=failed
           fi
         else
           echo "[brownfield] Skipping AI Search index build - using existing index '$SEARCH_INDEX_NAME'."
         fi
 
-        if [ -z "$FOUNDRY_ACCOUNT_NAME" ] && [ "$VOICE_BINDING" != "model" ]; then
+        if [ "$index_state" = "failed" ]; then
+          echo "WARN: Skipping Foundry agent creation because the required Search index was not created."
+          agent_state=blocked
+        elif [ -z "$FOUNDRY_ACCOUNT_NAME" ] && [ "$VOICE_BINDING" != "model" ]; then
           echo "[greenfield] Creating Foundry agent '$AGENT_NAME' ..."
           # Exit 3 is deliberate: the agent exists and answers, but an OPTIONAL
           # tool (site-scoped web grounding) was left out. Degraded success, not
@@ -240,7 +256,7 @@ hooks:
         echo "--- Data plane ---"
         case "$index_state" in
           ok)     echo "  Search index : built" ;;
-          empty)  echo "  Search index : EMPTY - add .docx files to data/ and run: uv run python scripts/setup_aisearch_index.py" ;;
+          empty)  echo "  Search index : created but EMPTY - add documents to data/ and run: uv run python scripts/setup_aisearch_index.py" ;;
           failed) echo "  Search index : FAILED - re-run: uv run python scripts/setup_aisearch_index.py" ;;
           *)      echo "  Search index : reusing existing '$SEARCH_INDEX_NAME'" ;;
         esac
@@ -251,6 +267,7 @@ hooks:
                     echo "                 set BING_CONNECTION_NAME + BING_CUSTOM_CONFIG_NAME, then re-run:"
                     echo "                 uv run python scripts/setup_foundry_agent.py" ;;
           failed)   echo "  Agent        : NOT CREATED" ;;
+          blocked)  echo "  Agent        : NOT CREATED - Search index setup failed first" ;;
           not-applicable) echo "  Agent        : not used - VOICE_BINDING=model binds '$VOICELIVE_MODEL' directly" ;;
           *)        echo "  Agent        : reusing existing '$AGENT_NAME'" ;;
         esac
@@ -260,6 +277,13 @@ hooks:
         echo "  uv run python scripts/setup_aisearch_index.py"
         echo "  uv run python scripts/setup_foundry_agent.py"
 
+        if [ "$index_state" = "failed" ]; then
+          echo ""
+          echo "ERROR: Infrastructure deployed, but the Search index was NOT created." >&2
+          echo "       Fix the error above, then run: azd hooks run postprovision." >&2
+          echo "       Your Azure resources are fine; nothing needs re-provisioning." >&2
+          exit 1
+        fi
         if [ "$agent_state" = "failed" ]; then
           echo ""
           echo "ERROR: Infrastructure deployed, but the Foundry agent was NOT created - the app cannot answer." >&2

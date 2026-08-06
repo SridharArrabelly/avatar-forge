@@ -69,6 +69,7 @@ AVATAR_REGIONS = {
 }
 
 BASE_PROVIDERS = ["Microsoft.CognitiveServices", "Microsoft.App", "Microsoft.Search", "Microsoft.Bing"]
+DEFAULT_AGENT_NAME = "AvatarAgent"
 
 
 @dataclass
@@ -256,11 +257,10 @@ def check_voice_binding(cfg: dict[str, str]) -> list[CheckResult]:
     """Validate the brain choice and the config that choice implies.
 
     The binding is set by scripts/set_profile.py alongside the channel. It is
-    checked here because each mode has its own hard requirement, and getting it
-    wrong fails at runtime rather than at deploy time — agent mode without an
-    agent name simply never answers, and model mode silently drops web search
-    when Web IQ is unconfigured, because Grounding with Bing cannot follow into
-    model mode.
+    checked here because each mode has different runtime configuration. Agent
+    mode uses the same default name as the infrastructure template when the user
+    has not chosen one; model mode silently drops web search when Web IQ is
+    unconfigured, because Grounding with Bing cannot follow into model mode.
     """
     raw = cfg.get("VOICE_BINDING", "").strip().lower()
     binding = raw or "agent"
@@ -286,14 +286,13 @@ def check_voice_binding(cfg: dict[str, str]) -> list[CheckResult]:
     ]
 
     if binding == "agent":
-        agent = cfg.get("AGENT_NAME", "").strip()
+        configured_agent = cfg.get("AGENT_NAME", "").strip()
+        agent = configured_agent or DEFAULT_AGENT_NAME
         results.append(
             CheckResult(
                 "Agent mode: AGENT_NAME",
-                bool(agent),
-                agent or "not set",
-                fix="        Agent mode binds to a Foundry agent by name.\n"
-                    "        azd env set AGENT_NAME <agent-name>",
+                True,
+                agent + ("" if configured_agent else " (built-in default)"),
             )
         )
     else:
