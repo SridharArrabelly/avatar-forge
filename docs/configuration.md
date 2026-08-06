@@ -45,7 +45,7 @@ Set with `uv run python scripts/set_profile.py` rather than by hand.
 | Variable | Default | Purpose |
 |---|---|---|
 | `AZURE_VOICELIVE_ENDPOINT` | — | **Required.** Your Foundry / AI Services endpoint, e.g. `https://<resource>.services.ai.azure.com/`. |
-| `AGENT_NAME` | `AvatarAgent` | **Required.** Name of the Foundry agent the session binds to (created via [`scripts/setup_foundry_agent.py`](../scripts/setup_foundry_agent.py)). |
+| `AGENT_NAME` | `AvatarAgent` | Name of the Foundry agent the session binds to in agent mode. Greenfield deployments create the default automatically; set this only to choose a different name or reuse an existing agent. |
 | `AGENT_PROJECT_NAME` | `avatar-forge` | **Required.** Foundry project that owns the agent. |
 | `PROJECT_ENDPOINT` | — | **Required.** Foundry project endpoint, e.g. `https://<resource>.services.ai.azure.com/api/projects/<project>`. |
 | `VOICELIVE_VOICE` | `en-US-AvaMultilingualNeural` | Default avatar voice (also settable in the UI). |

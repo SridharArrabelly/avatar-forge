@@ -20,10 +20,12 @@ interactive run — only in CI or in the hook, where it looks like azd hanging.
 """
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "scripts"))
 
 import preflight as pf  # noqa: E402
 
@@ -213,16 +215,26 @@ def main() -> int:
 
     r = binding({"VOICE_BINDING": "agent"})
     check(
-        "binding: agent mode without AGENT_NAME hard-fails",
-        not r["Agent mode: AGENT_NAME"].ok
-        and not r["Agent mode: AGENT_NAME"].warn_only,
+        "binding: agent mode uses the built-in name when AGENT_NAME is unset",
+        r["Agent mode: AGENT_NAME"].ok
+        and pf.DEFAULT_AGENT_NAME in r["Agent mode: AGENT_NAME"].detail
+        and "default" in r["Agent mode: AGENT_NAME"].detail,
     )
 
     r = binding({"VOICE_BINDING": "agent", "AGENT_NAME": "a"})
     check("binding: agent mode with AGENT_NAME passes", r["Agent mode: AGENT_NAME"].ok)
     check(
+        "binding: an explicit AGENT_NAME overrides the default",
+        r["Agent mode: AGENT_NAME"].detail == "a",
+    )
+    check(
         "binding: agent mode does not check model-mode inputs",
         not any(k.startswith("Model mode") for k in r),
+    )
+    template = json.loads((ROOT / "infra" / "main.json").read_text(encoding="utf-8"))
+    check(
+        "binding: preflight and infrastructure use the same default agent name",
+        pf.DEFAULT_AGENT_NAME == template["parameters"]["agentName"]["defaultValue"],
     )
 
     r = binding({"VOICE_BINDING": "model"})
