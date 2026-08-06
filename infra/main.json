@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.43.8.12551",
-      "templateHash": "3931787809561143851"
+      "templateHash": "13918546158217176347"
     }
   },
   "parameters": {
@@ -288,32 +288,23 @@
     },
     "avatarType": {
       "type": "string",
-      "defaultValue": "",
+      "defaultValue": "standard-photo",
       "allowedValues": [
-        "",
         "standard-video",
         "standard-photo",
         "custom-video",
         "custom-photo"
       ],
       "metadata": {
-        "description": "Canonical avatar type. Use standard-video, standard-photo, custom-video, or custom-photo. Leave empty to use the legacy avatar variables below."
+        "description": "Avatar type: standard-video, standard-photo, custom-video, or custom-photo."
       }
     },
     "avatarModel": {
       "type": "string",
-      "defaultValue": "",
+      "defaultValue": "Simone",
       "metadata": {
         "description": "Canonical avatar model id. For custom avatars this is the model provisioned in the Speech resource."
       }
-    },
-    "avatarName": {
-      "type": "string",
-      "defaultValue": "Lisa-casual-sitting"
-    },
-    "customAvatarName": {
-      "type": "string",
-      "defaultValue": ""
     },
     "avatarDisplayName": {
       "type": "string",
@@ -328,18 +319,6 @@
       "metadata": {
         "description": "Identity tagline under the avatar name (e.g. \"Your MTN Digital Assistant\"). Empty uses the company-agnostic default."
       }
-    },
-    "photoAvatarName": {
-      "type": "string",
-      "defaultValue": "Simone"
-    },
-    "isPhotoAvatar": {
-      "type": "string",
-      "defaultValue": "true"
-    },
-    "isCustomAvatar": {
-      "type": "string",
-      "defaultValue": "false"
     },
     "avatarBackgroundImageUrl": {
       "type": "string",
@@ -495,19 +474,8 @@
     "bingHostsRaw": "[map(parameters('bingAllowedDomains'), lambda('d', split(replace(replace(lambdaVariables('d').domain, 'https://', ''), 'http://', ''), '/')[0]))]",
     "bingHosts": "[map(variables('bingHostsRaw'), lambda('h', if(startsWith(lambdaVariables('h'), 'www.'), substring(lambdaVariables('h'), 4), lambdaVariables('h'))))]",
     "webIqEffectiveDomains": "[if(empty(parameters('webIqAllowedDomains')), join(union(variables('bingHosts'), variables('bingHosts')), ','), parameters('webIqAllowedDomains'))]",
-    "truthyValues": [
-      "1",
-      "true",
-      "yes",
-      "on"
-    ],
-    "resolvedAvatarType": "[if(not(empty(trim(parameters('avatarType')))), toLower(trim(parameters('avatarType'))), if(contains(variables('truthyValues'), toLower(trim(parameters('isCustomAvatar')))), if(contains(variables('truthyValues'), toLower(trim(parameters('isPhotoAvatar')))), 'custom-photo', 'custom-video'), if(contains(variables('truthyValues'), toLower(trim(parameters('isPhotoAvatar')))), 'standard-photo', 'standard-video')))]",
-    "resolvedAvatarModel": "[if(not(empty(trim(parameters('avatarModel')))), trim(parameters('avatarModel')), if(or(equals(variables('resolvedAvatarType'), 'custom-video'), equals(variables('resolvedAvatarType'), 'custom-photo')), parameters('customAvatarName'), if(equals(variables('resolvedAvatarType'), 'standard-photo'), parameters('photoAvatarName'), parameters('avatarName'))))]",
-    "effectiveAvatarName": "[if(equals(variables('resolvedAvatarType'), 'standard-video'), variables('resolvedAvatarModel'), parameters('avatarName'))]",
-    "effectiveCustomAvatarName": "[if(or(equals(variables('resolvedAvatarType'), 'custom-video'), equals(variables('resolvedAvatarType'), 'custom-photo')), variables('resolvedAvatarModel'), parameters('customAvatarName'))]",
-    "effectivePhotoAvatarName": "[if(equals(variables('resolvedAvatarType'), 'standard-photo'), variables('resolvedAvatarModel'), parameters('photoAvatarName'))]",
-    "effectiveIsPhotoAvatar": "[if(or(equals(variables('resolvedAvatarType'), 'standard-photo'), equals(variables('resolvedAvatarType'), 'custom-photo')), 'true', 'false')]",
-    "effectiveIsCustomAvatar": "[if(or(equals(variables('resolvedAvatarType'), 'custom-video'), equals(variables('resolvedAvatarType'), 'custom-photo')), 'true', 'false')]",
+    "resolvedAvatarType": "[toLower(trim(parameters('avatarType')))]",
+    "resolvedAvatarModel": "[trim(parameters('avatarModel'))]",
     "resourceToken": "[toLower(uniqueString(subscription().id, parameters('environmentName'), parameters('location')))]",
     "tags": {
       "azd-env-name": "[parameters('environmentName')]",
@@ -651,26 +619,17 @@
           "embeddingDeployment": {
             "value": "[parameters('embeddingDeployment')]"
           },
-          "avatarName": {
-            "value": "[variables('effectiveAvatarName')]"
+          "avatarType": {
+            "value": "[variables('resolvedAvatarType')]"
           },
-          "customAvatarName": {
-            "value": "[variables('effectiveCustomAvatarName')]"
+          "avatarModel": {
+            "value": "[variables('resolvedAvatarModel')]"
           },
           "avatarDisplayName": {
             "value": "[parameters('avatarDisplayName')]"
           },
           "avatarTagline": {
             "value": "[parameters('avatarTagline')]"
-          },
-          "photoAvatarName": {
-            "value": "[variables('effectivePhotoAvatarName')]"
-          },
-          "isPhotoAvatar": {
-            "value": "[variables('effectiveIsPhotoAvatar')]"
-          },
-          "isCustomAvatar": {
-            "value": "[variables('effectiveIsCustomAvatar')]"
           },
           "avatarBackgroundImageUrl": {
             "value": "[parameters('avatarBackgroundImageUrl')]"
@@ -711,7 +670,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.43.8.12551",
-              "templateHash": "6828111390757326302"
+              "templateHash": "7447183650360179191"
             }
           },
           "parameters": {
@@ -876,11 +835,11 @@
               "type": "string",
               "defaultValue": ""
             },
-            "avatarName": {
+            "avatarType": {
               "type": "string",
-              "defaultValue": ""
+              "defaultValue": "standard-video"
             },
-            "customAvatarName": {
+            "avatarModel": {
               "type": "string",
               "defaultValue": ""
             },
@@ -889,18 +848,6 @@
               "defaultValue": ""
             },
             "avatarTagline": {
-              "type": "string",
-              "defaultValue": ""
-            },
-            "photoAvatarName": {
-              "type": "string",
-              "defaultValue": ""
-            },
-            "isPhotoAvatar": {
-              "type": "string",
-              "defaultValue": ""
-            },
-            "isCustomAvatar": {
               "type": "string",
               "defaultValue": ""
             },
@@ -2494,26 +2441,17 @@
                   "embeddingDeployment": {
                     "value": "[parameters('embeddingDeployment')]"
                   },
-                  "avatarName": {
-                    "value": "[parameters('avatarName')]"
+                  "avatarType": {
+                    "value": "[parameters('avatarType')]"
                   },
-                  "customAvatarName": {
-                    "value": "[parameters('customAvatarName')]"
+                  "avatarModel": {
+                    "value": "[parameters('avatarModel')]"
                   },
                   "avatarDisplayName": {
                     "value": "[parameters('avatarDisplayName')]"
                   },
                   "avatarTagline": {
                     "value": "[parameters('avatarTagline')]"
-                  },
-                  "photoAvatarName": {
-                    "value": "[parameters('photoAvatarName')]"
-                  },
-                  "isPhotoAvatar": {
-                    "value": "[parameters('isPhotoAvatar')]"
-                  },
-                  "isCustomAvatar": {
-                    "value": "[parameters('isCustomAvatar')]"
                   },
                   "avatarBackgroundImageUrl": {
                     "value": "[parameters('avatarBackgroundImageUrl')]"
@@ -2551,7 +2489,7 @@
                     "_generator": {
                       "name": "bicep",
                       "version": "0.43.8.12551",
-                      "templateHash": "17341730366819233633"
+                      "templateHash": "17419802995801613352"
                     }
                   },
                   "parameters": {
@@ -2658,11 +2596,11 @@
                       "type": "string",
                       "defaultValue": ""
                     },
-                    "avatarName": {
+                    "avatarType": {
                       "type": "string",
-                      "defaultValue": ""
+                      "defaultValue": "standard-video"
                     },
-                    "customAvatarName": {
+                    "avatarModel": {
                       "type": "string",
                       "defaultValue": ""
                     },
@@ -2678,24 +2616,6 @@
                       "defaultValue": "",
                       "metadata": {
                         "description": "Identity tagline under the avatar name (e.g. \"Your MTN Digital Assistant\"). Empty uses the company-agnostic default."
-                      }
-                    },
-                    "photoAvatarName": {
-                      "type": "string",
-                      "defaultValue": ""
-                    },
-                    "isPhotoAvatar": {
-                      "type": "string",
-                      "defaultValue": "",
-                      "metadata": {
-                        "description": "\"true\"/\"false\" string — frontend treats prebuilt as photo avatar when \"true\"."
-                      }
-                    },
-                    "isCustomAvatar": {
-                      "type": "string",
-                      "defaultValue": "",
-                      "metadata": {
-                        "description": "\"true\"/\"false\" string — frontend treats avatar as custom when \"true\"."
                       }
                     },
                     "avatarBackgroundImageUrl": {
@@ -2841,7 +2761,7 @@
                                 "cpu": "[json('2.0')]",
                                 "memory": "4.0Gi"
                               },
-                              "env": "[concat(createArray(createObject('name', 'PORT', 'value', '3000'), createObject('name', 'AZURE_CLIENT_ID', 'value', parameters('uamiClientId')), createObject('name', 'DEVELOPER_MODE', 'value', parameters('developerMode')), createObject('name', 'AZURE_VOICELIVE_ENDPOINT', 'value', parameters('voiceliveEndpoint')), createObject('name', 'PROJECT_ENDPOINT', 'value', parameters('projectEndpoint')), createObject('name', 'AGENT_NAME', 'value', parameters('agentName')), createObject('name', 'AGENT_PROJECT_NAME', 'value', parameters('agentProjectName')), createObject('name', 'AGENT_MODEL', 'value', parameters('agentModel')), createObject('name', 'EMBEDDING_DEPLOYMENT', 'value', parameters('embeddingDeployment')), createObject('name', 'AZURE_SEARCH_ENDPOINT', 'value', parameters('searchEndpoint')), createObject('name', 'SEARCH_CONNECTION_NAME', 'value', parameters('searchConnectionName')), createObject('name', 'SEARCH_INDEX_NAME', 'value', parameters('searchIndexName')), createObject('name', 'VOICELIVE_VOICE', 'value', parameters('voiceLiveVoice')), createObject('name', 'BING_CONNECTION_NAME', 'value', parameters('bingConnectionName')), createObject('name', 'BING_CUSTOM_CONFIG_NAME', 'value', parameters('bingCustomConfigName')), createObject('name', 'AVATAR_NAME', 'value', parameters('avatarName')), createObject('name', 'CUSTOM_AVATAR_NAME', 'value', parameters('customAvatarName')), createObject('name', 'AVATAR_DISPLAY_NAME', 'value', parameters('avatarDisplayName')), createObject('name', 'AVATAR_TAGLINE', 'value', parameters('avatarTagline')), createObject('name', 'PHOTO_AVATAR_NAME', 'value', parameters('photoAvatarName')), createObject('name', 'IS_PHOTO_AVATAR', 'value', parameters('isPhotoAvatar')), createObject('name', 'IS_CUSTOM_AVATAR', 'value', parameters('isCustomAvatar')), createObject('name', 'AVATAR_BACKGROUND_IMAGE_URL', 'value', parameters('avatarBackgroundImageUrl')), createObject('name', 'ENABLE_AVATAR_SPEAKING_STYLE', 'value', parameters('enableAvatarSpeakingStyle')), createObject('name', 'SR_MODEL', 'value', parameters('srModel')), createObject('name', 'RECOGNITION_LANGUAGE', 'value', parameters('recognitionLanguage')), createObject('name', 'APPLICATIONINSIGHTS_CONNECTION_STRING', 'value', parameters('appInsightsConnectionString'))), concat(variables('acsEnv'), variables('meetingBotEnv'), variables('voiceBindingEnv'), variables('webIqEnv')))]",
+                              "env": "[concat(createArray(createObject('name', 'PORT', 'value', '3000'), createObject('name', 'AZURE_CLIENT_ID', 'value', parameters('uamiClientId')), createObject('name', 'DEVELOPER_MODE', 'value', parameters('developerMode')), createObject('name', 'AZURE_VOICELIVE_ENDPOINT', 'value', parameters('voiceliveEndpoint')), createObject('name', 'PROJECT_ENDPOINT', 'value', parameters('projectEndpoint')), createObject('name', 'AGENT_NAME', 'value', parameters('agentName')), createObject('name', 'AGENT_PROJECT_NAME', 'value', parameters('agentProjectName')), createObject('name', 'AGENT_MODEL', 'value', parameters('agentModel')), createObject('name', 'EMBEDDING_DEPLOYMENT', 'value', parameters('embeddingDeployment')), createObject('name', 'AZURE_SEARCH_ENDPOINT', 'value', parameters('searchEndpoint')), createObject('name', 'SEARCH_CONNECTION_NAME', 'value', parameters('searchConnectionName')), createObject('name', 'SEARCH_INDEX_NAME', 'value', parameters('searchIndexName')), createObject('name', 'VOICELIVE_VOICE', 'value', parameters('voiceLiveVoice')), createObject('name', 'BING_CONNECTION_NAME', 'value', parameters('bingConnectionName')), createObject('name', 'BING_CUSTOM_CONFIG_NAME', 'value', parameters('bingCustomConfigName')), createObject('name', 'AVATAR_TYPE', 'value', parameters('avatarType')), createObject('name', 'AVATAR_MODEL', 'value', parameters('avatarModel')), createObject('name', 'AVATAR_DISPLAY_NAME', 'value', parameters('avatarDisplayName')), createObject('name', 'AVATAR_TAGLINE', 'value', parameters('avatarTagline')), createObject('name', 'AVATAR_BACKGROUND_IMAGE_URL', 'value', parameters('avatarBackgroundImageUrl')), createObject('name', 'ENABLE_AVATAR_SPEAKING_STYLE', 'value', parameters('enableAvatarSpeakingStyle')), createObject('name', 'SR_MODEL', 'value', parameters('srModel')), createObject('name', 'RECOGNITION_LANGUAGE', 'value', parameters('recognitionLanguage')), createObject('name', 'APPLICATIONINSIGHTS_CONNECTION_STRING', 'value', parameters('appInsightsConnectionString'))), concat(variables('acsEnv'), variables('meetingBotEnv'), variables('voiceBindingEnv'), variables('webIqEnv')))]",
                               "probes": [
                                 {
                                   "type": "Liveness",
@@ -3505,18 +3425,6 @@
       "type": "string",
       "value": "[parameters('recognitionLanguage')]"
     },
-    "AVATAR_NAME": {
-      "type": "string",
-      "value": "[variables('effectiveAvatarName')]"
-    },
-    "CUSTOM_AVATAR_NAME": {
-      "type": "string",
-      "value": "[variables('effectiveCustomAvatarName')]"
-    },
-    "PHOTO_AVATAR_NAME": {
-      "type": "string",
-      "value": "[variables('effectivePhotoAvatarName')]"
-    },
     "AVATAR_DISPLAY_NAME": {
       "type": "string",
       "value": "[parameters('avatarDisplayName')]"
@@ -3528,14 +3436,6 @@
     "AVATAR_BACKGROUND_IMAGE_URL": {
       "type": "string",
       "value": "[parameters('avatarBackgroundImageUrl')]"
-    },
-    "IS_PHOTO_AVATAR": {
-      "type": "string",
-      "value": "[variables('effectiveIsPhotoAvatar')]"
-    },
-    "IS_CUSTOM_AVATAR": {
-      "type": "string",
-      "value": "[variables('effectiveIsCustomAvatar')]"
     }
   }
 }

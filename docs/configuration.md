@@ -289,13 +289,8 @@ avatar is called "Simone" everywhere without configuring anything.
 |---|---|---|
 | `AVATAR_ENABLED` | `true` | Show the avatar at all. |
 | `AVATAR_OUTPUT_MODE` | `webrtc` | `webrtc` \| `websocket`. |
-| `AVATAR_TYPE` | *(unset; inferred for compatibility)* | **Canonical selector:** `standard-video`, `standard-photo`, `custom-video`, or `custom-photo`. |
-| `AVATAR_MODEL` | *(unset; inferred for compatibility)* | **Canonical model id:** a standard catalogue name or the custom model provisioned in your Speech resource. |
-| `IS_PHOTO_AVATAR` | `false` | **Legacy compatibility input.** Derived automatically from `AVATAR_TYPE` when the canonical selector is set. |
-| `IS_CUSTOM_AVATAR` | `false` | **Legacy compatibility input.** Derived automatically from `AVATAR_TYPE` when the canonical selector is set. |
-| `AVATAR_NAME` | `Lisa-casual-sitting` | **Legacy compatibility input** for a standard video model. |
-| `CUSTOM_AVATAR_NAME` | — | **Legacy compatibility input** for a custom video or custom photo model. |
-| `PHOTO_AVATAR_NAME` | `Anika` | **Legacy compatibility input** for a standard photo model. |
+| `AVATAR_TYPE` | `standard-photo` | **Canonical selector:** `standard-video`, `standard-photo`, `custom-video`, or `custom-photo`. |
+| `AVATAR_MODEL` | `Simone` | **Canonical model id:** a standard catalogue name or the custom model provisioned in your Speech resource. |
 | `AVATAR_BACKGROUND_IMAGE_URL` | — | Optional background image behind the avatar. |
 | `ENABLE_AVATAR_SPEAKING_STYLE` | `false` | Opt into the grayscale idle / full-color speaking treatment with a yellow speaking tint. Disabled preserves the avatar's original appearance. |
 | **`AVATAR_DISPLAY_NAME`** | *(the avatar model's name)* | **The branding knob.** Sets the bold name on the avatar stage, the name the assistant calls itself, the Teams bot name, the wake phrase and the Teams package name. Purely cosmetic — does **not** select the avatar model. **Unset it falls back to the friendly name of the *active* avatar model** (`Simone`, or `Lisa-casual-sitting` → `Lisa`), so every surface agrees without setting anything; `Avatar` only if that is empty too. Set it to override, e.g. run the `Lisa` avatar but call her `Nuru`. |
@@ -318,11 +313,8 @@ AVATAR_MODEL=Nuru
 AVATAR_DISPLAY_NAME=Nuru
 ```
 
-The application translates that into the old internal fields (`IS_PHOTO_AVATAR`,
-`IS_CUSTOM_AVATAR`, and the matching model name). You do **not** copy the model
-into several variables. Existing deployments can keep their old variables; they
-are used only when `AVATAR_TYPE` or `AVATAR_MODEL` is absent. If both forms are
-present, the canonical pair wins.
+The application derives the UI modality from this pair. You do **not** copy the
+model into several variables.
 
 > **Renaming after a deploy: use the script.** The name lives on three surfaces and
 > all three have to move together, so there is one command for it:
@@ -337,35 +329,15 @@ present, the canonical pair wins.
 > (what she actually *says*) — then reads each surface back independently and exits
 > non-zero if they disagree. See [`scripts/README.md`](../scripts/README.md).
 >
-> **Whether a rename touches the avatar's face depends on the mode.**
-> `AVATAR_DISPLAY_NAME` is always branding, but the character Speech renders comes
-> from a *different* variable, and which one it reads is decided by `IS_CUSTOM_AVATAR`:
->
-> | mode | character comes from | is the name the face? |
-> | --- | --- | --- |
-> | `IS_CUSTOM_AVATAR=false` | `PHOTO_AVATAR_NAME` — a **model id** from the fixed catalogue the picker in [`../frontend/index.html`](../frontend/index.html) lists | **No.** A rename leaves the character alone and she keeps her appearance under the new name. |
-> | `IS_CUSTOM_AVATAR=true` | `CUSTOM_AVATAR_NAME` — looked up in **your own** Speech resource | **Yes.** The name *is* the character. That is why a custom deployment sets `CUSTOM_AVATAR_NAME`, `PHOTO_AVATAR_NAME` and `AVATAR_DISPLAY_NAME` to the same string. |
->
-> The script resolves the character with the same precedence the app uses, so it
-> validates the value Voice Live actually receives rather than one that happens to be
-> inert in the current mode. To change the character explicitly:
+> `AVATAR_DISPLAY_NAME` is branding; `AVATAR_MODEL` selects the Speech character.
+> To change the character explicitly:
 >
 > ```powershell
 > uv run python scripts/rename_avatar.py Nuru --model Elise
 > ```
 >
-> **A flag/name mismatch fails in two very different ways, and one of them is silent:**
->
-> - **custom on, prebuilt name** — Voice Live rejects the session with
->   `avatar_verification_failed` ("Cannot find custom avatar *X* in your resources")
->   and the handshake times out. Loud in the container logs, but the container itself
->   stays healthy, so it presents as an app fault rather than a configuration one.
-> - **custom off, custom name** — Speech renders **nothing at all and reports no
->   error**. Silent on every surface.
->
-> So the script refuses a `--model` the prebuilt catalogue does not offer, and *warns*
-> instead of refusing when `IS_CUSTOM_AVATAR=true` — there the catalogue is your own
-> Speech resource, which it cannot enumerate.
+> The script validates standard catalogue models locally. Custom models are checked
+> by Voice Live against your Speech resource.
 >
 > The third surface is the one that catches people out: the assistant's *spoken*
 > persona is rendered into the agent's prompt and **frozen into an agent version at
@@ -396,19 +368,6 @@ present, the canonical pair wins.
 > `AVATAR_TYPE=standard-photo` and `AVATAR_MODEL=Simone`, so a stock local run or
 > deploy renders the **Simone photo avatar**, not `Lisa-casual-sitting`.
 
-### Legacy compatibility mapping
-
-The old two-flag configuration remains supported during migration:
-
-| Legacy settings | Canonical equivalent |
-|---|---|
-| `IS_PHOTO_AVATAR=false`, `IS_CUSTOM_AVATAR=false` | `standard-video` + `AVATAR_NAME` |
-| `IS_PHOTO_AVATAR=true`, `IS_CUSTOM_AVATAR=false` | `standard-photo` + `PHOTO_AVATAR_NAME` |
-| `IS_PHOTO_AVATAR=false`, `IS_CUSTOM_AVATAR=true` | `custom-video` + `CUSTOM_AVATAR_NAME` |
-| `IS_PHOTO_AVATAR=true`, `IS_CUSTOM_AVATAR=true` | `custom-photo` + `CUSTOM_AVATAR_NAME` |
-
-Do not configure both forms with different values. The canonical pair is the
-source of truth whenever it is present.
 
 ---
 

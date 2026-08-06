@@ -6,8 +6,6 @@ import os
 from dotenv import load_dotenv
 
 from .avatar_identity import (
-    DEFAULT_PHOTO_AVATAR,
-    DEFAULT_STANDARD_AVATAR,
     avatar_model,
     avatar_type,
     resolve_avatar_display_name,
@@ -253,8 +251,7 @@ ACS_ENABLED = bool(ACS_ENDPOINT or ACS_CONNECTION_STRING or MEETING_BOT_ENABLED)
 # falling back to the literal "Avatar" — is why an avatar displayed as "Simone"
 # introduced itself as "Avatar". See backend/avatar_identity.py for the full rule
 # and for why IS_*-gating the model lookup is what makes deriving from it safe.
-# Still purely cosmetic: it does NOT select the avatar model (that is AVATAR_NAME
-# / CUSTOM_AVATAR_NAME / PHOTO_AVATAR_NAME, gated by IS_*).
+# Still purely cosmetic: it does not select the avatar model.
 AVATAR_DISPLAY_NAME = resolve_avatar_display_name()
 
 
@@ -292,16 +289,6 @@ def get_ui_defaults() -> dict:
     selected_avatar_model = avatar_model()
     is_photo_avatar = selected_avatar_type.endswith("-photo")
     is_custom_avatar = selected_avatar_type.startswith("custom-")
-    legacy_avatar_name = _str("AVATAR_NAME", DEFAULT_STANDARD_AVATAR)
-    legacy_custom_avatar_name = _str("CUSTOM_AVATAR_NAME", "")
-    legacy_photo_avatar_name = _str("PHOTO_AVATAR_NAME", DEFAULT_PHOTO_AVATAR)
-    if selected_avatar_type == "standard-video":
-        legacy_avatar_name = selected_avatar_model
-    elif selected_avatar_type == "standard-photo":
-        legacy_photo_avatar_name = selected_avatar_model
-    else:
-        legacy_custom_avatar_name = selected_avatar_model
-
     return {
         # Conversation
         "srModel": _str("SR_MODEL", "mai-transcribe-1"),
@@ -326,9 +313,9 @@ def get_ui_defaults() -> dict:
         "avatarModel": selected_avatar_model,
         "isPhotoAvatar": is_photo_avatar,
         "isCustomAvatar": is_custom_avatar,
-        "avatarName": legacy_avatar_name,
-        "customAvatarName": legacy_custom_avatar_name,
-        "photoAvatarName": legacy_photo_avatar_name,
+        "avatarName": selected_avatar_model,
+        "customAvatarName": selected_avatar_model,
+        "photoAvatarName": selected_avatar_model,
         "avatarBackgroundImageUrl": _str("AVATAR_BACKGROUND_IMAGE_URL", ""),
         "enableAvatarSpeakingStyle": _bool("ENABLE_AVATAR_SPEAKING_STYLE", False),
         # Avatar identity shown top-left on the stage. Two related keys:

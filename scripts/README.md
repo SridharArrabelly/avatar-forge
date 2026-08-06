@@ -44,7 +44,7 @@ command), or individually as `uv run python scripts/<name>.py`.
 | script | when you want it |
 | --- | --- |
 | [`set_profile.py`](set_profile.py) | **Step 0.** Pick a delivery channel; records `DEPLOY_PROFILE` and prints the numbered plan. |
-| [`rename_avatar.py`](rename_avatar.py) | Rename the persona (`Simone` → `Nuru`) across all three surfaces that hold the name, then read each one back. Branding only when `IS_CUSTOM_AVATAR=false`; in custom mode the name **is** the character, so it has to match an avatar trained in your own Speech resource. `--model <character>` changes the face explicitly, `--check-only` verifies without changing anything. |
+| [`rename_avatar.py`](rename_avatar.py) | Rename the persona (`Simone` → `Nuru`) across the azd environment, container app and Foundry agent. `--model <character>` also changes `AVATAR_MODEL`; `--check-only` verifies without changing anything. |
 | [`smoke_aisearch_query.py`](smoke_aisearch_query.py) | "Did the index actually ingest?" Queries it directly. |
 | [`smoke_foundry_agent.py`](smoke_foundry_agent.py) | "Can the deployed agent answer?" One end-to-end question. |
 | [`bench_routing_agent.py`](bench_routing_agent.py) | Tool-routing accuracy and latency on the **agent** binding. |
@@ -73,20 +73,9 @@ data-plane RBAC propagation lag).
   `AVATAR_DISPLAY_NAME` is a legitimate configuration when the name derives from the
   active avatar model, so asserting on the raw variable would report a correct
   deployment as broken. It calls the same `resolve_avatar_display_name()` the app does.
-- **Whether the persona name and the avatar's face are separate knobs depends on
-  `IS_CUSTOM_AVATAR`, and getting it wrong fails two very different ways.** With
-  `IS_CUSTOM_AVATAR=false` they are separate: `PHOTO_AVATAR_NAME` is an Azure Speech
-  **model id** from the fixed catalogue the picker in
-  [`../frontend/index.html`](../frontend/index.html) lists, so renaming the persona to
-  a name Speech has never heard of is fine. With `IS_CUSTOM_AVATAR=true` they are one
-  string: `CUSTOM_AVATAR_NAME` is looked up in **your own** Speech resource, so the
-  name *is* the character. Point custom mode at a prebuilt name and Voice Live rejects
-  the session loudly (`avatar_verification_failed`); point prebuilt mode at a custom
-  name and Speech renders nothing at all, with no error. So `rename_avatar.py` resolves
-  the character the way the app does, leaves it alone unless you pass `--model`, and
-  refuses an unknown prebuilt one (a warning instead of a refusal when
-  `IS_CUSTOM_AVATAR=true`, where the catalogue is your own Speech resource rather than
-  the prebuilt list).
+- **Persona and character are separate knobs.** `AVATAR_DISPLAY_NAME` controls
+  branding; `AVATAR_MODEL` selects the Speech character. `--model` changes the
+  character and validates standard catalogue names locally.
 
 See [`../docs/development.md`](../docs/development.md) for the full local-development
 walkthrough.

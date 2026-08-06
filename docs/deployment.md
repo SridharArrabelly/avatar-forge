@@ -107,10 +107,8 @@ azd up
 ```
 
 `azd` reads these values from its environment, not from the local `.env` file.
-If you omit them, the legacy avatar variables remain supported and the template
-derives the same effective avatar from those values. See
-[configuration.md](configuration.md#selecting-an-avatar) for the four modes and
-the legacy mapping.
+These two variables are the only avatar-selection settings. See
+[configuration.md](configuration.md#selecting-an-avatar) for the four modes.
 
 Preflight also runs automatically as the `preprovision` hook, so a doomed `azd up`
 stops in seconds instead of failing twenty minutes in — skipping step 5 only means you

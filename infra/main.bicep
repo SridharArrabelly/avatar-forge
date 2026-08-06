@@ -172,44 +172,23 @@ var webIqEffectiveDomains = empty(webIqAllowedDomains)
 @description('Deployment name the Foundry agent binds to. Empty derives it: on a greenfield deploy the agent must bind to the deployment this template just created, so it follows modelDeploymentName. Set explicitly for BYO Foundry, where the deployment already exists and this template did not name it.')
 param agentModel string = ''
 param embeddingDeployment string = 'text-embedding-3-small'
-@description('Canonical avatar type. Use standard-video, standard-photo, custom-video, or custom-photo. Leave empty to use the legacy avatar variables below.')
-@allowed([ '', 'standard-video', 'standard-photo', 'custom-video', 'custom-photo' ])
-param avatarType string = ''
+@description('Avatar type: standard-video, standard-photo, custom-video, or custom-photo.')
+@allowed([ 'standard-video', 'standard-photo', 'custom-video', 'custom-photo' ])
+param avatarType string = 'standard-photo'
 @description('Canonical avatar model id. For custom avatars this is the model provisioned in the Speech resource.')
-param avatarModel string = ''
-param avatarName string = 'Lisa-casual-sitting'
-param customAvatarName string = ''
+param avatarModel string = 'Simone'
 @description('Assistant persona / display name (e.g. "Nuru") for the bot welcome message. Purely cosmetic; does NOT select the avatar model. Empty falls back to "Avatar".')
 param avatarDisplayName string = ''
 @description('Identity tagline under the avatar name (e.g. "Your MTN Digital Assistant"). Empty uses the company-agnostic default.')
 param avatarTagline string = ''
-param photoAvatarName string = 'Simone'
-param isPhotoAvatar string = 'true'
-param isCustomAvatar string = 'false'
 param avatarBackgroundImageUrl string = ''
 @description('Enable the grayscale idle / color speaking avatar treatment ("true"/"false"). Disabled by default to preserve the avatar original appearance.')
 param enableAvatarSpeakingStyle string = 'false'
 param srModel string = 'mai-transcribe-1'
 param recognitionLanguage string = 'auto'
 
-// Canonical avatar settings are translated once at the infrastructure boundary so
-// the existing runtime and media surfaces can keep consuming their stable fields.
-var truthyValues = ['1', 'true', 'yes', 'on']
-var resolvedAvatarType = !empty(trim(avatarType))
-  ? toLower(trim(avatarType))
-  : (contains(truthyValues, toLower(trim(isCustomAvatar)))
-      ? (contains(truthyValues, toLower(trim(isPhotoAvatar))) ? 'custom-photo' : 'custom-video')
-      : (contains(truthyValues, toLower(trim(isPhotoAvatar))) ? 'standard-photo' : 'standard-video'))
-var resolvedAvatarModel = !empty(trim(avatarModel))
-  ? trim(avatarModel)
-  : (resolvedAvatarType == 'custom-video' || resolvedAvatarType == 'custom-photo'
-      ? customAvatarName
-      : (resolvedAvatarType == 'standard-photo' ? photoAvatarName : avatarName))
-var effectiveAvatarName = resolvedAvatarType == 'standard-video' ? resolvedAvatarModel : avatarName
-var effectiveCustomAvatarName = resolvedAvatarType == 'custom-video' || resolvedAvatarType == 'custom-photo' ? resolvedAvatarModel : customAvatarName
-var effectivePhotoAvatarName = resolvedAvatarType == 'standard-photo' ? resolvedAvatarModel : photoAvatarName
-var effectiveIsPhotoAvatar = resolvedAvatarType == 'standard-photo' || resolvedAvatarType == 'custom-photo' ? 'true' : 'false'
-var effectiveIsCustomAvatar = resolvedAvatarType == 'custom-video' || resolvedAvatarType == 'custom-photo' ? 'true' : 'false'
+var resolvedAvatarType = toLower(trim(avatarType))
+var resolvedAvatarModel = trim(avatarModel)
 
 // ───────── channels C/D in-call media (#27) ─────────
 @description('Deployment profile from `scripts/set_profile.py` — one of "web", "teams-tab", "in-call" (channel D, Windows media bot) or "in-call-browser" (channel C, ACS browser guest). Drives which optional channels deploy. Empty keeps the pre-profile behaviour (explicit flags only).')
@@ -344,13 +323,10 @@ module resources 'resources.bicep' = {
     modelCapacity: resolvedModelCapacity
     agentModel: resolvedAgentModel
     embeddingDeployment: embeddingDeployment
-    avatarName: effectiveAvatarName
-    customAvatarName: effectiveCustomAvatarName
+    avatarType: resolvedAvatarType
+    avatarModel: resolvedAvatarModel
     avatarDisplayName: avatarDisplayName
     avatarTagline: avatarTagline
-    photoAvatarName: effectivePhotoAvatarName
-    isPhotoAvatar: effectiveIsPhotoAvatar
-    isCustomAvatar: effectiveIsCustomAvatar
     avatarBackgroundImageUrl: avatarBackgroundImageUrl
     enableAvatarSpeakingStyle: enableAvatarSpeakingStyle
     srModel: srModel
@@ -373,7 +349,6 @@ module resources 'resources.bicep' = {
 // to derive from, so resolve it here with the same rule backend/avatar_identity.py
 // applies: the explicit knob, else the ACTIVE avatar model's leading segment,
 // else 'Avatar'. The IS_* gating is what makes reading the model safe —
-// customAvatarName is a Speech model id that is stale unless its gate is on.
 var activeAvatarModel = resolvedAvatarModel
 var derivedAvatarName = split(activeAvatarModel, '-')[0]
 var resolvedAvatarDisplayName = !empty(avatarDisplayName)
@@ -453,11 +428,6 @@ output AVATAR_MODEL string = resolvedAvatarModel
 output VOICELIVE_VOICE string = voiceLiveVoice
 output SR_MODEL string = srModel
 output RECOGNITION_LANGUAGE string = recognitionLanguage
-output AVATAR_NAME string = effectiveAvatarName
-output CUSTOM_AVATAR_NAME string = effectiveCustomAvatarName
-output PHOTO_AVATAR_NAME string = effectivePhotoAvatarName
 output AVATAR_DISPLAY_NAME string = avatarDisplayName
 output AVATAR_TAGLINE string = avatarTagline
 output AVATAR_BACKGROUND_IMAGE_URL string = avatarBackgroundImageUrl
-output IS_PHOTO_AVATAR string = effectiveIsPhotoAvatar
-output IS_CUSTOM_AVATAR string = effectiveIsCustomAvatar

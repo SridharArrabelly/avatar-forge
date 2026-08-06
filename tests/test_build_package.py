@@ -53,11 +53,8 @@ _ENV_KEYS = (
     "TEAMS_BOT_ID",
     "MEETING_BOT_APP_ID",
     "AVATAR_DISPLAY_NAME",
-    "AVATAR_NAME",
-    "CUSTOM_AVATAR_NAME",
-    "PHOTO_AVATAR_NAME",
-    "IS_CUSTOM_AVATAR",
-    "IS_PHOTO_AVATAR",
+    "AVATAR_TYPE",
+    "AVATAR_MODEL",
     "TEAMS_ENABLE_CALLING",
     "TEAMS_ENABLE_COMPANION",
     # Scopes the output filename. Stripped like the rest so a developer's selected
@@ -195,12 +192,12 @@ def main() -> int:
         ("neither set -> default avatar model's name", HOST, {}, "Lisa"),
         ("AVATAR_DISPLAY_NAME only", HOST, {"AVATAR_DISPLAY_NAME": "Nuru"}, "Nuru"),
         ("photo avatar, nothing branded", HOST,
-         {"IS_PHOTO_AVATAR": "true", "PHOTO_AVATAR_NAME": "Simone"}, "Simone"),
+         {"AVATAR_TYPE": "standard-photo", "AVATAR_MODEL": "Simone"}, "Simone"),
         ("custom avatar, nothing branded", HOST,
-         {"IS_CUSTOM_AVATAR": "true", "CUSTOM_AVATAR_NAME": "Nuru"}, "Nuru"),
+         {"AVATAR_TYPE": "custom-photo", "AVATAR_MODEL": "Nuru"}, "Nuru"),
         ("knob beats the avatar model", HOST,
-         {"AVATAR_DISPLAY_NAME": "Ada", "IS_PHOTO_AVATAR": "true",
-          "PHOTO_AVATAR_NAME": "Simone"}, "Ada"),
+         {"AVATAR_DISPLAY_NAME": "Ada", "AVATAR_TYPE": "standard-photo",
+          "AVATAR_MODEL": "Simone"}, "Ada"),
         ("TEAMS_APP_NAME only", HOST, {"TEAMS_APP_NAME": "Legacy"}, "Legacy"),
         ("both -> TEAMS_APP_NAME wins", HOST,
          {"TEAMS_APP_NAME": "Legacy", "AVATAR_DISPLAY_NAME": "Nuru"}, "Legacy"),
@@ -249,9 +246,8 @@ def main() -> int:
     # passed. Both inputs live in the azd environment, not the shell.
     DEPLOYED = {
         "SERVICE_APP_URI": "https://ca-deployed.example.azurecontainerapps.io",
-        "IS_PHOTO_AVATAR": "true",
-        "PHOTO_AVATAR_NAME": "Simone",
-        "AVATAR_NAME": "Lisa-casual-sitting",  # inert: the photo gate is on
+        "AVATAR_TYPE": "standard-photo",
+        "AVATAR_MODEL": "Simone",
         "AVATAR_DISPLAY_NAME": "",
     }
     m, _ = build([], azd=DEPLOYED)
