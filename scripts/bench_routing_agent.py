@@ -39,18 +39,48 @@ tfa = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(tfa)
 
 # (question, expected) where expected in {"internal", "external"}
-CORE = [
+#
+# The core set is three groups of five. Note what the groups do and do NOT test:
+#
+#   minutes  + policies  -> BOTH expect "internal", because both corpora sit
+#                           behind the SAME hosted tool (azure_ai_search) in the
+#                           SAME index. So these five policy questions do NOT
+#                           test corpus separation - that is retrieval-level and
+#                           is measured separately. What they DO test is that a
+#                           policy question does not LEAK TO THE WEB TOOL, which
+#                           is a real and previously-shipped failure: a prompt
+#                           that says "only meeting minutes are internal" sends
+#                           "what is our gift policy" straight to Bing, which
+#                           does not hold MTN's internal policies.
+#   web                  -> expects "external".
+MINUTES = [
     ("What did we decide about dividends in the last board meeting?", "internal"),
     ("What were the action items from the February 2026 board meeting?", "internal"),
     ("Who attended the October 2025 board meeting?", "internal"),
     ("Summarise the customer experience discussion from the October 2025 board meeting.", "internal"),
     ("What strategy did the board agree in the 15 September 2023 meeting?", "internal"),
+]
+
+# Ordered by how strongly the surface form pulls towards the web tool, so a
+# partial pass still says something: Q1 is the canonical phrasing, Q3 sounds
+# like a question about general law rather than an MTN rule.
+POLICIES = [
+    ("What is our gift policy?", "internal"),
+    ("What is the maximum value of a gift I can accept from a supplier?", "internal"),
+    ("Who owns a patent created by one of our employees?", "internal"),
+    ("Am I eligible for a study bursary?", "internal"),
+    ("What does our responsible betting policy say about data breaches?", "internal"),
+]
+
+WEB = [
     ("Who is MTN's Group CFO?", "external"),
     ("What was MTN's FY2025 revenue?", "external"),
     ("What is MTN's share price today?", "external"),
     ("What is Vodacom doing in fintech?", "external"),
     ("What is MTN's Ambition 2025?", "external"),
 ]
+
+CORE = MINUTES + POLICIES + WEB
 
 # The discriminating set. Every one of these is a case where the *surface form*
 # of the question pulls the wrong way, so they separate a prompt that states a
@@ -76,6 +106,18 @@ BOUNDARY = [
 
 TIERS = {"core": CORE, "boundary": BOUNDARY, "all": CORE + BOUNDARY}
 
+# Reporting only. The question tuples stay 2-wide on purpose: bench_routing_model.py
+# unpacks them as ``for idx, (q, expected) in enumerate(questions)``, so widening
+# the tuple would break the model-mode harness. Grouping therefore lives beside the
+# data, not inside it.
+GROUPS = {"minutes": MINUTES, "policies": POLICIES, "web": WEB}
+_GROUP_OF = {q: name for name, qs in GROUPS.items() for q, _ in qs}
+
+
+def group_of(question: str) -> str:
+    """Which core group a question belongs to; BOUNDARY questions fall through."""
+    return _GROUP_OF.get(question, "boundary")
+
 
 def classify(itype: str) -> str:
     t = itype.lower()
@@ -90,7 +132,9 @@ def classify(itype: str) -> str:
     return f"other:{itype}"
 
 
-def ask(openai: OpenAI, catalog: str | None, question: str) -> tuple[list[str], str]:
+def ask(
+    openai: OpenAI, catalog: str | None, question: str
+) -> tuple[list[str], str, float | None, float]:
     if catalog:
         request_input = [
             {"type": "message", "role": "system", "content": catalog},
@@ -98,6 +142,7 @@ def ask(openai: OpenAI, catalog: str | None, question: str) -> tuple[list[str], 
         ]
     else:
         request_input = question
+    started = time.perf_counter()
     stream = openai.responses.create(
         stream=True,
         tool_choice="auto",
@@ -106,15 +151,23 @@ def ask(openai: OpenAI, catalog: str | None, question: str) -> tuple[list[str], 
     )
     tools: list[str] = []
     text_parts: list[str] = []
+    first_token: float | None = None
     for event in stream:
         if event.type == "response.output_text.delta":
+            if first_token is None and event.delta:
+                first_token = time.perf_counter() - started
             text_parts.append(event.delta)
         elif event.type == "response.output_item.done":
             item = event.item
             itype = getattr(item, "type", "")
             if itype.endswith("_call") and itype != "function_call":
                 tools.append(itype)
-    return tools, "".join(text_parts).strip()
+    return (
+        tools,
+        "".join(text_parts).strip(),
+        first_token,
+        time.perf_counter() - started,
+    )
 
 
 def main() -> int:
@@ -144,11 +197,13 @@ def main() -> int:
     )
 
     n = len(QUESTIONS)
-    # per-question correct count across runs; per-question latencies
+    # Per-question correct count, time-to-first-token and completion latency.
     correct = [0] * n
     qlat: list[list[float]] = [[] for _ in range(n)]
+    qfirst: list[list[float]] = [[] for _ in range(n)]
     run_scores: list[int] = []
     all_lat: list[float] = []
+    all_first: list[float] = []
     transcripts: list[str] = []  # full answers (run 1) for quality review
 
     print(f"\n########## CONFIG: {args.label or 'agent'} | tier={args.tier} "
@@ -158,13 +213,14 @@ def main() -> int:
         score = 0
         line = []
         for idx, (q, expected) in enumerate(QUESTIONS):
-            t0 = time.perf_counter()
             tools = None
             text = ""
+            first_token = None
+            dt = 0.0
             last_err = ""
             for attempt in range(4):  # retry transient API errors (e.g. 429)
                 try:
-                    tools, text = ask(openai, catalog, q)
+                    tools, text, first_token, dt = ask(openai, catalog, q)
                     break
                 except Exception as e:
                     last_err = str(e)
@@ -173,9 +229,11 @@ def main() -> int:
                 line.append(f"Q{idx+1}:ERR")
                 print(f"      Q{idx+1} ERR: {last_err[:120]}")
                 continue
-            dt = time.perf_counter() - t0
             qlat[idx].append(dt)
             all_lat.append(dt)
+            if first_token is not None:
+                qfirst[idx].append(first_token)
+                all_first.append(first_token)
             primary = ([classify(t) for t in tools] or ["none"])[0]
             ok = (primary == expected)
             if ok:
@@ -183,9 +241,13 @@ def main() -> int:
                 score += 1
             line.append(f"Q{idx+1}:{'.' if ok else 'X'}")
             if run == 1:  # capture one full transcript per question
+                first_label = (
+                    f"{first_token:.1f}s" if first_token is not None else "n/a"
+                )
                 transcripts.append(
                     f"Q{idx+1} [{expected}->{primary} "
-                    f"{'OK' if ok else 'MISROUTE'} {dt:.1f}s] {q}\n    {text}\n"
+                    f"{'OK' if ok else 'MISROUTE'} "
+                    f"first={first_label} complete={dt:.1f}s] {q}\n    {text}\n"
                 )
             time.sleep(1.5)  # space calls to avoid burst throttling
         run_scores.append(score)
@@ -201,15 +263,59 @@ def main() -> int:
     print("-" * 70)
     print(f"SUMMARY [{args.label}]: {sum(run_scores)}/{total} correct "
           f"(runs: {run_scores})")
+    if all_first:
+        print(
+            f"  first token: avg {sum(all_first)/len(all_first):.1f}s  "
+            f"min {min(all_first):.1f}s  max {max(all_first):.1f}s  "
+            f"n={len(all_first)}"
+        )
+    missing_first = len(all_lat) - len(all_first)
+    if missing_first:
+        print(f"  first token: missing on {missing_first} completed turn(s)")
     if all_lat:
-        print(f"  latency: avg {sum(all_lat)/len(all_lat):.1f}s  "
-              f"min {min(all_lat):.1f}s  max {max(all_lat):.1f}s")
+        print(
+            f"  completion : avg {sum(all_lat)/len(all_lat):.1f}s  "
+            f"min {min(all_lat):.1f}s  max {max(all_lat):.1f}s  "
+            f"n={len(all_lat)}"
+        )
+
+    # Per-group breakdown. A headline score hides the failure that matters most:
+    # policies leaking to the web tool shows up as a 5-point drop in ONE group
+    # while minutes and web stay perfect.
+    seen = [g for g in ("minutes", "policies", "web", "boundary")
+            if any(group_of(q) == g for q, _ in QUESTIONS)]
+    if len(seen) > 1:
+        print("  by group:")
+        for g in seen:
+            idxs = [i for i, (q, _) in enumerate(QUESTIONS) if group_of(q) == g]
+            got = sum(correct[i] for i in idxs)
+            want = len(idxs) * args.runs
+            lats = [x for i in idxs for x in qlat[i]]
+            firsts = [x for i in idxs for x in qfirst[i]]
+            avg_total = sum(lats) / len(lats) if lats else 0.0
+            first_label = (
+                f"{sum(firsts) / len(firsts):4.1f}s" if firsts else " n/a "
+            )
+            flag = "" if got == want else "   <-- "
+            print(
+                f"    {g:<9} {got:>3}/{want:<3}  "
+                f"first {first_label}  complete {avg_total:4.1f}s{flag}"
+            )
     print("  per-question pass rate:")
     for idx, (q, expected) in enumerate(QUESTIONS):
         rate = f"{correct[idx]}/{args.runs}"
-        avg = sum(qlat[idx]) / len(qlat[idx]) if qlat[idx] else 0.0
+        avg_total = sum(qlat[idx]) / len(qlat[idx]) if qlat[idx] else 0.0
+        first_label = (
+            f"{sum(qfirst[idx]) / len(qfirst[idx]):4.1f}s"
+            if qfirst[idx]
+            else " n/a "
+        )
         flag = "" if correct[idx] == args.runs else "  <-- MISS"
-        print(f"    Q{idx+1:<2} [{expected:8}] {rate}  ({avg:4.1f}s){flag}  {q[:52]}")
+        print(
+            f"    Q{idx+1:<2} [{expected:8}] {rate}  "
+            f"(first {first_label} / complete {avg_total:4.1f}s)"
+            f"{flag}  {q[:52]}"
+        )
     return 0
 
 

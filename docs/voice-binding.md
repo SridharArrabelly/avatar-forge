@@ -191,8 +191,8 @@ resource would be unreachable whatever the flag says.
 
 **Not gated, in either mode:** AI Search and the `text-embedding-3-small`
 deployment. Model mode uses the index *more* directly than agent mode does —
-`search_minutes` calls it in-process — and the meeting catalogue is fetched from
-it unconditionally on every session.
+`search_minutes` calls the mixed minutes-and-policies index in-process — and the
+meeting catalogue is fetched from it unconditionally on every session.
 
 ### The tools become ours
 
@@ -211,7 +211,7 @@ with it. There is no mixing the two. So model mode ships its own:
 
 | tool | source | measured |
 | --- | --- | --- |
-| `search_minutes` | the same `knowledge-index` the agent queried, hybrid + semantic | 620–714 ms |
+| `search_minutes` | the same minutes-and-policies `knowledge-index` the agent queried, hybrid + semantic | 620–714 ms |
 | `search_web` | Web IQ, host-allow-listed | 268–298 ms warm |
 
 Owning them is also the reason they are faster: an in-process function can be
@@ -219,8 +219,8 @@ cached, pre-warmed, and trimmed. A managed tool cannot.
 
 `search_web` is advertised to the model **only when a key is configured**. With no
 key the tool does not exist as far as the model is concerned, and the assistant
-answers from the minutes corpus alone — the same graceful degradation the agent
-path has for a missing Bing connection.
+answers from the internal minutes-and-policies corpus alone — the same graceful
+degradation the agent path has for a missing Bing connection.
 
 ---
 
@@ -312,8 +312,8 @@ Two further confounds, both measured rather than assumed:
   automatically from the same list because `site:` cannot match a path or a rank. The
   source set is identical by construction; the precision is not. A web-grounded
   question is therefore not the same question in both modes. Report web-grounded
-  numbers separately from minutes-only ones, which *are* comparable — the corpus is
-  identical.
+  numbers separately from internal-document ones, which *are* comparable — the
+  minutes-and-policies corpus is identical.
 
 When both were pinned to the same marker and interleaved A/B/A/B, time-to-**answer**
 came out at 2.45s (agent) versus 2.42s (model) — indistinguishable, with model mode's

@@ -47,6 +47,7 @@ _spec.loader.exec_module(sfa)
 class _Conn:
     def __init__(self, name: str) -> None:
         self.id = f"/connections/{name}"
+        self.name = name  # the real SDK object carries this; _find_connection matches on it
 
 
 class _Agent:
@@ -62,7 +63,14 @@ class _Agents:
 
 
 class _Connections:
-    """Resolves only the connections the caller says exist."""
+    """Resolves only the connections the caller says exist.
+
+    Models BOTH surfaces the code uses. `_find_connection()` falls back to
+    `list()` because azure-ai-projects 2.4.0 can raise ResourceNotFoundError
+    from `get()` for a connection `list()` returns from the same client - a
+    real defect hit during deployment. A fake with only `get()` would let that
+    fallback path go untested and pass regardless of what it does.
+    """
 
     def __init__(self, present: set[str]) -> None:
         self._present = present
@@ -71,6 +79,9 @@ class _Connections:
         if name in self._present:
             return _Conn(name)
         raise ResourceNotFoundError(f"connection {name!r} not found")
+
+    def list(self):
+        return [_Conn(n) for n in sorted(self._present)]
 
 
 class _Project:

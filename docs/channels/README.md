@@ -2,7 +2,7 @@
 
 > **Platform: Windows + PowerShell.** Every command in this documentation is
 > written for PowerShell on Windows, which is the only combination that is
-> routinely tested here. Channel C *requires* Windows regardless — the Teams
+> routinely tested here. Channel D *requires* Windows regardless — the Teams
 > Real-Time Media Platform runs on nothing else. On macOS or Linux the Python
 > and `azd` steps work unchanged, but you will need to translate the shell
 > syntax yourself (`Invoke-RestMethod` → `curl`, backtick continuations → `\`,
@@ -30,8 +30,8 @@ access you need**.
 | --- | --- | --- | --- | --- | --- |
 | **A** | **Web** (standalone) | Shipped | — *(this is the core)* | **None** beyond an Azure subscription | [a-web.md](a-web.md) |
 | **B** | **Teams personal tab** | Shipped | **None** | Upload/sideload a Teams app package | [b-teams-tab.md](b-teams-tab.md) |
-| **C** | **In-call avatar** — Graph media bot | **Working** | Azure Bot (calling) + **Windows VM** + DNS + TLS | **Entra admin consent** for `Calls.*.All` *(a Teams access policy is needed only for short `/meet/` links)* | [c-in-call-media-bot.md](c-in-call-media-bot.md) |
-| **D** | **In-call avatar** — ACS browser guest | **Media leg working**; headless host not built | ACS resource *(`ENABLE_ACS`)*; container/job only if made headless | **None** — anonymous guest join, verified live | [d-in-call-headless.md](d-in-call-headless.md) |
+| **C** | **In-call avatar** — ACS browser guest | **Media leg working**; headless host not built | ACS resource *(`ENABLE_ACS`)*; container/job only if made headless | **None** — anonymous guest join, verified live | [c-in-call-headless.md](c-in-call-headless.md) |
+| **D** | **In-call avatar** — Graph media bot | **Working** | Azure Bot (calling) + **Windows VM** + DNS + TLS | **Entra admin consent** for `Calls.*.All` *(a Teams access policy is needed only for short `/meet/` links)* | [d-in-call-media-bot.md](d-in-call-media-bot.md) |
 
 ### Two things this table is deliberately saying
 
@@ -44,11 +44,11 @@ the web app already serves.
 of the *same* capability — the avatar present in a live meeting — and you pick the
 one that fits your tenant. Neither supersedes the other:
 
-| | **C** — Graph media bot | **D** — headless browser |
+| | **C** — ACS browser guest | **D** — Graph media bot |
 | --- | --- | --- |
-| **Pro** | Supported first-party API; joins **any** meeting from a link once consented; proven live | **No administrator at all**; scales to zero; no Windows, no VM |
-| **Con** | Needs an Entra admin; ~$283/month always-on VM; the media SDK pin [expires every three months](c-in-call-media-bot.md) | Rides an SDK implementation detail that can break silently; needs the tenant to allow anonymous guest join; a full browser per meeting |
-| **Reach for it when** | you have admin, and want the robust supported path | you cannot get admin — this is then the *only* option |
+| **Pro** | **No administrator at all**; scales to zero; no Windows, no VM | Supported first-party API; joins **any** meeting from a link once consented; proven live |
+| **Con** | Rides an SDK implementation detail that can break silently; needs the tenant to allow anonymous guest join; a full browser per meeting | Needs an Entra admin; ~$283/month always-on VM; the media SDK pin [expires every three months](d-in-call-media-bot.md) |
+| **Reach for it when** | you cannot get admin — this is then the *only* option | you have admin, and want the robust supported path |
 
 ```mermaid
 flowchart LR
@@ -61,8 +61,8 @@ flowchart LR
 
     subgraph Rivals["Live in-call presence — two routes, both kept"]
         direction LR
-        C["<b>C</b> · Graph media bot<br/>Windows VM · <b>built &amp; working</b><br/>admin: <b>Entra consent</b>"]
-        D["<b>D</b> · ACS browser guest<br/><i>working in acs-join.js</i><br/>admin: <b>none</b>"]
+        C["<b>C</b> · ACS browser guest<br/><i>working in acs-join.js</i><br/>admin: <b>none</b>"]
+        D["<b>D</b> · Graph media bot<br/>Windows VM · <b>built &amp; working</b><br/>admin: <b>Entra consent</b>"]
     end
 
     A -- "in-call needs A deployed<br/><i>(but not B)</i>" --> Rivals
@@ -79,13 +79,13 @@ needs the backend, not the Teams tab — you can deploy C without ever installin
 | --- | --- | --- |
 | Demo the avatar to anyone with a browser | **A** | No Teams, no admin, no manifest |
 | Put it in front of Teams users with least friction | **A + B** | Zero extra infra; sideload if you lack admin rights |
-| Have it **join a meeting, hear the room, and answer aloud** — *with* an admin | **A + C** | Supported first-party path; joins any meeting from a link |
-| The same, but you **cannot get an administrator** | **A + D** | The only in-call route that needs no consent at all |
+| Have it **join a meeting, hear the room, and answer aloud** — *with* an admin | **A + D** | Supported first-party path; joins any meeting from a link |
+| The same, but you **cannot get an administrator** | **A + C** | The only in-call route that needs no consent at all |
 
-**Cannot get an Entra admin?** **C is blocked** — `Calls.JoinGroupCall.All` and
+**Cannot get an Entra admin?** **D is blocked** — `Calls.JoinGroupCall.All` and
 `Calls.AccessMedia.All` are application permissions, and only an administrator can
 consent to them. There is no user-consent path and no way to join arbitrary meetings
-without them, so **D is your in-call option**; otherwise stop at **A + B**.
+without them, so **C is your in-call option**; otherwise stop at **A + B**.
 
 **Cannot get a *Teams* admin?** That alone does not block C — use a classic
 `/l/meetup-join/` link, which needs no access policy. See
@@ -100,8 +100,8 @@ numbered plan:
 
 ```powershell
 uv run python scripts/set_profile.py       # interactive
-uv run python scripts/set_profile.py --profile in-call           # channel C
-uv run python scripts/set_profile.py --profile in-call-browser   # channel D
+uv run python scripts/set_profile.py --profile in-call-browser   # channel C
+uv run python scripts/set_profile.py --profile in-call           # channel D
 ```
 
 The profile lives in the azd environment, **not** in an `azd up` prompt. `azd up`
@@ -116,11 +116,11 @@ capability, so environments created before profiles existed are unaffected.
 | --- | --- | --- |
 | `DEPLOY_PROFILE` | — | `web` · `teams-tab` · `in-call` · `in-call-browser`. Drives everything below, and resets the flags of whichever profile you did *not* pick. |
 | *(none)* | `web`, `teams-tab` | Channel **A**. Container app, Foundry agent, AI Search, ACR, identity, roles. |
-| `MEETING_BOT_ENABLED` | `in-call` | Serves the media-bot bridge (`/ws/acs/audio`) for **C**. |
+| `MEETING_BOT_ENABLED` | `in-call` | Serves the media-bot bridge (`/ws/acs/audio`) for **D**. |
 | `DEPLOY_MEETING_BOT_HOST` | `in-call` | Provisions the Windows media host + calling bot registration. |
-| `MEETING_BOT_APP_ID` / `_DNS_LABEL` / `_ADMIN_PASSWORD` | you supply | Required for **C**; the host is skipped if any is missing. |
-| `ENABLE_ACS` | `in-call-browser` | Provisions `modules/communicationServices.bicep`. **Required by channel D**, the browser joiner at `/acs-join.html`, where a browser tab joins a meeting as an anonymous guest. Channels A–C do not need it: channel C joins via Graph calling, and the `acs` in `/ws/acs/audio` is the bridge protocol's name, not an ACS dependency. |
-| `ACS_AVATAR_VIDEO_ENABLED`, `BROWSER_JOIN_VIDEO_ENABLED` | `in-call-browser` | Give **D** a face. Without them the joiner still hears and answers, but publishes no video tile. |
+| `MEETING_BOT_APP_ID` / `_DNS_LABEL` / `_ADMIN_PASSWORD` | you supply | Required for **D**; the host is skipped if any is missing. |
+| `ENABLE_ACS` | `in-call-browser` | Provisions `modules/communicationServices.bicep`. **Required by channel C**, the browser joiner at `/acs-join.html`, where a browser tab joins a meeting as an anonymous guest. Channels A–B and D do not need it: channel D joins via Graph calling, and the `acs` in `/ws/acs/audio` is the bridge protocol's name, not an ACS dependency. |
+| `ACS_AVATAR_VIDEO_ENABLED`, `BROWSER_JOIN_VIDEO_ENABLED` | `in-call-browser` | Give **C** a face. Without them the joiner still hears and answers, but publishes no video tile. |
 | `DEPLOY_BING_GROUNDING` | `true` | Provisions `modules/bingGrounding.bicep` (Bing account + site allow-list) and the Foundry connection to it, enabling the agent's web tool. On by default; set `false` to skip. Applies to every channel, but **only in agent mode** — see below. |
 
 > **Provisioning follows `VOICE_BINDING`.** Grounding with Bing is a *managed
@@ -130,7 +130,7 @@ capability, so environments created before profiles existed are unaffected.
 > mode's web tool is Web IQ, called in-process. Both bindings still need AI
 > Search and the embedding deployment, which are never gated.
 
-> **Channel C needs its own Azure Bot registration.** An Entra app can back only
+> **Channel D needs its own Azure Bot registration.** An Entra app can back only
 > *one* Azure Bot resource, so `MEETING_BOT_APP_ID` must be an app registration
 > dedicated to the calling bot. Pointing it at an app that already backs another
 > bot fails with `MsaAppId is already in use`.
@@ -155,16 +155,16 @@ will mislead you. Two things break the pattern:
 | --- | --- | --- | --- |
 | **A** web | `backend/`, `frontend/` | — | base `infra/` |
 | **B** tab | `frontend/teams.js` (same app) | `teams/` → `staticTabs` | *(none — reuses A)* |
-| **C** in-call | `meeting-bot/` (.NET, own Windows host) + `backend/acs/bridge.py` (`/ws/acs/audio`) | `teams/` → `supportsCalling`, `configurableTabs` *(optional)* | `modules/meetingBotHost.bicep` |
-| **D** in-call | `frontend/acs-join.{html,js}` + `backend/acs/` (`/ws/acs/browser`, `client.py`, `routes.py`) | — *(no Teams package — it joins as a guest)* | `modules/communicationServices.bicep`, `modules/acsRoleForApp.bicep` |
+| **C** in-call | `frontend/acs-join.{html,js}` + `backend/acs/` (`/ws/acs/browser`, `client.py`, `routes.py`) | — *(no Teams package — it joins as a guest)* | `modules/communicationServices.bicep`, `modules/acsRoleForApp.bicep` |
+| **D** in-call | `meeting-bot/` (.NET, own Windows host) + `backend/acs/bridge.py` (`/ws/acs/audio`) | `teams/` → `supportsCalling`, `configurableTabs` *(optional)* | `modules/meetingBotHost.bicep` |
 
 One manifest, three progressive shapes — the build flags are the difference:
 
 | `teams/build_package.py` flags | Manifest keys kept | Channel |
 | --- | --- | --- |
 | `--hostname X` | `staticTabs` only | **B** |
-| `+ --enable-calling` | `bots`, `supportsCalling=true` | **C** invocable in a call |
-| `+ --enable-companion` | `configurableTabs` | **C** meeting control panel |
+| `+ --enable-calling` | `bots`, `supportsCalling=true` | **D** invocable in a call |
+| `+ --enable-companion` | `configurableTabs` | **D** meeting control panel |
 
 Omitted keys are *dropped from the package*, so a channel you did not opt into
 cannot appear in Teams. Details: [`../../teams/README.md`](../../teams/README.md).
@@ -183,7 +183,7 @@ So you can compare them without re-reading prose:
 5. **How to verify** — the exact commands that prove it works
 6. **Cost & teardown** — what it costs to leave running, and how to stop paying
 
-*(Channel D is split in two: its **media leg is built and live-verified**, and is
+*(Channel C is split in two: its **media leg is built and live-verified**, and is
 documented in depth rather than to the contract above — the mechanism is the
 interesting part. The **headless host** that would run it without an operator's
 browser is still unbuilt, and carries a proposed architecture plus pre-registered
@@ -205,9 +205,9 @@ the split is by *what changes*:
 That last row is deliberate: **A and B have no design records and should not get
 one.** Nothing was decided — B is the web app in an iframe. Writing "design
 documents" for them would be
-ceremony, and ceremony is what makes people stop reading documentation. C has two
-records because C had two genuinely hard decisions (the .NET/Windows split, and
-audio/video from one synthesis). D will earn one when it is built.
+ceremony, and ceremony is what makes people stop reading documentation. D has two
+records because D had two genuinely hard decisions (the .NET/Windows split, and
+audio/video from one synthesis). C will earn one when it is built.
 
 ---
 
@@ -217,7 +217,7 @@ These are decision documents, kept separate from the operational pages above
 because they answer a different question — why the architecture is what it is,
 including options that were rejected and what they would have cost.
 
-- [c-design-media-bot.md](c-design-media-bot.md) — why a .NET/Windows media bot
+- [d-design-media-bot.md](d-design-media-bot.md) — why a .NET/Windows media bot
   bridged to a Python brain, and the three options evaluated
-- [c-design-avatar-video.md](c-design-avatar-video.md) — why the avatar's audio
+- [d-design-avatar-video.md](d-design-avatar-video.md) — why the avatar's audio
   and video must come from one synthesis, and how the video reaches the meeting

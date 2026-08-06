@@ -120,13 +120,15 @@ Measured as the text actually sent, not the file on disk:
 
 | prompt | sent | approx. tokens |
 | --- | --- | --- |
-| `realtime/instructions.md` | 4,106 chars | ~1,000 |
-| `agent/instructions.md` | 15,006 chars | ~3,750 |
+| `realtime/instructions.md` | 4,434 chars | ~1,110 |
+| `agent/instructions.md` | 21,640 chars | ~5,410 |
 
 The realtime prompt is deliberately the smallest: it is prefilled on every model
 turn, and a realtime model is tuned for immediacy rather than for following a
-long procedural brief. The agent prompt is larger because it arbitrates
-between two tools for a reasoning model. Do not copy one into the other.
+long procedural brief. It still carries the policy-routing and compliance rules
+that affect correctness. The agent prompt is larger because a reasoning model
+needs more explicit arbitration and output constraints. Do not copy one into
+the other.
 
 ## Format
 

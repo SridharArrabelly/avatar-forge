@@ -1,4 +1,4 @@
-# Channel C — In-call avatar (Graph media bot)
+# Channel D — In-call avatar (Graph media bot)
 
 The avatar **joins a Teams meeting as a participant**, hears the whole room, and
 answers aloud with a lip-synced camera tile.
@@ -10,10 +10,10 @@ without a Teams app access policy that only a Teams administrator can create.
 
 Requires: [channel A](a-web.md) deployed.
 
-**Why this shape:** [c-design-media-bot.md](c-design-media-bot.md) (the three
+**Why this shape:** [d-design-media-bot.md](d-design-media-bot.md) (the three
 options evaluated, and why a .NET/Windows media relay is bridged to the Python
 brain rather than rewriting either) and
-[c-design-avatar-video.md](c-design-avatar-video.md) (why the face and the voice
+[d-design-avatar-video.md](d-design-avatar-video.md) (why the face and the voice
 must come from one synthesis).
 
 ---
@@ -65,8 +65,8 @@ flowchart LR
 The two paths differ **only at the edge** — both end at the same
 `VoiceSessionHandler`, so turn-taking, barge-in and grounding behave identically.
 The design records explain the decisions:
-[c-design-media-bot.md](c-design-media-bot.md) and
-[c-design-avatar-video.md](c-design-avatar-video.md).
+[d-design-media-bot.md](d-design-media-bot.md) and
+[d-design-avatar-video.md](d-design-avatar-video.md).
 
 ## 2. What you get
 
@@ -74,7 +74,7 @@ Two join paths, sharing one brain:
 
 | Path | Hears | Use it for |
 | --- | --- | --- |
-| **Browser joiner** (`acs-join.html`) | Remote participants, via the `srcObject` hook — [verified live](d-in-call-headless.md) | No VM, no administrator |
+| **Browser joiner** (`acs-join.html`) | Remote participants, via the `srcObject` hook — [verified live](c-in-call-headless.md) | No VM, no administrator |
 | **Media bot** (Windows VM) | **The whole room**, through a first-party API | The supported path |
 
 Both hear the meeting. They differ in *standing*: the media bot uses a documented

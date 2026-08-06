@@ -69,7 +69,7 @@ Two honest limits. Only **one** other human was present, so per-participant vs. 
 stream delivery is still unobserved; and `wiredTracks=2` against `remoteStreams=1` means
 a second stream was attached — plausibly our own outgoing audio — which the room-tap gate
 in `applyCaptureGates()` holds shut while she speaks, making that gate load-bearing. See
-[d-in-call-headless.md](channels/d-in-call-headless.md) for detail.
+[c-in-call-headless.md](channels/c-in-call-headless.md) for detail.
 
 The media bot still differs in kind: it receives Teams' mixed audio through a supported
 first-party API, whereas the browser rides an SDK implementation detail. If a future SDK

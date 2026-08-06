@@ -36,6 +36,7 @@ from urllib.parse import urlsplit
 import httpx
 from azure.search.documents.models import VectorizableTextQuery
 
+from ..document_titles import display_document_title
 from .catalog import get_search_client
 
 logger = logging.getLogger(__name__)
@@ -74,11 +75,11 @@ SEARCH_MINUTES_TOOL: dict[str, Any] = {
     "type": "function",
     "name": "search_minutes",
     "description": (
-        "Search the indexed board and executive meeting minutes. Use this for any "
-        "question about what was discussed, decided, approved, reported or raised "
-        "in a meeting, and for anything about figures, people or commitments that "
-        "would appear in the minutes. Always call this rather than answering from "
-        "memory."
+        "Search MTN's internal document library, containing official policies and "
+        "board or executive meeting minutes. Use it for internal rules, limits, "
+        "eligibility, approvals, declarations and compliance duties, and for what "
+        "a meeting discussed, decided, approved, reported or actioned. Always call "
+        "this rather than answering internal rules or records from memory."
     ),
     "parameters": {
         "type": "object",
@@ -86,9 +87,10 @@ SEARCH_MINUTES_TOOL: dict[str, Any] = {
             "query": {
                 "type": "string",
                 "description": (
-                    "What to look for, in natural language. Include the meeting "
-                    "date when the question names one — the minutes are indexed "
-                    "per meeting and the date sharpens the match."
+                    "What to look for, in natural language. For minutes, include "
+                    "the exact meeting date when known. For policies, include the "
+                    "policy topic and the rule, limit, duty or eligibility being "
+                    "asked about."
                 ),
             },
         },
@@ -485,14 +487,17 @@ def build_realtime_tools() -> list[dict[str, Any]]:
     """The tool set advertised for this session.
 
     The web tool appears only when it is actually usable, so a deployment
-    without a Web IQ credential degrades to minutes-only rather than to a model
-    that keeps calling a tool that always fails.
+    without a Web IQ credential degrades to the internal minutes-and-policies
+    corpus rather than to a model that keeps calling a tool that always fails.
     """
     tools = list(REALTIME_TOOLS)
     if web_search_configured():
         tools.append(SEARCH_WEB_TOOL)
     else:
-        logger.info("Web IQ not configured — model mode will ground on minutes only.")
+        logger.info(
+            "Web IQ not configured - model mode will ground on internal "
+            "minutes and policies only."
+        )
     return tools
 
 
@@ -509,11 +514,13 @@ def _format_date(raw: Any) -> str:
 
 
 async def search_minutes(query: str, top: int = DEFAULT_TOP) -> dict[str, Any]:
-    """Hybrid (keyword + vector) search with semantic reranking, one round trip.
+    """Search the mixed internal corpus with hybrid retrieval and reranking.
 
     The index carries an integrated vectorizer, so the search service embeds the
     query itself. That matters on the answer path: it keeps this to a single
     call instead of an embedding round trip followed by a search round trip.
+    The public function name is retained for compatibility, but the index now
+    contains both MeetingMinutes and Policy documents.
     """
     query = (query or "").strip()
     if not query:
@@ -523,7 +530,7 @@ async def search_minutes(query: str, top: int = DEFAULT_TOP) -> dict[str, Any]:
     if client is None:
         return {
             "error": (
-                "The minutes index is not configured on this deployment "
+                "The internal document index is not configured on this deployment "
                 "(AZURE_SEARCH_ENDPOINT / SEARCH_INDEX_NAME are unset)."
             )
         }
@@ -541,11 +548,14 @@ async def search_minutes(query: str, top: int = DEFAULT_TOP) -> dict[str, Any]:
             query_type="semantic",
             semantic_configuration_name=SEMANTIC_CONFIG,
             top=top,
-            select=["title", "meeting_date", "content"],
+            select=["title", "documentType", "meeting_date", "content"],
         )
         passages = [
             {
-                "meeting": doc.get("title") or "",
+                "title": display_document_title(
+                    doc.get("title") or "", doc.get("documentType") or ""
+                ),
+                "type": doc.get("documentType") or "",
                 "date": _format_date(doc.get("meeting_date")),
                 "extract": (doc.get("content") or "")[:SNIPPET_CHARS],
             }
@@ -555,13 +565,18 @@ async def search_minutes(query: str, top: int = DEFAULT_TOP) -> dict[str, Any]:
         # Never raise into the tool loop: the model handles "nothing found"
         # gracefully and can say so, but an exception strands the turn with the
         # user listening to silence.
-        logger.warning(f"search_minutes failed for {query!r}: {type(e).__name__}: {e}")
-        return {"error": f"The minutes search failed: {type(e).__name__}"}
+        logger.warning(
+            f"search_minutes failed for {query!r}: {type(e).__name__}: {e}"
+        )
+        return {"error": f"The internal document search failed: {type(e).__name__}"}
 
     elapsed_ms = (time.monotonic() - started) * 1000
     logger.info(
         f"[TOOL] search_minutes {elapsed_ms:.0f}ms  n={len(passages)}  q={query!r}"
     )
     if not passages:
-        return {"passages": [], "note": "No matching passages in the minutes."}
+        return {
+            "passages": [],
+            "note": "No matching passages in the internal minutes or policies.",
+        }
     return {"passages": passages, "note": BREVITY_NOTE}

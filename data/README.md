@@ -17,6 +17,42 @@ Supported extensions, auto-detected by [scripts/setup_aisearch_index.py](../scri
 To add another format, register a reader in the `READERS` dict at the top of
 that script.
 
+`README.md` files are skipped — they are repo documentation, not corpus content.
+
+## Folder layout decides `documentType`
+
+The folder a file sits in sets its `documentType`, which is indexed as a
+filterable field **and** prepended into every chunk's text (`Type: …`) so the
+agent can tell the two corpora apart when it answers:
+
+| location | `documentType` | contents |
+| --- | --- | --- |
+| `data/` | `MeetingMinutes` | board and executive meeting minutes |
+| `data/policies/` | `Policy` | official policies, procedures, standards, codes |
+
+So **put policy documents in `data/policies/`, not loose in `data/`** — a policy
+dropped at the top level would be labelled and answered as if it were meeting
+minutes. Meeting minutes keep the `Board Meeting – DD Month YYYY` filename
+pattern, which is what `parse_meeting_date()` reads the date from; policies have
+no date and are not listed in the meeting catalogue.
+
+To add another policy folder, extend `POLICY_DIRS` in that same script.
+
+## `data/policies/` is deliberately NOT committed
+
+This repository is **public**, and the policy corpus is real internal corporate
+documentation. `data/policies/` is therefore in `.gitignore` and the files are
+supplied locally.
+
+The meeting minutes in `data/` **are** committed — they are demo content — so a
+clean clone re-indexes minutes only. **Consequence:** after a greenfield
+`azd up` (or any `RECREATE_INDEX` rebuild) on a fresh machine, copy the policy
+PDFs back into `data/policies/` and re-run the index script, or the agent will
+answer minutes questions correctly and refuse every policy question.
+
+The expected chunk counts are a quick check that both corpora are present:
+**111** from minutes + **165** from policies = **275**.
+
 ## (Re)build the index
 
 ```powershell

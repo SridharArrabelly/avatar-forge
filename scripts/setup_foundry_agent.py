@@ -67,7 +67,7 @@ from azure.ai.projects.models import (
     PromptAgentDefinition,
     Reasoning,
 )
-from azure.core.exceptions import ResourceNotFoundError
+from azure.core.exceptions import HttpResponseError, ResourceNotFoundError
 from azure.identity import DefaultAzureCredential
 from dotenv import load_dotenv
 
@@ -312,6 +312,30 @@ def _model_supports_reasoning(model: str) -> bool:
     return False
 
 
+def _find_connection(project: AIProjectClient, name: str):
+    """Resolve a project connection by name, tolerating a broken ``get()``.
+
+    ``connections.get(name)`` in azure-ai-projects 2.4.0 can raise
+    ``ResourceNotFoundError: (NotFound) Project not found`` for a connection that
+    ``connections.list()`` returns from the *same* client and endpoint moments
+    later. The message blames the project rather than the connection, so the
+    caller's "connection not found" diagnostic pointed at the wrong thing and
+    sent you looking for a config error that does not exist.
+
+    Try ``get()`` first — one call, and correct when it works — then fall back to
+    scanning ``list()``. Only if the name is genuinely absent does this re-raise,
+    so a real missing connection still fails fast with the original message.
+    """
+    try:
+        return project.connections.get(name)
+    except ResourceNotFoundError:
+        for conn in project.connections.list():
+            if getattr(conn, "name", None) == name:
+                print(f"  (resolved connection {name!r} via list(); get() returned NotFound)")
+                return conn
+        raise
+
+
 def create_agent(project: AIProjectClient, settings: dict) -> tuple[object, bool]:
     """Create a new version of the Foundry agent.
 
@@ -358,7 +382,7 @@ def create_agent(project: AIProjectClient, settings: dict) -> tuple[object, bool
         # assignment surfaces as 401 while it propagates. The wait only covers
         # 401/403 — a genuine 404 still falls through to the message below.
         azs_connection = wait_for_data_plane(
-            lambda: project.connections.get(settings["search_connection_name"]),
+            lambda: _find_connection(project, settings["search_connection_name"]),
             what="reading the project's connections",
         )
     except ResourceNotFoundError:
@@ -383,7 +407,7 @@ def create_agent(project: AIProjectClient, settings: dict) -> tuple[object, bool
 
     if bing_connection_name and bing_custom_config_name:
         try:
-            bing_connection = project.connections.get(bing_connection_name)
+            bing_connection = _find_connection(project, bing_connection_name)
         except ResourceNotFoundError:
             print(
                 f"WARNING: Grounding-with-Bing-Custom-Search connection {bing_connection_name!r} "
@@ -465,13 +489,65 @@ def create_agent(project: AIProjectClient, settings: dict) -> tuple[object, bool
     return agent, web_tool_enabled
 
 
+def _credential() -> DefaultAzureCredential:
+    """Credential for Foundry data-plane calls, pinned to a deliberate identity.
+
+    ``DefaultAzureCredential`` orders its chain shared-token-cache -> VS Code ->
+    **then** Azure CLI, and it never forwards a tenant to ``AzureCliCredential``
+    (azure-identity ``_credentials/default.py``: ``AzureCliCredential(
+    process_timeout=process_timeout)``, no ``tenant_id``). So ``AZURE_TENANT_ID``
+    cannot constrain it, and on a machine signed in to more than one tenant an
+    ambient editor/broker login silently outranks ``az login``. Every call then
+    fails with
+
+        Token tenant <other-tenant> does not match resource tenant.
+
+    which reads like a broken deployment rather than a stale login somewhere else
+    on the box -- and, mid-rename, leaves the persona name applied to some
+    surfaces but not the agent.
+
+    Drop the ambient caches and keep the credentials this script is actually
+    meant to use: environment / workload / managed identity in CI and ACA, and
+    ``az`` or ``azd`` locally.
+
+    ``process_timeout`` is raised from the 10s default because ``az`` is slow to
+    answer while throttled, and the default expires mid-deploy.
+    """
+    return DefaultAzureCredential(
+        process_timeout=90,
+        exclude_shared_token_cache_credential=True,
+        exclude_visual_studio_code_credential=True,
+        exclude_powershell_credential=True,
+        exclude_broker_credential=True,
+    )
+
+
 def main() -> int:
     settings = load_settings()
     project = AIProjectClient(
         endpoint=settings["project_endpoint"],
-        credential=DefaultAzureCredential(),
+        credential=_credential(),
     )
-    _agent, web_tool_enabled = create_agent(project, settings)
+    try:
+        _agent, web_tool_enabled = create_agent(project, settings)
+    except HttpResponseError as exc:
+        if "does not match resource tenant" not in str(exc):
+            raise
+        expected = os.getenv("AZURE_TENANT_ID", "").strip() or "(the deployment's tenant)"
+        print(
+            f"\nAuthenticated against the wrong tenant.\n\n"
+            f"  this deployment is in : {expected}\n"
+            f"  the token came from   : see 'Token tenant ...' above\n\n"
+            "Some other Azure login on this machine is winning over `az login`. Check:\n"
+            "    az account show --query tenantId -o tsv\n"
+            "    Get-AzContext | Select-Object Tenant       # Azure PowerShell\n"
+            "    azd auth login --check-status\n\n"
+            "Sign the offending one into the right tenant, or sign it out:\n"
+            f"    az login --tenant {expected}\n"
+            "    Disconnect-AzAccount\n",
+            file=sys.stderr,
+        )
+        return 1
     if not web_tool_enabled:
         print(
             "\nAgent is READY but DEGRADED: no web/news tool, so it answers from the indexed\n"

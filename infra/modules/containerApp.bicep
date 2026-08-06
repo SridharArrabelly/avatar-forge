@@ -47,13 +47,14 @@ param isPhotoAvatar string = ''
 @description('"true"/"false" string — frontend treats avatar as custom when "true".')
 param isCustomAvatar string = ''
 param avatarBackgroundImageUrl string = ''
+param enableAvatarSpeakingStyle string = 'false'
 @description('Speech recognition model. Defaults to mai-transcribe-1; cascaded options include azure-speech, gpt-4o-transcribe.')
 param srModel string = 'mai-transcribe-1'
 @description('Recognition language locale (BCP-47, e.g. en-ZA). Use "auto" to let the SR model auto-detect.')
 param recognitionLanguage string = 'auto'
 
-// ───────── channel C in-call media (#27) ─────────
-@description('ACS endpoint for the Call Automation media participant. Empty disables channel C in the container.')
+// ───────── channels C/D in-call media (#27) ─────────
+@description('ACS endpoint for the channel C browser guest media participant. Empty disables channel C in the container.')
 param acsEndpoint string = ''
 
 @description('"true"/"false" string. When "true", the .NET Teams media bot bridge (/ws/acs/audio) is served WITHOUT an ACS resource — sets MEETING_BOT_ENABLED so ACS_ENABLED is true on the Voice Live path alone.')
@@ -121,7 +122,7 @@ var webIqEnv = webIqConfigured ? concat([
   { name: 'WEBIQ_ALLOWED_DOMAINS', value: webIqAllowedDomains }
 ]) : []
 
-// Channel C Teams media-bot env (additive). The .NET media bot connects to the
+// Channel D Teams media-bot env (additive). The .NET media bot connects to the
 // /ws/acs/audio bridge, which only needs Voice Live (no ACS resource). MEETING_BOT_ENABLED
 // flips ACS_ENABLED on so the bridge is served. Empty/false -> behaves as today.
 var meetingBotOn = toLower(meetingBotEnabled) == 'true'
@@ -204,6 +205,7 @@ resource app 'Microsoft.App/containerApps@2024-10-02-preview' = {
             { name: 'IS_PHOTO_AVATAR', value: isPhotoAvatar }
             { name: 'IS_CUSTOM_AVATAR', value: isCustomAvatar }
             { name: 'AVATAR_BACKGROUND_IMAGE_URL', value: avatarBackgroundImageUrl }
+            { name: 'ENABLE_AVATAR_SPEAKING_STYLE', value: enableAvatarSpeakingStyle }
             { name: 'SR_MODEL', value: srModel }
             { name: 'RECOGNITION_LANGUAGE', value: recognitionLanguage }
             { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: appInsightsConnectionString }

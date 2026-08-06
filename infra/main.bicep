@@ -172,6 +172,11 @@ var webIqEffectiveDomains = empty(webIqAllowedDomains)
 @description('Deployment name the Foundry agent binds to. Empty derives it: on a greenfield deploy the agent must bind to the deployment this template just created, so it follows modelDeploymentName. Set explicitly for BYO Foundry, where the deployment already exists and this template did not name it.')
 param agentModel string = ''
 param embeddingDeployment string = 'text-embedding-3-small'
+@description('Canonical avatar type. Use standard-video, standard-photo, custom-video, or custom-photo. Leave empty to use the legacy avatar variables below.')
+@allowed([ '', 'standard-video', 'standard-photo', 'custom-video', 'custom-photo' ])
+param avatarType string = ''
+@description('Canonical avatar model id. For custom avatars this is the model provisioned in the Speech resource.')
+param avatarModel string = ''
 param avatarName string = 'Lisa-casual-sitting'
 param customAvatarName string = ''
 @description('Assistant persona / display name (e.g. "Nuru") for the bot welcome message. Purely cosmetic; does NOT select the avatar model. Empty falls back to "Avatar".')
@@ -182,17 +187,38 @@ param photoAvatarName string = 'Simone'
 param isPhotoAvatar string = 'true'
 param isCustomAvatar string = 'false'
 param avatarBackgroundImageUrl string = ''
+@description('Enable the grayscale idle / color speaking avatar treatment ("true"/"false"). Disabled by default to preserve the avatar original appearance.')
+param enableAvatarSpeakingStyle string = 'false'
 param srModel string = 'mai-transcribe-1'
 param recognitionLanguage string = 'auto'
 
-// ───────── channel C in-call media (#27) ─────────
-@description('Deployment profile from `scripts/set_profile.py` — one of "web", "teams-tab", "in-call" (channel C, Windows media bot) or "in-call-browser" (channel D, ACS browser guest). Drives which optional channels deploy. Empty keeps the pre-profile behaviour (explicit flags only).')
+// Canonical avatar settings are translated once at the infrastructure boundary so
+// the existing runtime and media surfaces can keep consuming their stable fields.
+var truthyValues = ['1', 'true', 'yes', 'on']
+var resolvedAvatarType = !empty(trim(avatarType))
+  ? toLower(trim(avatarType))
+  : (contains(truthyValues, toLower(trim(isCustomAvatar)))
+      ? (contains(truthyValues, toLower(trim(isPhotoAvatar))) ? 'custom-photo' : 'custom-video')
+      : (contains(truthyValues, toLower(trim(isPhotoAvatar))) ? 'standard-photo' : 'standard-video'))
+var resolvedAvatarModel = !empty(trim(avatarModel))
+  ? trim(avatarModel)
+  : (resolvedAvatarType == 'custom-video' || resolvedAvatarType == 'custom-photo'
+      ? customAvatarName
+      : (resolvedAvatarType == 'standard-photo' ? photoAvatarName : avatarName))
+var effectiveAvatarName = resolvedAvatarType == 'standard-video' ? resolvedAvatarModel : avatarName
+var effectiveCustomAvatarName = resolvedAvatarType == 'custom-video' || resolvedAvatarType == 'custom-photo' ? resolvedAvatarModel : customAvatarName
+var effectivePhotoAvatarName = resolvedAvatarType == 'standard-photo' ? resolvedAvatarModel : photoAvatarName
+var effectiveIsPhotoAvatar = resolvedAvatarType == 'standard-photo' || resolvedAvatarType == 'custom-photo' ? 'true' : 'false'
+var effectiveIsCustomAvatar = resolvedAvatarType == 'custom-video' || resolvedAvatarType == 'custom-photo' ? 'true' : 'false'
+
+// ───────── channels C/D in-call media (#27) ─────────
+@description('Deployment profile from `scripts/set_profile.py` — one of "web", "teams-tab", "in-call" (channel D, Windows media bot) or "in-call-browser" (channel C, ACS browser guest). Drives which optional channels deploy. Empty keeps the pre-profile behaviour (explicit flags only).')
 param deployProfile string = ''
-@description('Enable channel C ACS Call Automation media participant ("true"/"false"). When not "true" (default), no ACS resource is created and the deployment behaves exactly as today.')
+@description('Enable channel C ACS browser guest media participant ("true"/"false"). When not "true" (default), no ACS resource is created and the deployment behaves exactly as today.')
 param enableAcs string = 'false'
 @description('ACS data residency geography (NOT an Azure region), e.g. "United States", "Europe", "Africa".')
 param acsDataLocation string = 'United States'
-@description('"true"/"false". Serve the .NET Teams media-bot bridge without an ACS resource (sets MEETING_BOT_ENABLED). Implied by deployProfile="in-call" exactly; "in-call-browser" is channel D and does not imply it.')
+@description('"true"/"false". Serve the .NET Teams media-bot bridge without an ACS resource (sets MEETING_BOT_ENABLED). Implied by deployProfile="in-call" exactly; "in-call-browser" is channel C and does not imply it.')
 param meetingBotEnabled string = 'false'
 @description('PCM sample rate (Hz) the Teams media bot streams (16000).')
 param acsAudioSampleRate string = ''
@@ -203,10 +229,10 @@ param acsAvatarVideoEnabled string = ''
 @description('"true"/"false". The browser joiner\'s tile carries the LIVE lip-synced avatar instead of a static placard. Needs acsAvatarVideoEnabled="true" as well — the tile has to exist before it can carry a face.')
 param browserJoinVideoEnabled string = ''
 
-// ───────── channel C Windows media host (#27) ─────────
+// ───────── channel D Windows media host (#27) ─────────
 // Deployed only for the in-call channel. Requires its own Entra app — an app can
 // back only ONE Azure Bot resource, so this cannot reuse botAppId.
-@description('"true"/"false". Provision the Windows media host + calling bot registration. Implied by deployProfile="in-call" exactly; "in-call-browser" is channel D and needs no host.')
+@description('"true"/"false". Provision the Windows media host + calling bot registration. Implied by deployProfile="in-call" exactly; "in-call-browser" is channel C and needs no host.')
 param deployMeetingBotHost string = 'false'
 @description('Entra app client id of the CALLING bot. Must differ from botAppId.')
 param meetingBotAppId string = ''
@@ -318,14 +344,15 @@ module resources 'resources.bicep' = {
     modelCapacity: resolvedModelCapacity
     agentModel: resolvedAgentModel
     embeddingDeployment: embeddingDeployment
-    avatarName: avatarName
-    customAvatarName: customAvatarName
+    avatarName: effectiveAvatarName
+    customAvatarName: effectiveCustomAvatarName
     avatarDisplayName: avatarDisplayName
     avatarTagline: avatarTagline
-    photoAvatarName: photoAvatarName
-    isPhotoAvatar: isPhotoAvatar
-    isCustomAvatar: isCustomAvatar
+    photoAvatarName: effectivePhotoAvatarName
+    isPhotoAvatar: effectiveIsPhotoAvatar
+    isCustomAvatar: effectiveIsCustomAvatar
     avatarBackgroundImageUrl: avatarBackgroundImageUrl
+    enableAvatarSpeakingStyle: enableAvatarSpeakingStyle
     srModel: srModel
     recognitionLanguage: recognitionLanguage
     enableAcs: enableAcs
@@ -338,7 +365,7 @@ module resources 'resources.bicep' = {
   }
 }
 
-// ───────── channel C: Windows media host + calling bot registration ─────────
+// ───────── channel D: Windows media host + calling bot registration ─────────
 // Conditional and additive. Only instantiated for the in-call channel.
 
 // The name in the Teams meeting roster must match the name on the web stage and
@@ -347,10 +374,7 @@ module resources 'resources.bicep' = {
 // applies: the explicit knob, else the ACTIVE avatar model's leading segment,
 // else 'Avatar'. The IS_* gating is what makes reading the model safe —
 // customAvatarName is a Speech model id that is stale unless its gate is on.
-var truthyValues = ['1', 'true', 'yes', 'on']
-var activeAvatarModel = contains(truthyValues, toLower(trim(isCustomAvatar)))
-  ? customAvatarName
-  : (contains(truthyValues, toLower(trim(isPhotoAvatar))) ? photoAvatarName : avatarName)
+var activeAvatarModel = resolvedAvatarModel
 var derivedAvatarName = split(activeAvatarModel, '-')[0]
 var resolvedAvatarDisplayName = !empty(avatarDisplayName)
   ? avatarDisplayName
@@ -400,7 +424,7 @@ output APPLICATIONINSIGHTS_CONNECTION_STRING string = resources.outputs.appInsig
 // Channel C in-call media (#27). Empty unless enableAcs=true.
 output ACS_ENDPOINT string = resources.outputs.acsEndpoint
 
-// Channel C Windows media host. Empty strings unless the in-call channel deployed.
+// Channel D Windows media host. Empty strings unless the in-call channel deployed.
 output DEPLOY_PROFILE string = deployProfile
 output MEETING_BOT_HOST_DEPLOYED string = deployHost ? 'true' : 'false'
 output MEETING_BOT_FQDN string = deployHost ? meetingBotHost.outputs.publicFqdn : ''
@@ -424,14 +448,16 @@ output APPINSIGHTS_RESOURCE_GROUP string = appInsightsResourceGroup
 // scripts fail even though the matching Foundry deployments were created.
 output AGENT_MODEL string = resolvedAgentModel
 output EMBEDDING_DEPLOYMENT string = embeddingDeployment
+output AVATAR_TYPE string = resolvedAvatarType
+output AVATAR_MODEL string = resolvedAvatarModel
 output VOICELIVE_VOICE string = voiceLiveVoice
 output SR_MODEL string = srModel
 output RECOGNITION_LANGUAGE string = recognitionLanguage
-output AVATAR_NAME string = avatarName
-output CUSTOM_AVATAR_NAME string = customAvatarName
-output PHOTO_AVATAR_NAME string = photoAvatarName
+output AVATAR_NAME string = effectiveAvatarName
+output CUSTOM_AVATAR_NAME string = effectiveCustomAvatarName
+output PHOTO_AVATAR_NAME string = effectivePhotoAvatarName
 output AVATAR_DISPLAY_NAME string = avatarDisplayName
 output AVATAR_TAGLINE string = avatarTagline
 output AVATAR_BACKGROUND_IMAGE_URL string = avatarBackgroundImageUrl
-output IS_PHOTO_AVATAR string = isPhotoAvatar
-output IS_CUSTOM_AVATAR string = isCustomAvatar
+output IS_PHOTO_AVATAR string = effectiveIsPhotoAvatar
+output IS_CUSTOM_AVATAR string = effectiveIsCustomAvatar

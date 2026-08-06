@@ -65,7 +65,7 @@ audio forwarding, event processing). The browser only:
 The **in-call avatar** (issue #27) reuses the same Voice Live + Foundry pipeline inside a
 *live Teams meeting*. Two transports exist, and they are not equivalent:
 
-- **Graph media bot (channel C — the shipped design).** A thin .NET service on a Windows
+- **Graph media bot (channel D — the shipped design).** A thin .NET service on a Windows
   host joins the meeting through the Graph Real-Time Media Platform, which is the only
   way to receive the **mixed audio of every participant**. It forwards raw PCM16 over a
   WebSocket (`/ws/acs/audio`) to [`backend/acs/bridge.py`](../backend/acs/bridge.py)'s
@@ -78,7 +78,7 @@ The **in-call avatar** (issue #27) reuses the same Voice Live + Foundry pipeline
   other participants by intercepting `srcObject` as the SDK attaches their streams for
   playback — verified live — and runs the **same capture and avatar transport as the
   web app**, so a fix there is inherited here. It rides an implementation detail rather
-  than a contract, which is the trade against C.
+  than a contract, which is the trade against D.
 
 Both are non-recording and fully opt-in — every `/api/acs/*` route returns 503 when
 disabled. An optional Teams meeting **side-panel control panel**
@@ -91,8 +91,8 @@ not an unsynced avatar face on the stage.
 > the server. Live testing proved it does **not** carry Teams *meeting* audio (every
 > inbound frame arrived silent), which is why the Graph media bot exists.
 
-Details: [`docs/channels/c-in-call-media-bot.md`](channels/c-in-call-media-bot.md) and
-[`c-design-media-bot.md`](channels/c-design-media-bot.md).
+Details: [`docs/channels/d-in-call-media-bot.md`](channels/d-in-call-media-bot.md) and
+[`d-design-media-bot.md`](channels/d-design-media-bot.md).
 
 ## Tool-calling accuracy
 
@@ -223,7 +223,7 @@ avatar-forge/
 │   │   ├── event_handlers.py      # SDK event -> frontend message translation
 │   │   ├── catalog.py             # Meeting catalogue fetch from AI Search (injected at session start)
 │   │   ├── functions.py           # Built-in tool implementations (get_time, get_weather, calculate)
-│   │   ├── tools.py               # Model-mode tools: search_minutes (AI Search) + search_web (Web IQ)
+│   │   ├── tools.py               # Model tools: internal minutes/policies (AI Search) + web (Web IQ)
 │   │   ├── instructions.py        # Model-mode prompt loader (prompts/realtime/)
 │   │   └── auth.py                # DefaultAzureCredential + caching wrapper
 │   └── acs/                       # Channels C/D — in-call media bridge (opt-in)
@@ -240,7 +240,7 @@ avatar-forge/
 │   ├── companion*.html / .js      # Optional in-meeting control panel + its configurableTabs page
 │   └── teams.js                   # No-op unless in Teams: loads Teams JS SDK, mirrors host theme
 │
-├── meeting-bot/                   # Channel C — .NET/Windows Graph media bot (separate host)
+├── meeting-bot/                   # Channel D — .NET/Windows Graph media bot (separate host)
 │   ├── Bot/                       # MeetingBot, CallHandler, AuthenticationProvider
 │   ├── Bridge/                    # VoiceLiveBridgeClient — the Python contract
 │   ├── Http/                      # JoinController (operator API), CallingController (Graph webhook)
@@ -250,7 +250,7 @@ avatar-forge/
 │   └── README.md                  # Build, configuration, and the traps that cost debugging time
 │
 ├── docs/                          # Documentation hub (see docs/channels/README.md to choose a channel)
-│   ├── channels/                  # One page per delivery channel (a-web … d-in-call-headless) + design records
+│   ├── channels/                  # One page per delivery channel (a-web … d-in-call-media-bot) + design records
 │   ├── architecture.md            # This file — the shared core
 │   ├── admin-checklist.md         # Every manual step and who must perform it
 │   ├── configuration.md           # Every environment variable
@@ -268,7 +268,7 @@ avatar-forge/
 │   ├── setup_aisearch_index.py    # Creates/updates the AI Search index and ingests data/
 │   ├── setup_foundry_agent.py     # Creates the Foundry agent with AI Search + Bing Custom Search tools
 │   ├── grant_byo_rbac.py          # Idempotently grants BYO runtime RBAC (brownfield)
-│   ├── check_media_sdk_age.py     # Fails once the Graph media SDK pin passes 90 days (channel C)
+│   ├── check_media_sdk_age.py     # Fails once the Graph media SDK pin passes 90 days (channel D)
 │   ├── smoke_aisearch_query.py    # Live: queries the index (hybrid + semantic)
 │   ├── smoke_foundry_agent.py     # Live: end-to-end question against the deployed agent
 │   ├── bench_routing_agent.py     # Live: tool-routing + latency benchmark, agent binding

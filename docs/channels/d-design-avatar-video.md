@@ -7,7 +7,7 @@
 > misleading. This doc is the canonical design for that synced face.
 
 This document covers **only the face**. The audio leg (the avatar hears the room and
-answers aloud) is the **audio leg**, described in [`c-design-media-bot.md`](./c-design-media-bot.md).
+answers aloud) is the **audio leg**, described in [`d-design-media-bot.md`](./d-design-media-bot.md).
 The **video leg** rides the **same** .NET meeting-bot host and the **same** Python brain; it adds
 a second, additive media leg and nothing else changes.
 

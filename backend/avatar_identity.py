@@ -8,15 +8,12 @@ model*, while the Foundry agent prompt, the bot, the wake phrase and the meeting
 roster all fell back to the literal ``"Avatar"``. A deployment showing "Simone"
 on screen therefore introduced itself as "Avatar".
 
-Resolution order:
+Avatar selection uses the canonical ``AVATAR_TYPE`` and ``AVATAR_MODEL`` pair.
+The legacy ``IS_*`` flags and model names are inferred only when the canonical
+values are absent. Display-name resolution then uses:
 
 1. ``AVATAR_DISPLAY_NAME`` — the explicit branding knob. Used verbatim.
-2. The leading segment of the *active* avatar model: ``Lisa-casual-sitting`` ->
-   ``Lisa``, ``Simone`` -> ``Simone``. Which variable is active follows the same
-   ``IS_*`` gates the UI applies, and that gating is what makes deriving from the
-   model safe: ``CUSTOM_AVATAR_NAME`` is a Speech custom-avatar *model id* that is
-   only meaningful when ``IS_CUSTOM_AVATAR=true`` and is empty or stale
-   otherwise, so it is never consulted unless that gate is on.
+2. The leading segment of the active avatar model.
 3. ``Avatar`` — last-resort literal, so a half-configured deployment still has a
    name instead of a blank one.
 
@@ -41,6 +38,13 @@ DEFAULT_AVATAR_NAME = "Avatar"
 # apart in the first place.
 DEFAULT_STANDARD_AVATAR = "Lisa-casual-sitting"
 DEFAULT_PHOTO_AVATAR = "Anika"
+DEFAULT_AVATAR_TYPE = "standard-video"
+AVATAR_TYPES = (
+    "standard-video",
+    "standard-photo",
+    "custom-video",
+    "custom-photo",
+)
 
 # Same truthy spellings backend.config._bool accepts, so a value that switches the
 # avatar model on also switches the name derivation.
@@ -55,23 +59,40 @@ def _flag(env: Mapping[str, str], name: str) -> bool:
     return (env.get(name) or "").strip().lower() in _TRUE_VALUES
 
 
-def active_avatar_model(env: Mapping[str, str] | None = None) -> str:
-    """Return the avatar model actually in use, per the ``IS_*`` gates.
-
-    Mirrors the precedence the frontend applies when it picks which model field
-    to read (custom > photo > standard).
-    """
+def avatar_type(env: Mapping[str, str] | None = None) -> str:
+    """Return the canonical avatar type, inferring it from legacy flags."""
     env = _env(env)
-    if _flag(env, "IS_CUSTOM_AVATAR"):
-        # No default: a custom avatar with no model id is a misconfiguration, and
-        # the caller falls back to DEFAULT_AVATAR_NAME rather than inventing one.
+    configured = (env.get("AVATAR_TYPE") or "").strip().lower()
+    if configured in AVATAR_TYPES:
+        return configured
+    is_custom = _flag(env, "IS_CUSTOM_AVATAR")
+    is_photo = _flag(env, "IS_PHOTO_AVATAR")
+    if is_custom and is_photo:
+        return "custom-photo"
+    if is_custom:
+        return "custom-video"
+    if is_photo:
+        return "standard-photo"
+    return DEFAULT_AVATAR_TYPE
+
+
+def avatar_model(env: Mapping[str, str] | None = None) -> str:
+    """Return the canonical model, falling back to the legacy model fields."""
+    env = _env(env)
+    configured = (env.get("AVATAR_MODEL") or "").strip()
+    if configured:
+        return configured
+    kind = avatar_type(env)
+    if kind.startswith("custom-"):
         return (env.get("CUSTOM_AVATAR_NAME") or "").strip()
-    # Strip before testing for empty so a blank value means "unset" here exactly as
-    # it does everywhere else — treating "" and "   " differently would be an
-    # accident, not a decision.
-    if _flag(env, "IS_PHOTO_AVATAR"):
+    if kind == "standard-photo":
         return (env.get("PHOTO_AVATAR_NAME") or "").strip() or DEFAULT_PHOTO_AVATAR
     return (env.get("AVATAR_NAME") or "").strip() or DEFAULT_STANDARD_AVATAR
+
+
+def active_avatar_model(env: Mapping[str, str] | None = None) -> str:
+    """Return the avatar model actually in use."""
+    return avatar_model(env)
 
 
 def resolve_avatar_display_name(env: Mapping[str, str] | None = None) -> str:

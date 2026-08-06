@@ -52,7 +52,7 @@ Those are deliberate security boundaries, not gaps in our automation.
 **Usually achievable without an administrator.** This is why B is the recommended
 stopping point when admin access is limited.
 
-### C — In-call avatar (Graph media bot)
+### D — In-call avatar (Graph media bot)
 
 This is the demanding one. **Verify the Teams app access policy is achievable
 before you provision the VM** — the VM is the expensive part and it is useless
@@ -83,7 +83,7 @@ without the policy.
 > `MeetingBot.cs`, where `ResolveShortLinkAsync` sits behind a short-link-only
 > branch and its own error message offers the classic link as the way out.
 >
-> **So with a classic join URL, channel C needs Entra admin consent only.**
+> **So with a classic join URL, channel D needs Entra admin consent only.**
 > Grab the classic link from the meeting invite body rather than the Share
 > button. Do step 5 if you want short links to work; skip it otherwise.
 >
@@ -116,7 +116,7 @@ already 1.17.
 
 **If this works, the organizer grants media access by installing the app in
 their own meeting, and steps 2, 3 and 5 all disappear** — the entire
-administrator dependency for channel C collapses to nothing. That makes it the
+administrator dependency for channel D collapses to nothing. That makes it the
 single highest-value experiment available to anyone blocked here.
 
 > **Not implemented and not proven — deliberately.** The shipped manifest carries
@@ -129,13 +129,13 @@ single highest-value experiment available to anyone blocked here.
 > working. Swapping a working authorisation path for an unverified one is a change
 > to make on its own, against a live meeting — not in passing.
 
-### D — In-call avatar (headless browser)
+### C — In-call avatar (ACS browser guest)
 
 Requirements are not yet established — see
-[channels/d-in-call-headless.md](channels/d-in-call-headless.md). The
+[channels/c-in-call-headless.md](channels/c-in-call-headless.md). The
 *hypothesis* under test is that it needs **no Graph permissions and no Teams
 policy**, because it joins as an ordinary (guest) participant through a browser.
-If that holds, it removes every hard blocker in channel C, which is the main
+If that holds, it removes every hard blocker in channel D, which is the main
 reason to evaluate it.
 
 ---

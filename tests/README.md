@@ -36,7 +36,7 @@ wrong reason. Open a fresh terminal rather than debugging it.
 | [`test_docs.py`](test_docs.py) | Broken relative links, phantom mermaid nodes, and Azure regions named in docs that `preflight.py` does not actually support. |
 | [`test_preflight.py`](test_preflight.py) | The helpers that settle subscription / location / resource group — including the no-TTY cases, where a stray prompt would hang a deploy forever with no visible question. |
 | [`test_voice_binding.py`](test_voice_binding.py) | The agent/model switch, and every kwarg handed to the SDK's `connect()` — checked against the **installed** signature, so an SDK bump that silently drops an argument is caught. |
-| [`test_avatar_identity.py`](test_avatar_identity.py) | That every surface resolves the assistant's name the same way. |
+| [`test_avatar_identity.py`](test_avatar_identity.py) | That every surface resolves the assistant's name the same way, and that [`rename_avatar.py`](../scripts/rename_avatar.py) still writes enough variables to actually change it. |
 | [`test_agent_model_binding.py`](test_agent_model_binding.py) | That the agent binds to a model deployment that actually exists — evaluated against the generated ARM, not restated in Python. |
 | [`test_agent_tool_wiring.py`](test_agent_tool_wiring.py) | That a missing **optional** tool degrades gracefully while a missing **required** one fails loudly. |
 | [`test_build_package.py`](test_build_package.py) | The Teams manifest and the environment-scoped package filename. |
