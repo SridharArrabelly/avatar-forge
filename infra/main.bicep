@@ -191,7 +191,7 @@ var resolvedAvatarType = toLower(trim(avatarType))
 var resolvedAvatarModel = trim(avatarModel)
 
 // ───────── channels C/D in-call media (#27) ─────────
-@description('Deployment profile from `scripts/set_profile.py` — one of "web", "teams-tab", "in-call" (channel D, Windows media bot) or "in-call-browser" (channel C, ACS browser guest). Drives which optional channels deploy. Empty keeps the pre-profile behaviour (explicit flags only).')
+@description('Deployment profile from `scripts/set_profile.py` — one of "web", "teams-tab", "in-call-browser" (channel C, ACS browser guest) or "in-call" (channel D, Windows media bot). Drives which optional channels deploy. Empty keeps the pre-profile behaviour (explicit flags only).')
 param deployProfile string = ''
 @description('Enable channel C ACS browser guest media participant ("true"/"false"). When not "true" (default), no ACS resource is created and the deployment behaves exactly as today.')
 param enableAcs string = 'false'

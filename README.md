@@ -15,7 +15,7 @@ Two independent choices decide what you deploy:
 
 | Axis | Question | Set by | Options |
 |---|---|---|---|
-| **Front door** | Where do people reach the avatar? | `DEPLOY_PROFILE` | `web` (A) · `teams-tab` (A+B) · `in-call` (A+B+C) · `in-call-browser` (A+B+D) |
+| **Front door** | Where do people reach the avatar? | `DEPLOY_PROFILE` | `web` (A) · `teams-tab` (A+B) · `in-call-browser` (A+B+C) · `in-call` (A+B+D) |
 | **Brain** | What answers? | `VOICE_BINDING` | agent mode · model mode |
 
 They are orthogonal — **every front door works with either brain**. Both are chosen
@@ -199,7 +199,7 @@ uv run python scripts/preflight.py --steps-only    # the whole plan
 uv run python scripts/preflight.py --remaining     # only what is left
 ```
 
-Profiles map onto the channel ladder: `web` · `teams-tab` · `in-call`.
+Profiles follow the channel order: `web` · `teams-tab` · `in-call-browser` · `in-call`.
 The profile is stored in the azd environment rather than prompted for at deploy time,
 so `azd up` stays non-interactive and re-deploys and CI keep working.
 

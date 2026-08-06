@@ -8,7 +8,7 @@ ordered list of every remaining step — including the ones a human has to do.
 The two questions are independent:
 
     channel  (DEPLOY_PROFILE)  where people reach the avatar   web / teams-tab /
-                                                               in-call / in-call-browser
+                                                               in-call-browser / in-call
     brain    (VOICE_BINDING)   what answers                    agent / model
 
     uv run python scripts/set_profile.py                             # interactive

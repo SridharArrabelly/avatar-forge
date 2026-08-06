@@ -23,6 +23,7 @@ import io
 import sys
 from contextlib import redirect_stdout
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
@@ -62,6 +63,21 @@ def run(env: dict[str, str], profile: str) -> tuple[dict[str, str], str]:
         sys.argv = old_argv
 
 
+print("\nProfiles follow the channel order used by the greenfield picker")
+check(
+    "profile order is A, B, C, D",
+    ch.PROFILE_ORDER == ["web", "teams-tab", "in-call-browser", "in-call"],
+)
+check(
+    "profile channel labels match that order",
+    [ch.PROFILES[key].channels for key in ch.PROFILE_ORDER]
+    == ["A", "A + B", "A + B + C", "A + B + D"],
+)
+with patch("builtins.input", return_value="3"):
+    check("interactive choice 3 selects channel C", sp._choose() == "in-call-browser")
+with patch("builtins.input", return_value="4"):
+    check("interactive choice 4 selects channel D", sp._choose() == "in-call")
+
 print("\nEvery managed flag is written on every selection")
 for key in ch.PROFILE_ORDER:
     written, _ = run({}, key)
@@ -81,6 +97,13 @@ check("ACS_AVATAR_VIDEO_ENABLED=true", written.get("ACS_AVATAR_VIDEO_ENABLED") =
 check("BROWSER_JOIN_VIDEO_ENABLED=true", written.get("BROWSER_JOIN_VIDEO_ENABLED") == "true")
 check("no required inputs", ch.PROFILES["in-call-browser"].requires == [])
 check("the Windows host stays off", written.get("DEPLOY_MEETING_BOT_HOST") == "false")
+
+print("\nChannel D enables only the Graph media-bot path")
+written, _ = run({}, "in-call")
+check("MEETING_BOT_ENABLED=true", written.get("MEETING_BOT_ENABLED") == "true")
+check("DEPLOY_MEETING_BOT_HOST=true", written.get("DEPLOY_MEETING_BOT_HOST") == "true")
+check("the ACS resource stays off", written.get("ENABLE_ACS") == "false")
+check("browser video stays off", written.get("BROWSER_JOIN_VIDEO_ENABLED") == "false")
 
 print("\nSwitching away from the media bot turns the Windows VM off")
 was_bot = {
