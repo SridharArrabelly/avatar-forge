@@ -13,6 +13,8 @@ Grants (only when the relevant BYO vars are set):
                 that follow can reach the CognitiveServices data plane)
     UAMI -> Search Index Data Reader on BYO Search service
     UAMI -> Search Service Contributor on BYO Search service
+    Deployer -> Search Index Data Contributor + Search Service Contributor on BYO Search
+    BYO Search SMI -> Cognitive Services OpenAI User on the effective Foundry account
     Foundry project SMI -> Search Index Data Contributor on BYO Search service (both BYO)
     Foundry project SMI -> Search Service Contributor on BYO Search service (both BYO)
 
@@ -40,6 +42,7 @@ ROLES = {
     "search_index_data_reader": "1407120a-92aa-4202-b7e9-c0e197c71c8f",
     "search_index_data_contributor": "8ebe5a00-799e-43f5-93ac-243d3dce84a7",
     "search_service_contributor": "7ca78c08-252a-4471-8644-bb5ff32d4ba0",
+    "cognitive_services_openai_user": "5e0bd9bd-7b93-4f28-af87-19fc36ad61bd",
 }
 
 
@@ -112,6 +115,39 @@ def _lookup_foundry_project_principal_id(
     return (data.get("identity") or {}).get("principalId")
 
 
+def _ensure_search_identity(search_name: str, search_rg: str, sub_id: str) -> str:
+    """Enable and return the BYO Search SMI used by query-time vectorization."""
+    proc = _az([
+        "search", "service", "show",
+        "--name", search_name,
+        "--resource-group", search_rg,
+        "--subscription", sub_id,
+        "-o", "json",
+    ])
+    if proc.returncode == 0:
+        principal_id = (json.loads(proc.stdout).get("identity") or {}).get("principalId")
+        if principal_id:
+            return principal_id
+
+    print("Enabling system-assigned identity on BYO Search for query vectorization:")
+    proc = _az([
+        "search", "service", "update",
+        "--name", search_name,
+        "--resource-group", search_rg,
+        "--subscription", sub_id,
+        "--identity-type", "SystemAssigned",
+        "-o", "json",
+    ])
+    if proc.returncode != 0:
+        print(f"     FAILED: {(proc.stderr or proc.stdout).strip()}", file=sys.stderr)
+        raise SystemExit(1)
+    principal_id = (json.loads(proc.stdout).get("identity") or {}).get("principalId")
+    if not principal_id:
+        print("     FAILED: Search identity update returned no principalId.", file=sys.stderr)
+        raise SystemExit(1)
+    return principal_id
+
+
 def main() -> int:
     global _AZ
     _AZ = shutil.which("az")
@@ -134,6 +170,11 @@ def main() -> int:
     search_name = os.environ.get("SEARCH_SERVICE_NAME", "").strip()
     search_rg = os.environ.get("SEARCH_RESOURCE_GROUP", "").strip()
     agent_project = os.environ.get("AGENT_PROJECT_NAME", "").strip()
+    foundry_endpoint = os.environ.get("AZURE_VOICELIVE_ENDPOINT", "").strip()
+    deployment_rg = (
+        os.environ.get("AZURE_RESOURCE_GROUP_NAME", "").strip()
+        or os.environ.get("AZURE_RESOURCE_GROUP", "").strip()
+    )
 
     byo_foundry = bool(foundry_account and foundry_rg)
     byo_search = bool(search_name and search_rg)
@@ -202,6 +243,34 @@ def main() -> int:
             print(
                 "WARN: could not determine the deploying user's object id, so the deployer was\n"
                 "      NOT granted index-build access on BYO Search.",
+                file=sys.stderr,
+            )
+
+        # The index vectorizer runs inside AI Search, not in the app or Foundry
+        # project. It authenticates to the embedding endpoint with the Search
+        # service's own SMI, including in the new-Foundry + BYO-Search hybrid.
+        effective_foundry = foundry_account
+        effective_foundry_rg = foundry_rg
+        if not effective_foundry and foundry_endpoint:
+            effective_foundry = foundry_endpoint.removeprefix("https://").split(".", 1)[0]
+            effective_foundry_rg = deployment_rg
+        if effective_foundry and effective_foundry_rg:
+            search_pid = _ensure_search_identity(search_name, search_rg, sub_id)
+            foundry_scope = (
+                f"/subscriptions/{sub_id}/resourceGroups/{effective_foundry_rg}"
+                f"/providers/Microsoft.CognitiveServices/accounts/{effective_foundry}"
+            )
+            print(f"Granting BYO Search SMI ({search_pid}) query-vectorization access on Foundry:")
+            _grant(
+                "Cognitive Services OpenAI User",
+                search_pid,
+                ROLES["cognitive_services_openai_user"],
+                foundry_scope,
+            )
+        else:
+            print(
+                "WARN: could not resolve the effective Foundry account, so BYO Search was\n"
+                "      NOT granted query-vectorization access.",
                 file=sys.stderr,
             )
 
