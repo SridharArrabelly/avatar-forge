@@ -280,6 +280,7 @@ def build_acs_router() -> APIRouter:
             send_binary=bridge.send_binary,
             config=_in_call_config(MEETING_BOT_VIDEO_ENABLED),
         )
+        handler.audit_channel = "meeting-bot"
         bridge.handler = handler
         _ACTIVE_CALLS.add(client_id)
         handler_task = asyncio.create_task(handler.start())
@@ -330,6 +331,7 @@ def build_acs_router() -> APIRouter:
             send_binary=bridge.send_binary,
             config=_in_call_config(BROWSER_JOIN_VIDEO_ENABLED, output_mode="webrtc"),
         )
+        handler.audit_channel = "acs-browser"
         bridge.handler = handler
         _ACTIVE_CALLS.add(client_id)
         handler_task = asyncio.create_task(handler.start())

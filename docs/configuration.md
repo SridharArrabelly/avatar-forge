@@ -237,13 +237,39 @@ carry them:
 > honest: both modes run the same code path production runs, with nothing switched at
 > the edge. See [voice-binding.md](voice-binding.md) for the measured trade-off.
 
+## Conversation audit trail
+
+Persists every turn's user question, tool results, and model answer. **Off by
+default**; when off it costs nothing and deploys nothing. Full design, record
+schema, and query examples in **[audit.md](audit.md)**.
+
+> [!IMPORTANT]
+> Enabling this records the substance of conversations. Confirm retention,
+> access control, and any notice/consent obligation before switching it on in an
+> environment real people use.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `ENABLE_AUDIT` | `false` | Master switch. Also a **Bicep parameter** — `azd env set ENABLE_AUDIT true` provisions the Cosmos account, database, container and the app's data-plane role assignment. While `false`, none of it is created. |
+| `AUDIT_SINK` | `cosmos` | Where records go. `cosmos` (production), `file` (JSONL at `audit-log.jsonl`, for local development), or `none` (accept and discard — used to isolate storage cost during latency A/B testing). Falls back to `file` if Cosmos is unreachable or `AUDIT_COSMOS_ENDPOINT` is unset. |
+| `AUDIT_COSMOS_ENDPOINT` | — | Cosmos account endpoint. Set automatically by infra when audit is enabled; only set by hand for a BYO Cosmos account. |
+| `AUDIT_COSMOS_DATABASE` | `audit` | Database name. |
+| `AUDIT_COSMOS_CONTAINER` | `turns` | Container name. Partition key is `/sessionId`. |
+| `AUDIT_RETENTION_DAYS` | `365` | Written to each record as a Cosmos-native `ttl`, so expiry needs no cleanup job. `0` or negative keeps records forever. Also a Bicep parameter. |
+| `AUDIT_REDACT` | `true` | Mask obvious secret/PII patterns (bearer tokens, JWTs, connection-string secrets, card-like digit runs) in text, tool arguments and tool results before persisting. Defence in depth, **not** a compliance control — see [audit.md](audit.md#redaction). |
+| `AUDIT_QUEUE_MAX` | `1000` | Bounded capture queue, so a sink outage costs capped memory. When full, records are **dropped and counted** rather than awaited — blocking here would stall the event loop carrying audio. |
+| `AUDIT_TOOL_PAYLOAD_MAX_KB` | `32` | Cap on each captured tool payload. Retrieved passages are by far the largest field. |
+| `AUDIT_RECONCILE_AGENT_TOOLS` | `true` | In **agent** binding, recover tool name/arguments/results from the Foundry conversation after the turn has finished. Never runs on the turn path. Set `false` to skip it — records are still written, with tool detail absent and `meta.toolsPending` left `true`. |
+
+---
+
 ## Runtime tuning
 
 | Variable | Default | Purpose |
 |---|---|---|
 | `DEVELOPER_MODE` | `false` | `true` exposes the settings panel, live transcript, and per-event debug logging, so settings can be changed and tried live while testing. `false` (production) auto-starts an avatar-only experience with settings locked. Set it on a deployment with `azd env set DEVELOPER_MODE true` — it is a Bicep parameter, so a value set imperatively with `az containerapp update` would be reverted by the next `azd provision`. It changes no pipeline default: the settings panel is pre-populated with the same values production uses. It does **not** expose `VOICE_BINDING`, which is deployment-wide. |
 | `MEETING_CATALOG_TTL_S` | `900` | Seconds the backend caches the meeting catalogue it fetches from AI Search and injects at session start ([`backend/voice/catalog.py`](../backend/voice/catalog.py)). |
-| `APPLICATIONINSIGHTS_CONNECTION_STRING` | — | App Insights connection string for telemetry. |
+| `APPLICATIONINSIGHTS_CONNECTION_STRING` | — | Set by infra, but **nothing reads it yet**. The App Insights resource is deployed and the string is injected into the container, while the app emits no telemetry of its own — OpenTelemetry is deliberately not a dependency. Container stdout still reaches Log Analytics, which is operational storage and not an audit trail. When telemetry does ship, `meta.operationId` on each audit record is what joins a trace back to that turn's content — see [audit.md](audit.md). |
 | `LOG_LEVEL` | `INFO` | Root logging level (`DEBUG`, `INFO`, `WARNING`, …). `DEVELOPER_MODE=true` already raises per-event detail; use this to quieten or deepen logs independently. |
 | `HOST` | `0.0.0.0` | Interface the server binds to. Leave as-is in a container. |
 | `PORT` | `3000` | Port the server listens on. The container image and `targetPort` in Bicep both assume `3000`; change both together or ingress breaks. |

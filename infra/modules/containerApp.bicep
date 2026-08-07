@@ -70,6 +70,22 @@ param browserJoinVideoEnabled string = ''
 @description('"true"/"false" string. When "true" the browser exposes the settings panel, live transcript and per-event logging, so settings can be changed and tried live while testing. Production default "false" hides the panel, locks settings and auto-starts an avatar-only experience.')
 param developerMode string = 'false'
 
+// ───────── conversation audit trail (#30) ─────────
+@description('"true"/"false" string. When "true", every conversation turn is recorded to Cosmos. Default "false" leaves the app byte-identical to today.')
+param enableAudit string = 'false'
+
+@description('Cosmos DB account endpoint holding the audit trail. Empty disables the Cosmos sink.')
+param auditCosmosEndpoint string = ''
+
+@description('Cosmos database holding the audit container.')
+param auditCosmosDatabase string = ''
+
+@description('Cosmos container holding one document per conversation turn.')
+param auditCosmosContainer string = ''
+
+@description('Days each audit record is retained, written as a per-item Cosmos TTL.')
+param auditRetentionDays string = '365'
+
 @description('Placeholder image used on first provision; azd replaces it during `azd deploy`.')
 param containerImage string = 'mcr.microsoft.com/k8se/quickstart:latest'
 
@@ -80,6 +96,37 @@ var acsEnv = !empty(acsEndpoint) ? [
   {
     name: 'ACS_ENDPOINT'
     value: acsEndpoint
+  }
+] : []
+
+// Audit env (additive). Surfaces the audit settings only when enabled, so a
+// deploy that does not opt in has no AUDIT_* variables at all and the capture
+// code never runs. AUDIT_SINK is pinned to cosmos here because that is the only
+// place the deployed container has to write durably to.
+var auditEnv = toLower(enableAudit) == 'true' ? [
+  {
+    name: 'ENABLE_AUDIT'
+    value: 'true'
+  }
+  {
+    name: 'AUDIT_SINK'
+    value: 'cosmos'
+  }
+  {
+    name: 'AUDIT_COSMOS_ENDPOINT'
+    value: auditCosmosEndpoint
+  }
+  {
+    name: 'AUDIT_COSMOS_DATABASE'
+    value: auditCosmosDatabase
+  }
+  {
+    name: 'AUDIT_COSMOS_CONTAINER'
+    value: auditCosmosContainer
+  }
+  {
+    name: 'AUDIT_RETENTION_DAYS'
+    value: auditRetentionDays
   }
 ] : []
 
@@ -201,7 +248,7 @@ resource app 'Microsoft.App/containerApps@2024-10-02-preview' = {
             { name: 'SR_MODEL', value: srModel }
             { name: 'RECOGNITION_LANGUAGE', value: recognitionLanguage }
             { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: appInsightsConnectionString }
-          ], concat(acsEnv, meetingBotEnv, voiceBindingEnv, webIqEnv))
+          ], concat(acsEnv, meetingBotEnv, voiceBindingEnv, webIqEnv, auditEnv))
           probes: [
             {
               type: 'Liveness'

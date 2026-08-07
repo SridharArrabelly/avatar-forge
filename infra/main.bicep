@@ -197,6 +197,11 @@ param deployProfile string = ''
 param enableAcs string = 'false'
 @description('ACS data residency geography (NOT an Azure region), e.g. "United States", "Europe", "Africa".')
 param acsDataLocation string = 'United States'
+
+@description('Enable the conversation audit trail ("true"/"false"). When not "true" (default), no Cosmos account is created and the deployment behaves exactly as today.')
+param enableAudit string = 'false'
+@description('Days each audit record is retained, written as a per-item Cosmos TTL.')
+param auditRetentionDays string = '365'
 @description('"true"/"false". Serve the .NET Teams media-bot bridge without an ACS resource (sets MEETING_BOT_ENABLED). Implied by deployProfile="in-call" exactly; "in-call-browser" is channel C and does not imply it.')
 param meetingBotEnabled string = 'false'
 @description('PCM sample rate (Hz) the Teams media bot streams (16000).')
@@ -339,6 +344,8 @@ module resources 'resources.bicep' = {
     acsRequireWakePhrase: acsRequireWakePhrase
     acsAvatarVideoEnabled: acsAvatarVideoEnabled
     browserJoinVideoEnabled: browserJoinVideoEnabled
+    enableAudit: enableAudit
+    auditRetentionDays: auditRetentionDays
   }
 }
 

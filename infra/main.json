@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.43.8.12551",
-      "templateHash": "8493538879484498107"
+      "templateHash": "17367266739031402220"
     }
   },
   "parameters": {
@@ -360,6 +360,20 @@
         "description": "ACS data residency geography (NOT an Azure region), e.g. \"United States\", \"Europe\", \"Africa\"."
       }
     },
+    "enableAudit": {
+      "type": "string",
+      "defaultValue": "false",
+      "metadata": {
+        "description": "Enable the conversation audit trail (\"true\"/\"false\"). When not \"true\" (default), no Cosmos account is created and the deployment behaves exactly as today."
+      }
+    },
+    "auditRetentionDays": {
+      "type": "string",
+      "defaultValue": "365",
+      "metadata": {
+        "description": "Days each audit record is retained, written as a per-item Cosmos TTL."
+      }
+    },
     "meetingBotEnabled": {
       "type": "string",
       "defaultValue": "false",
@@ -664,6 +678,12 @@
           },
           "browserJoinVideoEnabled": {
             "value": "[parameters('browserJoinVideoEnabled')]"
+          },
+          "enableAudit": {
+            "value": "[parameters('enableAudit')]"
+          },
+          "auditRetentionDays": {
+            "value": "[parameters('auditRetentionDays')]"
           }
         },
         "template": {
@@ -673,7 +693,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.43.8.12551",
-              "templateHash": "13077109271009867827"
+              "templateHash": "10408048344882964715"
             }
           },
           "parameters": {
@@ -921,6 +941,20 @@
               "metadata": {
                 "description": "\"true\"/\"false\". The browser joiner's tile carries the LIVE lip-synced avatar instead of a static placard. Needs acsAvatarVideoEnabled=\"true\" as well."
               }
+            },
+            "enableAudit": {
+              "type": "string",
+              "defaultValue": "false",
+              "metadata": {
+                "description": "Enable the conversation audit trail (\"true\"/\"false\"). When not \"true\" (default), no Cosmos account is created and the container behaves as today."
+              }
+            },
+            "auditRetentionDays": {
+              "type": "string",
+              "defaultValue": "365",
+              "metadata": {
+                "description": "Days each audit record is retained, written as a per-item Cosmos TTL."
+              }
             }
           },
           "variables": {
@@ -935,6 +969,7 @@
               "searchService": "srch",
               "botService": "bot",
               "communicationServices": "acs",
+              "cosmosDb": "cosmos",
               "resourceGroup": "rg"
             },
             "agentBinding": "[not(equals(toLower(parameters('voiceBinding')), 'model'))]",
@@ -945,6 +980,7 @@
             "bingEnvSegmentClean": "[if(endsWith(variables('bingEnvSegment'), '-'), take(variables('bingEnvSegment'), sub(length(variables('bingEnvSegment')), 1)), variables('bingEnvSegment'))]",
             "bingAccountName": "[toLower(format('bing-{0}-{1}', variables('bingEnvSegmentClean'), parameters('resourceToken')))]",
             "acsEnabled": "[equals(toLower(parameters('enableAcs')), 'true')]",
+            "auditEnabled": "[equals(toLower(parameters('enableAudit')), 'true')]",
             "abbrs": "[variables('$fxv#0')]",
             "caEnvBudget": "[sub(sub(32, length(format('{0}-', variables('abbrs').containerApp))), length(format('-{0}', parameters('resourceToken'))))]",
             "caEnvSegment": "[take(parameters('environmentName'), variables('caEnvBudget'))]",
@@ -2453,6 +2489,245 @@
               ]
             },
             {
+              "condition": "[variables('auditEnabled')]",
+              "type": "Microsoft.Resources/deployments",
+              "apiVersion": "2025-04-01",
+              "name": "cosmos-audit",
+              "properties": {
+                "expressionEvaluationOptions": {
+                  "scope": "inner"
+                },
+                "mode": "Incremental",
+                "parameters": {
+                  "name": {
+                    "value": "[toLower(format('{0}-{1}-{2}', variables('abbrs').cosmosDb, parameters('environmentName'), parameters('resourceToken')))]"
+                  },
+                  "location": {
+                    "value": "[parameters('location')]"
+                  },
+                  "tags": {
+                    "value": "[parameters('tags')]"
+                  }
+                },
+                "template": {
+                  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+                  "contentVersion": "1.0.0.0",
+                  "metadata": {
+                    "_generator": {
+                      "name": "bicep",
+                      "version": "0.43.8.12551",
+                      "templateHash": "15487942644673129716"
+                    }
+                  },
+                  "parameters": {
+                    "name": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "Name of the Cosmos DB account."
+                      }
+                    },
+                    "location": {
+                      "type": "string",
+                      "defaultValue": "[resourceGroup().location]",
+                      "metadata": {
+                        "description": "Azure region for the account."
+                      }
+                    },
+                    "tags": {
+                      "type": "object",
+                      "defaultValue": {},
+                      "metadata": {
+                        "description": "Tags applied to the account."
+                      }
+                    },
+                    "databaseName": {
+                      "type": "string",
+                      "defaultValue": "audit",
+                      "metadata": {
+                        "description": "Database holding the audit container."
+                      }
+                    },
+                    "containerName": {
+                      "type": "string",
+                      "defaultValue": "turns",
+                      "metadata": {
+                        "description": "Container holding one document per conversation turn."
+                      }
+                    }
+                  },
+                  "resources": [
+                    {
+                      "type": "Microsoft.DocumentDB/databaseAccounts",
+                      "apiVersion": "2024-11-15",
+                      "name": "[parameters('name')]",
+                      "location": "[parameters('location')]",
+                      "tags": "[parameters('tags')]",
+                      "kind": "GlobalDocumentDB",
+                      "properties": {
+                        "databaseAccountOfferType": "Standard",
+                        "capabilities": [
+                          {
+                            "name": "EnableServerless"
+                          }
+                        ],
+                        "disableLocalAuth": true,
+                        "consistencyPolicy": {
+                          "defaultConsistencyLevel": "Session"
+                        },
+                        "locations": [
+                          {
+                            "locationName": "[parameters('location')]",
+                            "failoverPriority": 0,
+                            "isZoneRedundant": false
+                          }
+                        ],
+                        "publicNetworkAccess": "Enabled",
+                        "minimalTlsVersion": "Tls12"
+                      }
+                    },
+                    {
+                      "type": "Microsoft.DocumentDB/databaseAccounts/sqlDatabases",
+                      "apiVersion": "2024-11-15",
+                      "name": "[format('{0}/{1}', parameters('name'), parameters('databaseName'))]",
+                      "properties": {
+                        "resource": {
+                          "id": "[parameters('databaseName')]"
+                        }
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('name'))]"
+                      ]
+                    },
+                    {
+                      "type": "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers",
+                      "apiVersion": "2024-11-15",
+                      "name": "[format('{0}/{1}/{2}', parameters('name'), parameters('databaseName'), parameters('containerName'))]",
+                      "properties": {
+                        "resource": {
+                          "id": "[parameters('containerName')]",
+                          "partitionKey": {
+                            "paths": [
+                              "/sessionId"
+                            ],
+                            "kind": "Hash"
+                          },
+                          "defaultTtl": -1,
+                          "indexingPolicy": {
+                            "indexingMode": "consistent",
+                            "automatic": true,
+                            "includedPaths": [
+                              {
+                                "path": "/sessionId/?"
+                              },
+                              {
+                                "path": "/startedAt/?"
+                              },
+                              {
+                                "path": "/turnIndex/?"
+                              }
+                            ],
+                            "excludedPaths": [
+                              {
+                                "path": "/*"
+                              },
+                              {
+                                "path": "/\"_etag\"/?"
+                              }
+                            ]
+                          }
+                        }
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.DocumentDB/databaseAccounts/sqlDatabases', parameters('name'), parameters('databaseName'))]"
+                      ]
+                    }
+                  ],
+                  "outputs": {
+                    "accountName": {
+                      "type": "string",
+                      "value": "[parameters('name')]"
+                    },
+                    "endpoint": {
+                      "type": "string",
+                      "value": "[reference(resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('name')), '2024-11-15').documentEndpoint]"
+                    },
+                    "databaseName": {
+                      "type": "string",
+                      "value": "[parameters('databaseName')]"
+                    },
+                    "containerName": {
+                      "type": "string",
+                      "value": "[parameters('containerName')]"
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "condition": "[variables('auditEnabled')]",
+              "type": "Microsoft.Resources/deployments",
+              "apiVersion": "2025-04-01",
+              "name": "cosmos-role-for-app",
+              "properties": {
+                "expressionEvaluationOptions": {
+                  "scope": "inner"
+                },
+                "mode": "Incremental",
+                "parameters": {
+                  "accountName": {
+                    "value": "[reference(resourceId('Microsoft.Resources/deployments', 'cosmos-audit'), '2025-04-01').outputs.accountName.value]"
+                  },
+                  "appPrincipalId": {
+                    "value": "[reference(resourceId('Microsoft.Resources/deployments', 'uami'), '2025-04-01').outputs.principalId.value]"
+                  }
+                },
+                "template": {
+                  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+                  "contentVersion": "1.0.0.0",
+                  "metadata": {
+                    "_generator": {
+                      "name": "bicep",
+                      "version": "0.43.8.12551",
+                      "templateHash": "9823425058021304327"
+                    }
+                  },
+                  "parameters": {
+                    "accountName": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "Name of the Cosmos DB account (in this resource group)."
+                      }
+                    },
+                    "appPrincipalId": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "Principal id of the Container App user-assigned managed identity."
+                      }
+                    }
+                  },
+                  "variables": {
+                    "dataContributorRoleId": "00000000-0000-0000-0000-000000000002"
+                  },
+                  "resources": [
+                    {
+                      "type": "Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments",
+                      "apiVersion": "2024-11-15",
+                      "name": "[format('{0}/{1}', parameters('accountName'), guid(resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('accountName')), parameters('appPrincipalId'), variables('dataContributorRoleId')))]",
+                      "properties": {
+                        "principalId": "[parameters('appPrincipalId')]",
+                        "roleDefinitionId": "[resourceId('Microsoft.DocumentDB/databaseAccounts/sqlRoleDefinitions', parameters('accountName'), variables('dataContributorRoleId'))]",
+                        "scope": "[resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('accountName'))]"
+                      }
+                    }
+                  ]
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Resources/deployments', 'cosmos-audit')]",
+                "[resourceId('Microsoft.Resources/deployments', 'uami')]"
+              ]
+            },
+            {
               "type": "Microsoft.Resources/deployments",
               "apiVersion": "2025-04-01",
               "name": "app",
@@ -2565,6 +2840,15 @@
                   },
                   "browserJoinVideoEnabled": {
                     "value": "[parameters('browserJoinVideoEnabled')]"
+                  },
+                  "enableAudit": {
+                    "value": "[parameters('enableAudit')]"
+                  },
+                  "auditCosmosEndpoint": "[if(variables('auditEnabled'), createObject('value', reference(resourceId('Microsoft.Resources/deployments', 'cosmos-audit'), '2025-04-01').outputs.endpoint.value), createObject('value', ''))]",
+                  "auditCosmosDatabase": "[if(variables('auditEnabled'), createObject('value', reference(resourceId('Microsoft.Resources/deployments', 'cosmos-audit'), '2025-04-01').outputs.databaseName.value), createObject('value', ''))]",
+                  "auditCosmosContainer": "[if(variables('auditEnabled'), createObject('value', reference(resourceId('Microsoft.Resources/deployments', 'cosmos-audit'), '2025-04-01').outputs.containerName.value), createObject('value', ''))]",
+                  "auditRetentionDays": {
+                    "value": "[parameters('auditRetentionDays')]"
                   }
                 },
                 "template": {
@@ -2574,7 +2858,7 @@
                     "_generator": {
                       "name": "bicep",
                       "version": "0.43.8.12551",
-                      "templateHash": "17419802995801613352"
+                      "templateHash": "5613071276699754669"
                     }
                   },
                   "parameters": {
@@ -2774,6 +3058,41 @@
                         "description": "\"true\"/\"false\" string. When \"true\" the browser exposes the settings panel, live transcript and per-event logging, so settings can be changed and tried live while testing. Production default \"false\" hides the panel, locks settings and auto-starts an avatar-only experience."
                       }
                     },
+                    "enableAudit": {
+                      "type": "string",
+                      "defaultValue": "false",
+                      "metadata": {
+                        "description": "\"true\"/\"false\" string. When \"true\", every conversation turn is recorded to Cosmos. Default \"false\" leaves the app byte-identical to today."
+                      }
+                    },
+                    "auditCosmosEndpoint": {
+                      "type": "string",
+                      "defaultValue": "",
+                      "metadata": {
+                        "description": "Cosmos DB account endpoint holding the audit trail. Empty disables the Cosmos sink."
+                      }
+                    },
+                    "auditCosmosDatabase": {
+                      "type": "string",
+                      "defaultValue": "",
+                      "metadata": {
+                        "description": "Cosmos database holding the audit container."
+                      }
+                    },
+                    "auditCosmosContainer": {
+                      "type": "string",
+                      "defaultValue": "",
+                      "metadata": {
+                        "description": "Cosmos container holding one document per conversation turn."
+                      }
+                    },
+                    "auditRetentionDays": {
+                      "type": "string",
+                      "defaultValue": "365",
+                      "metadata": {
+                        "description": "Days each audit record is retained, written as a per-item Cosmos TTL."
+                      }
+                    },
                     "containerImage": {
                       "type": "string",
                       "defaultValue": "mcr.microsoft.com/k8se/quickstart:latest",
@@ -2784,6 +3103,7 @@
                   },
                   "variables": {
                     "acsEnv": "[if(not(empty(parameters('acsEndpoint'))), createArray(createObject('name', 'ACS_ENDPOINT', 'value', parameters('acsEndpoint'))), createArray())]",
+                    "auditEnv": "[if(equals(toLower(parameters('enableAudit')), 'true'), createArray(createObject('name', 'ENABLE_AUDIT', 'value', 'true'), createObject('name', 'AUDIT_SINK', 'value', 'cosmos'), createObject('name', 'AUDIT_COSMOS_ENDPOINT', 'value', parameters('auditCosmosEndpoint')), createObject('name', 'AUDIT_COSMOS_DATABASE', 'value', parameters('auditCosmosDatabase')), createObject('name', 'AUDIT_COSMOS_CONTAINER', 'value', parameters('auditCosmosContainer')), createObject('name', 'AUDIT_RETENTION_DAYS', 'value', parameters('auditRetentionDays'))), createArray())]",
                     "voiceBindingEnv": "[concat(createArray(createObject('name', 'VOICE_BINDING', 'value', parameters('voiceBinding'))), if(empty(parameters('voiceLiveModel')), createArray(), createArray(createObject('name', 'VOICELIVE_MODEL', 'value', parameters('voiceLiveModel')))))]",
                     "webIqConfigured": "[not(empty(parameters('webIqApiKey')))]",
                     "webIqSecrets": "[if(variables('webIqConfigured'), createArray(createObject('name', 'webiq-api-key', 'value', parameters('webIqApiKey'))), createArray())]",
@@ -2846,7 +3166,7 @@
                                 "cpu": "[json('2.0')]",
                                 "memory": "4.0Gi"
                               },
-                              "env": "[concat(createArray(createObject('name', 'PORT', 'value', '3000'), createObject('name', 'AZURE_CLIENT_ID', 'value', parameters('uamiClientId')), createObject('name', 'DEVELOPER_MODE', 'value', parameters('developerMode')), createObject('name', 'AZURE_VOICELIVE_ENDPOINT', 'value', parameters('voiceliveEndpoint')), createObject('name', 'PROJECT_ENDPOINT', 'value', parameters('projectEndpoint')), createObject('name', 'AGENT_NAME', 'value', parameters('agentName')), createObject('name', 'AGENT_PROJECT_NAME', 'value', parameters('agentProjectName')), createObject('name', 'AGENT_MODEL', 'value', parameters('agentModel')), createObject('name', 'EMBEDDING_DEPLOYMENT', 'value', parameters('embeddingDeployment')), createObject('name', 'AZURE_SEARCH_ENDPOINT', 'value', parameters('searchEndpoint')), createObject('name', 'SEARCH_CONNECTION_NAME', 'value', parameters('searchConnectionName')), createObject('name', 'SEARCH_INDEX_NAME', 'value', parameters('searchIndexName')), createObject('name', 'VOICELIVE_VOICE', 'value', parameters('voiceLiveVoice')), createObject('name', 'BING_CONNECTION_NAME', 'value', parameters('bingConnectionName')), createObject('name', 'BING_CUSTOM_CONFIG_NAME', 'value', parameters('bingCustomConfigName')), createObject('name', 'AVATAR_TYPE', 'value', parameters('avatarType')), createObject('name', 'AVATAR_MODEL', 'value', parameters('avatarModel')), createObject('name', 'AVATAR_DISPLAY_NAME', 'value', parameters('avatarDisplayName')), createObject('name', 'AVATAR_TAGLINE', 'value', parameters('avatarTagline')), createObject('name', 'AVATAR_BACKGROUND_IMAGE_URL', 'value', parameters('avatarBackgroundImageUrl')), createObject('name', 'ENABLE_AVATAR_SPEAKING_STYLE', 'value', parameters('enableAvatarSpeakingStyle')), createObject('name', 'SR_MODEL', 'value', parameters('srModel')), createObject('name', 'RECOGNITION_LANGUAGE', 'value', parameters('recognitionLanguage')), createObject('name', 'APPLICATIONINSIGHTS_CONNECTION_STRING', 'value', parameters('appInsightsConnectionString'))), concat(variables('acsEnv'), variables('meetingBotEnv'), variables('voiceBindingEnv'), variables('webIqEnv')))]",
+                              "env": "[concat(createArray(createObject('name', 'PORT', 'value', '3000'), createObject('name', 'AZURE_CLIENT_ID', 'value', parameters('uamiClientId')), createObject('name', 'DEVELOPER_MODE', 'value', parameters('developerMode')), createObject('name', 'AZURE_VOICELIVE_ENDPOINT', 'value', parameters('voiceliveEndpoint')), createObject('name', 'PROJECT_ENDPOINT', 'value', parameters('projectEndpoint')), createObject('name', 'AGENT_NAME', 'value', parameters('agentName')), createObject('name', 'AGENT_PROJECT_NAME', 'value', parameters('agentProjectName')), createObject('name', 'AGENT_MODEL', 'value', parameters('agentModel')), createObject('name', 'EMBEDDING_DEPLOYMENT', 'value', parameters('embeddingDeployment')), createObject('name', 'AZURE_SEARCH_ENDPOINT', 'value', parameters('searchEndpoint')), createObject('name', 'SEARCH_CONNECTION_NAME', 'value', parameters('searchConnectionName')), createObject('name', 'SEARCH_INDEX_NAME', 'value', parameters('searchIndexName')), createObject('name', 'VOICELIVE_VOICE', 'value', parameters('voiceLiveVoice')), createObject('name', 'BING_CONNECTION_NAME', 'value', parameters('bingConnectionName')), createObject('name', 'BING_CUSTOM_CONFIG_NAME', 'value', parameters('bingCustomConfigName')), createObject('name', 'AVATAR_TYPE', 'value', parameters('avatarType')), createObject('name', 'AVATAR_MODEL', 'value', parameters('avatarModel')), createObject('name', 'AVATAR_DISPLAY_NAME', 'value', parameters('avatarDisplayName')), createObject('name', 'AVATAR_TAGLINE', 'value', parameters('avatarTagline')), createObject('name', 'AVATAR_BACKGROUND_IMAGE_URL', 'value', parameters('avatarBackgroundImageUrl')), createObject('name', 'ENABLE_AVATAR_SPEAKING_STYLE', 'value', parameters('enableAvatarSpeakingStyle')), createObject('name', 'SR_MODEL', 'value', parameters('srModel')), createObject('name', 'RECOGNITION_LANGUAGE', 'value', parameters('recognitionLanguage')), createObject('name', 'APPLICATIONINSIGHTS_CONNECTION_STRING', 'value', parameters('appInsightsConnectionString'))), concat(variables('acsEnv'), variables('meetingBotEnv'), variables('voiceBindingEnv'), variables('webIqEnv'), variables('auditEnv')))]",
                               "probes": [
                                 {
                                   "type": "Liveness",
@@ -2900,6 +3220,7 @@
                 "[resourceId('Microsoft.Resources/deployments', 'acs')]",
                 "[resourceId('Microsoft.Resources/deployments', 'appi')]",
                 "[resourceId('Microsoft.Resources/deployments', 'cae')]",
+                "[resourceId('Microsoft.Resources/deployments', 'cosmos-audit')]",
                 "[resourceId('Microsoft.Resources/deployments', 'foundry')]",
                 "[resourceId('Microsoft.Resources/deployments', 'search')]",
                 "[resourceId('Microsoft.Resources/deployments', 'uami')]"
@@ -2954,6 +3275,10 @@
             "acsEndpoint": {
               "type": "string",
               "value": "[if(variables('acsEnabled'), reference(resourceId('Microsoft.Resources/deployments', 'acs'), '2025-04-01').outputs.endpoint.value, '')]"
+            },
+            "auditCosmosEndpoint": {
+              "type": "string",
+              "value": "[if(variables('auditEnabled'), reference(resourceId('Microsoft.Resources/deployments', 'cosmos-audit'), '2025-04-01').outputs.endpoint.value, '')]"
             },
             "bingConnectionName": {
               "type": "string",

@@ -9,5 +9,6 @@
   "searchService": "srch",
   "botService": "bot",
   "communicationServices": "acs",
+  "cosmosDb": "cosmos",
   "resourceGroup": "rg"
 }

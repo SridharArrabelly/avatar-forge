@@ -133,6 +133,15 @@ class VoiceSessionHandler:
         self._video_chunk_count = 0
         self._response_active = False
 
+        # Audit metadata (issue #30). Plain attributes so the capture path only
+        # ever reads them. `audit_channel` is overridden by the ACS/meeting-bot
+        # entry points, which reuse this same handler — one capture point covers
+        # all four channels precisely because they share it.
+        self.voice_session_id: Optional[str] = None
+        self.audit_channel = "web"
+        self.audit_agent_name = None if MODEL_BINDING else (AGENT_NAME or None)
+        self.audit_model = VOICELIVE_MODEL if MODEL_BINDING else None
+
     def _build_connect_kwargs(self) -> dict:
         """Assemble the arguments handed to ``voicelive.connect()``.
 
@@ -358,6 +367,10 @@ class VoiceSessionHandler:
         if hasattr(session_updated, "session") and session_updated.session:
             session_id = getattr(session_updated.session, "id", None)
         logger.info(f"Session ID: {session_id}")
+        # Prefer the server's session id in audit records so a trail can be
+        # correlated with Voice Live's own logs.
+        if session_id:
+            self.voice_session_id = session_id
 
         # Notify client session is ready
         await self.send_message({

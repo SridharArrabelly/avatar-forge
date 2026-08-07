@@ -60,6 +60,9 @@
     "acsAvatarVideoEnabled":{ "value": "${ACS_AVATAR_VIDEO_ENABLED=}" },
     "browserJoinVideoEnabled":{ "value": "${BROWSER_JOIN_VIDEO_ENABLED=}" },
 
+    "enableAudit":         { "value": "${ENABLE_AUDIT=false}" },
+    "auditRetentionDays":  { "value": "${AUDIT_RETENTION_DAYS=365}" },
+
     "deployProfile":            { "value": "${DEPLOY_PROFILE=}" },
     "deployMeetingBotHost":     { "value": "${DEPLOY_MEETING_BOT_HOST=false}" },
     "meetingBotAppId":          { "value": "${MEETING_BOT_APP_ID=}" },

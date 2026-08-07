@@ -263,6 +263,13 @@ avatar-forge/
 │   │   ├── tools.py               # Model tools: internal minutes/policies (AI Search) + web (Web IQ)
 │   │   ├── instructions.py        # Model-mode prompt loader (prompts/realtime/)
 │   │   └── auth.py                # DefaultAzureCredential + caching wrapper
+│   ├── audit/                     # Conversation audit trail (opt-in, ENABLE_AUDIT) — see docs/audit.md
+│   │   ├── __init__.py            # Capture API; disabled costs one `is None` check per turn
+│   │   ├── records.py             # TurnRecord/ToolCall, redaction, document rendering
+│   │   ├── queue.py               # Bounded queue + background writer (the latency guarantee)
+│   │   ├── sinks.py               # AuditSink protocol, NullSink, FileSink (JSONL)
+│   │   ├── cosmos.py              # Cosmos DB for NoSQL sink, Entra RBAC, warmed at startup
+│   │   └── foundry.py             # Agent-mode reconciler: recovers tool I/O after the turn
 │   └── acs/                       # Channels C/D — in-call media bridge (opt-in)
 │       ├── client.py              # ACS Call Automation + Identity clients (browser-joiner path)
 │       ├── bridge.py              # AcsVoiceBridge / BrowserVoiceBridge <-> VoiceSessionHandler
@@ -295,6 +302,7 @@ avatar-forge/
 │   ├── deployment.md              # azd mechanics, greenfield and brownfield
 │   ├── development.md             # Local dev, index build, smoke tests
 │   ├── auth.md                    # Identity and RBAC model
+│   ├── audit.md                   # Conversation audit trail: fidelity, latency rules, retention
 │   └── testing-meetings.md        # Runbook for the two in-meeting paths
 │
 ├── scripts/                       # Operational: these touch Azure, cost money, or gate a deploy
