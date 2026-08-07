@@ -221,6 +221,12 @@ carry them:
 > frontend affordance driven by `response_created` and is unaffected by these
 > settings. `REALTIME_INTERIM_TEXTS` controls only the **spoken** cue.
 >
+> They do differ in what they can know. In model mode the on-screen cue names the
+> tool exactly, because the tool call is ours; in agent mode no tool event reaches
+> the client at all, so it predicts from the question and only commits once the
+> turn is demonstrably slow — see
+> [architecture.md](architecture.md#naming-the-wait).
+>
 > Turning the spoken cue off does not guarantee silence: with no platform line to
 > fill the gap the model tends to improvise its own preamble, which is unbounded
 > where the canned line was four words. See

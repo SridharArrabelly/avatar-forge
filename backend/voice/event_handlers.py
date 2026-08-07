@@ -49,10 +49,118 @@ def _log_first_text_delta(handler, kind: str) -> None:
     logger.info(msg)
 
 
+# Which cue a tool corresponds to. Matched on substrings because the same
+# retrieval shows up under different names depending on binding: as our own
+# function names in model binding (search_minutes / search_web), and as managed
+# item types in agent binding (file_search_call, bing_custom_search_call, ...).
+# Order matters — "web_search" also contains "search", so web is tested first.
+_WEB_HINTS = ("web_search", "websearch", "bing", "search_web", "browser")
+_RECORDS_HINTS = (
+    "file_search", "filesearch", "ai_search", "aisearch", "azure_ai_search",
+    "search_minutes", "vector_store", "knowledge",
+)
+
+
+def _retrieval_cue_name(raw) -> str | None:
+    """Map a tool/item name to the cue the browser should show, or None."""
+    if not raw:
+        return None
+    # SDK enums stringify as "ItemType.FILE_SEARCH_CALL"; .value gives the wire
+    # name. Take the value when present, and lowercase either way.
+    s = str(getattr(raw, "value", raw)).lower()
+    if any(h in s for h in _WEB_HINTS):
+        return "search_web"
+    if any(h in s for h in _RECORDS_HINTS):
+        return "search_minutes"
+    # Anything else that is clearly a lookup still beats a bare "working on it".
+    if "search" in s or "retriev" in s:
+        return "search_minutes"
+    return None
+
+
+async def _send_retrieval_cue(handler, raw) -> None:
+    """Tell the browser a retrieval started, so the cue can name the wait.
+
+    Deduped per response: the same search surfaces through several events
+    (output_item.added, *.in_progress, *.searching) and re-sending would restart
+    the "taking longer" escalation each time.
+    """
+    name = _retrieval_cue_name(raw)
+    if not name or getattr(handler, "_retrieval_cue_sent", None) == name:
+        return
+    handler._retrieval_cue_sent = name
+    # The truth has arrived, so retire the guess. In model binding a tool turn
+    # produces TWO responses — the tool call, then the answer — and a surviving
+    # prediction would re-announce a search on the second one, after it finished.
+    handler._expected_tool = None
+    logger.info(f"[TOOL] retrieval cue -> {name} (from '{raw}')")
+    await handler.send_message({
+        "type": "function_call_started",
+        "functionName": name,
+    })
+
+
+# ── Predicting the retrieval cue when the tool is invisible ──────────────────
+#
+# In model binding the tools are ours, so a real function call tells us exactly
+# what is running. In agent binding — the shipped default — the Foundry agent
+# runs AI Search / Web Search inside its own thread and Voice Live relays none
+# of it: no function call, no output item, no *.in_progress event. Verified
+# against a live session; the only observable is how long the turn takes.
+#
+# So for that binding the cue is predicted from the user's own question, and the
+# browser only promotes the prediction to a caption if the answer is STILL
+# pending well past the point a no-retrieval turn would have finished. A
+# chit-chat turn answers before the promotion fires, so it never gets a
+# retrieval claim — which is the bug this whole cue exists to avoid.
+#
+# Anything unrecognised stays None: dots, no claim. Silence is the safe default.
+_RECORDS_MARKERS = (
+    "meeting", "minutes", "discuss", "agenda", "action item", "decision",
+    "attendee", "board", "committee", "resolution", "quorum", "minuted",
+    "last time", "record", "transcript", "who said", "was raised", "agreed",
+)
+_WEB_MARKERS = (
+    "today", "latest", "current", "news", "share price", "stock", "market",
+    "weather", "right now", "this week", "headline", "exchange rate",
+    "who won", "recently announced", "price of", "at the moment",
+)
+# Short utterances rarely repeat their subject ("I mean February 2026."), so a
+# marker-less follow-up inherits the previous turn's prediction rather than
+# dropping to dots.
+_FOLLOW_UP_MAX_WORDS = 7
+
+
+def _classify_question(text: str, previous: str | None = None) -> str | None:
+    """Guess which retrieval a question will trigger, or None if unclear."""
+    s = (text or "").lower()
+    if not s.strip():
+        return None
+    # Records first: a question can mention both ("the share price we discussed
+    # last meeting") and the meeting corpus is the more specific claim.
+    if any(m in s for m in _RECORDS_MARKERS):
+        return "search_minutes"
+    if any(m in s for m in _WEB_MARKERS):
+        return "search_web"
+    if previous and len(s.split()) <= _FOLLOW_UP_MAX_WORDS:
+        return previous
+    return None
+
+
 async def handle_event(handler, event, connection):
     """Handle individual events from Voice Live API."""
     try:
         event_type = event.type
+
+        # Diagnostic probe. Which tool events a session actually receives depends
+        # on the binding: model binding raises our own function calls, while in
+        # agent binding the Foundry agent runs its tools server-side and only
+        # some of that is mirrored back. These types are rare, so logging every
+        # one costs nothing and makes "why is there no retrieval cue?" a
+        # one-log-line question instead of a guessing game.
+        _et = str(getattr(event_type, "value", event_type)).lower()
+        if "search" in _et or "tool" in _et or "mcp" in _et:
+            logger.info(f"[TOOL] event: {_et}")
 
         # Audio delta - relay to browser as raw binary frame when supported.
         # Falls back to base64-in-JSON for older clients (no send_binary callback).
@@ -124,6 +232,8 @@ async def handle_event(handler, event, connection):
             handler._first_audio_logged = False
             handler._first_video_logged = False
             handler._first_text_logged = False
+            # New turn: allow the retrieval cue to fire again.
+            handler._retrieval_cue_sent = None
             t_user = getattr(handler, "_t_user_done_ms", None)
             if t_user is not None:
                 logger.info(
@@ -131,9 +241,16 @@ async def handle_event(handler, event, connection):
                 )
             response_id = getattr(event, "response", None)
             rid = response_id.id if response_id and hasattr(response_id, "id") else ""
+            expected = getattr(handler, "_expected_tool", None)
+            if expected:
+                logger.info(f"[TOOL] predicted retrieval for this turn: {expected}")
             await handler.send_message({
                 "type": "response_created",
                 "responseId": rid,
+                # Prediction only. The browser must not present it as fact until
+                # the turn has run long enough that a search is the only
+                # explanation. See _classify_question.
+                "expectedTool": expected,
             })
 
         elif event_type == ServerEventType.RESPONSE_DONE:
@@ -206,6 +323,13 @@ async def handle_event(handler, event, connection):
             item_id = getattr(event, "item_id", "") or getattr(event, "itemId", "")
             if transcript.strip():
                 logger.info(f"User transcript (item={item_id}): {transcript!r}")
+                # _last_topic is sticky so a short follow-up can inherit it;
+                # _expected_tool is this turn's prediction and gets retired as
+                # soon as a real tool event supersedes it.
+                handler._last_topic = _classify_question(
+                    transcript, getattr(handler, "_last_topic", None)
+                )
+                handler._expected_tool = handler._last_topic
                 await handler.send_message({
                     "type": "transcript_done",
                     "role": "user",
@@ -253,6 +377,35 @@ async def handle_event(handler, event, connection):
         # Function calls
         elif event_type == ServerEventType.CONVERSATION_ITEM_CREATED:
             await handle_conversation_item(handler, event, connection)
+
+        # Managed Foundry tools (agent binding). The agent runs AI Search / Web
+        # Search server-side, so there is no custom function call to hook. What
+        # does come back is the output item being opened, plus (sometimes) the
+        # dedicated in-progress events. Handle all of them and let
+        # _send_retrieval_cue dedupe, because which ones arrive varies by tool.
+        elif event_type == ServerEventType.RESPONSE_OUTPUT_ITEM_ADDED:
+            item = getattr(event, "item", None)
+            item_type = getattr(item, "type", None) if item is not None else None
+            item_name = getattr(item, "name", None) if item is not None else None
+            _it = str(getattr(item_type, "value", item_type)).lower()
+            if item_type is not None and _it != "message":
+                logger.info(f"[TOOL] output item added: type={_it} name={item_name}")
+            await _send_retrieval_cue(handler, item_name or item_type)
+
+        elif event_type in (
+            ServerEventType.RESPONSE_FILE_SEARCH_CALL_IN_PROGRESS,
+            ServerEventType.RESPONSE_FILE_SEARCH_CALL_SEARCHING,
+        ):
+            await _send_retrieval_cue(handler, "file_search")
+
+        elif event_type in (
+            ServerEventType.RESPONSE_WEB_SEARCH_CALL_IN_PROGRESS,
+            ServerEventType.RESPONSE_WEB_SEARCH_CALL_SEARCHING,
+        ):
+            await _send_retrieval_cue(handler, "web_search")
+
+        elif event_type == ServerEventType.RESPONSE_MCP_CALL_IN_PROGRESS:
+            await _send_retrieval_cue(handler, getattr(event, "name", None) or "search")
 
         # Errors
         elif event_type == ServerEventType.ERROR:
@@ -313,6 +466,11 @@ async def handle_conversation_item(handler, event, connection):
     previous_item_id = item.id
 
     logger.info(f"Function call: {function_name} (call_id: {call_id})")
+    # Claim the cue so a managed event for the same retrieval can't re-send it
+    # and restart the "taking longer" escalation, and retire the prediction now
+    # that the real tool is known.
+    handler._retrieval_cue_sent = _retrieval_cue_name(function_name)
+    handler._expected_tool = None
     await handler.send_message({
         "type": "function_call_started",
         "functionName": function_name,
@@ -365,4 +523,3 @@ async def handle_conversation_item(handler, event, connection):
             "callId": call_id,
             "error": str(e),
         })
-

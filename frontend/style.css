@@ -792,20 +792,50 @@ input[type="range"]::-webkit-slider-thumb {
     transform: translate(-50%, 0);
 }
 
+/* Neutral phase: she is working, but nothing has told us whether a search is
+   involved, so the pill carries dots alone. Collapse the empty label and even
+   up the padding so it reads as a deliberate cluster, not a truncated pill. */
+.avatar-thinking.dots-only {
+    padding: 10px 18px;
+    gap: 0;
+}
+.avatar-thinking.dots-only .avatar-thinking-text {
+    display: none;
+}
+
+/* Once there are words, the dots have done their job — the caption's own
+   trailing ellipsis carries the "still going" beat, and leading dots in front
+   of it just read as clutter. */
+.avatar-thinking:not(.dots-only) .avatar-thinking-dots {
+    display: none;
+}
+.avatar-thinking:not(.dots-only) {
+    padding: 10px 20px;
+    gap: 0;
+}
+
 .avatar-thinking-dots {
     display: inline-flex;
     align-items: center;
-    gap: 5px;
+    gap: 4px;
 }
 .avatar-thinking-dots span {
-    width: 8px;
-    height: 8px;
+    width: 7px;
+    height: 7px;
     border-radius: 50%;
     background: #5765CA;
     animation: avatar-think-bounce 1.2s ease-in-out infinite;
 }
-.avatar-thinking-dots span:nth-child(2) { animation-delay: 0.15s; }
-.avatar-thinking-dots span:nth-child(3) { animation-delay: 0.3s; }
+/* Staggered so the eight dots read as one travelling wave rather than eight
+   things blinking. The step stays well under the 1.2s cycle so the wave has
+   finished crossing before it restarts. */
+.avatar-thinking-dots span:nth-child(2) { animation-delay: 0.09s; }
+.avatar-thinking-dots span:nth-child(3) { animation-delay: 0.18s; }
+.avatar-thinking-dots span:nth-child(4) { animation-delay: 0.27s; }
+.avatar-thinking-dots span:nth-child(5) { animation-delay: 0.36s; }
+.avatar-thinking-dots span:nth-child(6) { animation-delay: 0.45s; }
+.avatar-thinking-dots span:nth-child(7) { animation-delay: 0.54s; }
+.avatar-thinking-dots span:nth-child(8) { animation-delay: 0.63s; }
 
 @keyframes avatar-think-bounce {
     0%, 80%, 100% { transform: translateY(0); opacity: 0.5; }

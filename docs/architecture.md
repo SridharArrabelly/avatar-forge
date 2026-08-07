@@ -174,8 +174,14 @@ Everything the end user sees is anchored to the avatar:
   actionable while the avatar speaks. Tapping it truncates the avatar mid-answer via
   the same interrupt path as voice barge-in (`response.cancel()` **and**
   `output_audio_buffer.clear()` server-side — see [below](#interrupt-and-truncation)).
-- **Thinking indicator** — shows between the user's turn and the avatar's first
-  words, with rotating captions and a failsafe timeout.
+- **Thinking indicator** — covers the gap between the user's turn and the avatar's
+  first words. Opens as **wordless animated dots** — she is working, with no claim
+  about *how* — then names the work once that is actually known ("Checking the
+  records…" / "Searching the web…"), and escalates to a "still working" line if the
+  wait outruns it. Wording, timings and the tool→caption map live in one place,
+  `frontend/thinking-cue.js`, shared with the in-call tile (channel C) so the two
+  surfaces cannot drift. How the work gets named depends on the binding — see
+  [the naming problem](#naming-the-wait) below.
 - **Connection & permission states** — a status pill (and toasts) surface connecting,
   mic blocked/denied, reconnecting, session ended, and avatar/transport errors.
 - **Live captions** *(`ENABLE_CAPTIONS`, default off)* — a frosted subtitle band
@@ -194,6 +200,37 @@ individually configurable — see [configuration.md](configuration.md#avatar-ux-
 The UI is themeable via CSS custom properties and ships a **dark variant** following
 the OS `prefers-color-scheme` (with an `applyTheme(light|dark|system)` hook); all
 animations respect `prefers-reduced-motion`.
+
+### Naming the wait
+
+The thinking indicator can only say what it actually knows, and what it can know
+depends on the binding:
+
+| | what the platform tells us | what the cue shows |
+|---|---|---|
+| **model binding** | our own tools raise real function calls (`search_minutes`, `search_web`) | the exact caption, as soon as the call starts |
+| **agent binding** *(default)* | **nothing.** The Foundry agent runs AI Search / Web Search inside its own thread; Voice Live relays no function call, no output item, no `*.in_progress` event | a caption **predicted** from the user's question, shown only once the turn proves slow |
+
+That second row is the awkward one, and it is why the cue is built the way it is.
+Verified against a live session: a tool turn produces no client-visible tool event
+whatsoever. The only observable is how long the turn takes — and that separates
+cleanly, because a conversational reply reaches its first token in ~1.1–1.5 s while
+a retrieval turn takes ~3.5–4.6 s.
+
+So in agent binding `backend/voice/event_handlers.py` classifies the user's own
+transcript (`_classify_question`) and ships the guess to the browser on
+`response_created` as `expectedTool`. The browser holds it as a guess and only
+promotes it to a caption at `PREDICT_MS` (1.8 s) **if no answer has started yet**.
+A greeting has already been answered and the pill torn down well before then, so it
+can never be labelled a search — which is the whole point, and the bug
+([#75](https://github.com/SridharArrabelly/avatar-forge/issues/75)) that produced
+this design: the cue used to claim "Looking through the records…" on every single
+response, including "how are you?".
+
+A real tool event always outranks a prediction, so model binding is unaffected by
+any of it. Questions that match nothing stay wordless rather than guessing.
+[`tests/test_thinking_cue.py`](../tests/test_thinking_cue.py) pins both the
+classifier and the two surfaces' shared wording.
 
 ### Interrupt and truncation
 
@@ -236,6 +273,7 @@ avatar-forge/
 │   ├── index.html                 # Avatar stage: video, identity lockup, composer, stop, mic, captions
 │   ├── style.css                  # Styles (speaking-state colour, caption band, stop button, chips)
 │   ├── app.js                     # Audio capture/playback, WebRTC, WebSocket, UI logic, Teams host gate
+│   ├── thinking-cue.js            # Shared wait-indicator copy + timings (channels A/B and C read the same file)
 │   ├── acs-join.html / .js        # Browser joiner: join a Teams meeting via the ACS Calling Web SDK
 │   ├── companion*.html / .js      # Optional in-meeting control panel + its configurableTabs page
 │   └── teams.js                   # No-op unless in Teams: loads Teams JS SDK, mirrors host theme

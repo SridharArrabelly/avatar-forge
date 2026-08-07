@@ -553,6 +553,8 @@ class BrowserVoiceBridge:
         # ON TOP of the WebRTC track and double her voice in the meeting.
         self._avatar_video = avatar_video
         self._thinking = False
+        self._thinking_function_name: str | None = None
+        self._thinking_expected: str | None = None
 
     # ───────── Voice Live -> browser (outbound) ─────────
 
@@ -611,7 +613,17 @@ class BrowserVoiceBridge:
                 if self.handler is not None:
                     await self.handler.interrupt()
             else:
-                await self._send_thinking(True)
+                # Neutral cue: she is working on it. Nothing yet says whether a
+                # search is involved, so the tile shows the wait without
+                # claiming a cause. expectedTool is a prediction the browser
+                # only promotes once the turn has run long enough that a search
+                # is the only explanation.
+                await self._send_thinking(True, expected=msg.get("expectedTool"))
+
+        elif mtype == "function_call_started":
+            # A real tool event — outranks the prediction, so name it now.
+            if not self._suppress_current_response:
+                await self._send_thinking(True, msg.get("functionName"))
 
         elif mtype == "transcript_delta" and msg.get("role") == "assistant":
             # First token of the answer — the wait is over, drop the cue.
@@ -627,7 +639,12 @@ class BrowserVoiceBridge:
         elif mtype == "stop_playback":
             await self._send_stop_audio()
 
-    async def _send_thinking(self, active: bool) -> None:
+    async def _send_thinking(
+        self,
+        active: bool,
+        function_name: str | None = None,
+        expected: str | None = None,
+    ) -> None:
         """Tell the browser to show/hide the "thinking" cue on the video tile.
 
         The web stage covers the wait for the first token with an on-screen
@@ -635,12 +652,23 @@ class BrowserVoiceBridge:
         Voice Live's built-in interim response is not available here — it needs
         the model binding, and the in-call session uses the agent binding.
         """
-        if self._closed or active == self._thinking:
+        if self._closed or (
+            active == self._thinking
+            and function_name == self._thinking_function_name
+            and expected == self._thinking_expected
+        ):
             return
         self._thinking = active
+        self._thinking_function_name = function_name if active else None
+        self._thinking_expected = expected if active else None
         logger.info(f"[browser {self.client_id}] thinking cue -> {active}")
         try:
-            await self._ws.send_text(json.dumps({"type": "thinking", "active": active}))
+            await self._ws.send_text(json.dumps({
+                "type": "thinking",
+                "active": active,
+                "functionName": function_name,
+                "expectedFunctionName": expected,
+            }))
         except Exception as e:  # noqa: BLE001 — a cue must never kill the call
             logger.debug(f"[browser {self.client_id}] thinking cue failed: {e}")
 

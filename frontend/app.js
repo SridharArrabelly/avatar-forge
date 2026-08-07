@@ -35,26 +35,29 @@ let avatarRevealWatchdog = null;
 // first token) so the user isn't staring at a silent face during the 2-3s
 // grounding gap. Purely visual — never touches the audio/avatar pipeline.
 let thinkingShowTimer = null;
-let thinkingRotateTimer = null;
 let thinkingSlowTimer = null;
+let thinkingPredictTimer = null;
 let thinkingMaxTimer = null;
 let thinkingActive = false;
-let thinkingCaptionIndex = 0;
+// Set when a real tool event named the retrieval. A prediction must never
+// overwrite the truth.
+let thinkingAuthoritative = false;
 // Monotonic generation token. Bumped every time a new turn arms the indicator,
 // so a late event from a previous (e.g. cancelled) response can't show or
 // cancel the current turn's pill.
 let thinkingGen = 0;
-const THINKING_CAPTIONS = [
-    'Looking through the records…',
-    'Checking the latest information…',
-    'Pulling the details together…',
-];
-const THINKING_SLOW_CAPTION = 'Just a moment — getting you a reliable answer…';
+// Caption for the phase currently being shown. Empty means the neutral,
+// dots-only phase: the answer is being worked on, but nothing has told us yet
+// whether it needs retrieval, so any wording would be a guess.
+let thinkingCaption = '';
+// Wording and timings are shared with the in-call tile — see thinking-cue.js.
+// Held as null rather than defaulted if that script is missing, so a failure to
+// load costs the cue and nothing else.
+const CUE = (typeof window !== 'undefined' && window.THINKING_CUE) || null;
+// How long a wait must last before it is worth interrupting the user's view
+// with an indicator at all. Channel-specific: the meeting tile shows its cue
+// sooner, because a room that hears silence starts talking over her.
 const THINKING_SHOW_DELAY_MS = 700;
-const THINKING_ROTATE_MS = 2200;
-const THINKING_SLOW_MS = 3500;
-// Hard ceiling so the pill can never get stuck if response_done never arrives.
-const THINKING_MAX_MS = 25000;
 let peerConnection = null;
 let avatarVideoElement = null;
 let avatarAudioElement = null;
@@ -891,7 +894,10 @@ function handleServerMessage(msg) {
             currentAssistantContentEl = null;
             addMessage('assistant', '');
             isSpeaking = true;
-            startThinking();
+            startThinking(msg.expectedTool);
+            break;
+        case 'function_call_started':
+            upgradeThinking(msg.functionName);
             break;
         case 'response_done':
             isSpeaking = false;
@@ -1231,16 +1237,71 @@ function revealAvatarVideo(mediaPlayer) {
 }
 
 // ===== Avatar "thinking" indicator =====
-// Scheduled on response_created; only actually shown if the first answer token
-// hasn't arrived within THINKING_SHOW_DELAY_MS, so fast turns never flash it.
-function startThinking() {
+// Three phases, because "a response started", "a search is running" and "this
+// is taking a while" are different facts that become knowable at different
+// times:
+//
+//   response_created        -> dots only. She is working; no claim about how.
+//   +THINKING_PREDICT_MS    -> if the turn is still running, the predicted
+//                              retrieval is now the only explanation, so name it.
+//   function_call_started   -> a real tool event; overrides any prediction.
+//   +THINKING_SLOW_MS       -> "taking longer", measured from the current phase.
+//
+// The dots-only phase matters: without it the user gets no acknowledgement that
+// the question was heard and starts repeating it over the answer.
+function thinkingCaptionFor(functionName) {
+    return CUE ? CUE.captionFor(functionName) : '';
+}
+
+function startThinking(expectedTool) {
     stopThinking();
     // Suppress while the avatar itself is still loading in (greeting turn) or
     // when there's no avatar on screen.
-    if (!(isConnected && avatarEnabled) || avatarConnecting) return;
+    if (!CUE || !(isConnected && avatarEnabled) || avatarConnecting) return;
     const gen = ++thinkingGen;
-    thinkingCaptionIndex = 0;
+    thinkingCaption = '';
     thinkingShowTimer = setTimeout(() => showThinking(gen), THINKING_SHOW_DELAY_MS);
+    // Agent binding relays no tool events, so a prediction is the only way this
+    // turn will ever be named. Hold it until the turn proves itself slow.
+    const predicted = thinkingCaptionFor(expectedTool);
+    if (predicted) {
+        thinkingPredictTimer = setTimeout(() => {
+            thinkingPredictTimer = null;
+            if (gen !== thinkingGen || thinkingAuthoritative) return;
+            applyThinkingCaption(predicted);
+        }, CUE.PREDICT_MS);
+    }
+}
+
+// A real tool event named the retrieval. Upgrade in place rather than
+// re-arming: startThinking() bumps the generation, which would cancel the show
+// still pending from response_created and lose the indicator entirely.
+function upgradeThinking(functionName) {
+    const caption = thinkingCaptionFor(functionName);
+    if (!caption) return;
+    if (!thinkingActive && !thinkingShowTimer) {
+        // No turn armed (tool signal arrived first, or the pill was torn down).
+        // The tool is known, so don't sit through the prediction delay.
+        startThinking(functionName);
+        thinkingAuthoritative = true;
+        applyThinkingCaption(caption);
+        return;
+    }
+    thinkingAuthoritative = true;
+    applyThinkingCaption(caption);
+}
+
+function applyThinkingCaption(caption) {
+    thinkingCaption = caption;
+    // Not on screen yet — showThinking will pick this up when it fires.
+    if (!thinkingActive) return;
+    setThinkingCaption(caption);
+    // Restart the escalation so "taking longer" is measured from the wording
+    // the user is actually reading, not from the neutral phase before it.
+    if (thinkingSlowTimer) clearTimeout(thinkingSlowTimer);
+    thinkingSlowTimer = setTimeout(() => {
+        setThinkingCaption(CUE.SLOW_CAPTION);
+    }, CUE.SLOW_MS);
 }
 
 function showThinking(gen) {
@@ -1251,33 +1312,34 @@ function showThinking(gen) {
     const el = document.getElementById('avatarThinking');
     if (!el) return;
     thinkingActive = true;
-    setThinkingCaption(THINKING_CAPTIONS[0]);
+    setThinkingCaption(thinkingCaption);
     el.classList.add('visible');
-    thinkingRotateTimer = setInterval(() => {
-        thinkingCaptionIndex = (thinkingCaptionIndex + 1) % THINKING_CAPTIONS.length;
-        setThinkingCaption(THINKING_CAPTIONS[thinkingCaptionIndex]);
-    }, THINKING_ROTATE_MS);
     thinkingSlowTimer = setTimeout(() => {
-        if (thinkingRotateTimer) { clearInterval(thinkingRotateTimer); thinkingRotateTimer = null; }
-        setThinkingCaption(THINKING_SLOW_CAPTION);
-    }, THINKING_SLOW_MS);
+        setThinkingCaption(CUE.SLOW_CAPTION);
+    }, CUE.SLOW_MS);
     // Failsafe: force-clear if the answer/response_done never arrives.
-    thinkingMaxTimer = setTimeout(stopThinking, THINKING_MAX_MS);
+    thinkingMaxTimer = setTimeout(stopThinking, CUE.MAX_MS);
 }
 
 function setThinkingCaption(text) {
     const t = document.getElementById('avatarThinkingText');
-    if (t) t.textContent = text;
+    if (t) t.textContent = text || '';
+    // Collapse the empty label in the neutral phase so the pill stays a tidy
+    // cluster of dots instead of a lopsided blank.
+    const el = document.getElementById('avatarThinking');
+    if (el) el.classList.toggle('dots-only', !text);
 }
 
 function stopThinking() {
     // Invalidate any in-flight scheduled show so it can't fire after teardown.
     thinkingGen++;
     if (thinkingShowTimer) { clearTimeout(thinkingShowTimer); thinkingShowTimer = null; }
-    if (thinkingRotateTimer) { clearInterval(thinkingRotateTimer); thinkingRotateTimer = null; }
+    if (thinkingPredictTimer) { clearTimeout(thinkingPredictTimer); thinkingPredictTimer = null; }
     if (thinkingSlowTimer) { clearTimeout(thinkingSlowTimer); thinkingSlowTimer = null; }
     if (thinkingMaxTimer) { clearTimeout(thinkingMaxTimer); thinkingMaxTimer = null; }
     thinkingActive = false;
+    thinkingAuthoritative = false;
+    thinkingCaption = '';
     const el = document.getElementById('avatarThinking');
     if (el) el.classList.remove('visible');
 }
