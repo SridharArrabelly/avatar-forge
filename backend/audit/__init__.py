@@ -49,6 +49,47 @@ logger = logging.getLogger(__name__)
 # cost of this feature in a deployment that does not use it.
 _queue = None
 
+# Resolved once at startup, never on the hot path. A *failing* import is not
+# cached by Python — it re-walks sys.path on every attempt — so trying this
+# per turn would be exactly the kind of cost this module refuses to incur.
+_trace_id = None
+
+
+def _resolve_trace_id():
+    """Return a callable giving the current W3C trace id, or None.
+
+    App Insights records the OpenTelemetry trace id as ``operation_Id``, so
+    capturing it on the turn is what later allows a slow request found in App
+    Insights to be joined to that turn's full content in Cosmos — without
+    putting any content into App Insights itself.
+
+    OpenTelemetry is deliberately not a dependency yet. Until it is, this
+    returns None and the field stays null; when it arrives, capture starts
+    working with no further change here.
+    """
+    try:
+        from opentelemetry import trace
+    except Exception:
+        return None
+
+    def _current() -> Optional[str]:
+        ctx = trace.get_current_span().get_span_context()
+        if ctx is None or not ctx.is_valid:
+            return None
+        return format(ctx.trace_id, "032x")
+
+    return _current
+
+
+def _capture_operation_id() -> Optional[str]:
+    """Best-effort correlation id. Returns None rather than raising, ever."""
+    if _trace_id is None:
+        return None
+    try:
+        return _trace_id()
+    except Exception:
+        return None
+
 
 def is_enabled() -> bool:
     return _queue is not None
@@ -106,6 +147,8 @@ async def init_audit() -> None:
     try:
         from .queue import AuditQueue
 
+        global _trace_id
+        _trace_id = _resolve_trace_id()
         sink = await _build_sink()
         _queue = AuditQueue(
             sink,
@@ -132,6 +175,8 @@ async def shutdown_audit() -> None:
         logger.debug(f"[AUDIT] drain failed: {e}")
     finally:
         _queue = None
+        global _trace_id
+        _trace_id = None
     try:
         from . import foundry
 
@@ -173,7 +218,11 @@ def start_turn(handler) -> None:
         if pending:
             record.user_text, record.user_item_id, record.user_at = pending
             handler._audit_pending_user = None
+        # Attach before correlating. Correlation is the least valuable field on
+        # the record, so it must never be positioned where its failure could
+        # cost us the question, the tool results and the answer.
         handler._audit_record = record
+        record.operation_id = _capture_operation_id()
     except Exception as e:
         logger.debug(f"[AUDIT] start_turn failed: {e}")
 

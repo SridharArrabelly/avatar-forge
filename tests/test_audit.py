@@ -85,6 +85,17 @@ check("tool provenance", doc["tools"][0]["source"], "in-process")
 check("ttl is retention in seconds", doc["ttl"], 365 * 86400)
 check("ttl omitted when retention disabled",
       "ttl" not in record.to_document(retention_days=0), True)
+# The correlation handle. Present in the document from day one — even though
+# nothing populates it yet — so that shipping telemetry later is an additive
+# change rather than a second revision of a schema already holding real records.
+check("correlation field is always in the document shape",
+      "operationId" in doc["meta"], True)
+check("correlation is null until telemetry ships", doc["meta"]["operationId"], None)
+correlated = TurnRecord(session_id="sess-1", turn_index=3)
+correlated.operation_id = "4bf92f3577b34da6a3ce929d0e0e4736"
+check("correlation id round-trips when set",
+      correlated.to_document()["meta"]["operationId"],
+      "4bf92f3577b34da6a3ce929d0e0e4736")
 
 
 print()
@@ -320,6 +331,51 @@ try:
           late._audit_pending_user[0], "and in April?")
 finally:
     audit._queue = None
+
+
+print()
+print("trace correlation is resolved once, and degrades to null")
+
+# OpenTelemetry is deliberately not a dependency yet, so resolution must return
+# None rather than raise. Resolving once at startup also matters for latency: a
+# *failing* import is not cached by Python and re-walks sys.path every attempt,
+# so doing this per turn would put real cost on the hot path.
+check("resolution is safe when OpenTelemetry is absent",
+      audit._resolve_trace_id() is None or callable(audit._resolve_trace_id()), True)
+
+audit._queue = _StubQueue()
+try:
+    h2 = FakeHandler()
+    audit.start_turn(h2)
+    check("no correlation captured when nothing resolved",
+          h2._audit_record.operation_id, None)
+
+    audit._trace_id = lambda: "4bf92f3577b34da6a3ce929d0e0e4736"
+    traced = FakeHandler()
+    audit.start_turn(traced)
+    check("correlation captured onto the turn when a tracer is present",
+          traced._audit_record.operation_id, "4bf92f3577b34da6a3ce929d0e0e4736")
+
+    # Correlation is the least valuable field on the record. A tracer that
+    # throws must cost exactly that field — never the question, the tool
+    # results and the answer, which is what happens if the capture is
+    # positioned before the record is attached to the handler.
+    def _boom():
+        raise RuntimeError("tracer exploded")
+
+    audit._trace_id = _boom
+    survived = FakeHandler()
+    audit.start_turn(survived)
+    check("a failing tracer still yields a record",
+          getattr(survived, "_audit_record", None) is not None, True)
+    check("a failing tracer costs only the correlation field",
+          survived._audit_record.operation_id, None)
+    audit.record_user_text(survived, "what did we decide?")
+    check("a failing tracer leaves the turn fully usable",
+          survived._audit_record.user_text, "what did we decide?")
+finally:
+    audit._queue = None
+    audit._trace_id = None
 
 
 print()

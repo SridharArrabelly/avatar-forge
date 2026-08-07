@@ -149,7 +149,7 @@ One document per **turn** — the natural audit unit.
   "identity":  { "userId": null, "displayName": null, "tenantId": null },
   "meta":      { "agentName": "...", "model": "...", "appVersion": "...",
                  "conversationId": "...", "responseId": "...",
-                 "toolsPending": false },
+                 "toolsPending": false, "operationId": null },
   "ttl": 31536000
 }
 ```
@@ -167,6 +167,16 @@ Notes:
   forever.
 - `id` is deterministic, so writes are idempotent upserts — a reconciliation
   updates the same document rather than creating a second one.
+- `meta.operationId` is the correlation handle. App Insights records the
+  OpenTelemetry trace id as `operation_Id`, so once telemetry ships this is what
+  lets a slow turn spotted in App Insights be joined to that turn's full content
+  here — keeping content out of App Insights without losing the ability to move
+  between the two. **It is `null` today**, because OpenTelemetry is deliberately
+  not yet a dependency; the field exists now so that arrival is an additive
+  change rather than a revision of a schema already holding real records.
+  Capture is best-effort by design: it happens *after* the record is attached, so
+  a tracer that fails costs this one field and never the question, tools or
+  answer.
 
 ---
 

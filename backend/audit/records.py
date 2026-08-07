@@ -163,6 +163,12 @@ class TurnRecord:
     model: Optional[str] = None
     app_version: Optional[str] = None
 
+    # App Insights surfaces the OpenTelemetry trace id as ``operation_Id``.
+    # Carrying it here is what lets a slow turn found in App Insights be joined
+    # to its full content in Cosmos. Null until telemetry ships; the field
+    # exists now so that arrival is an additive change, not a schema revision.
+    operation_id: Optional[str] = None
+
     user_id: Optional[str] = None
     display_name: Optional[str] = None
     tenant_id: Optional[str] = None
@@ -210,6 +216,7 @@ class TurnRecord:
                 "conversationId": self.conversation_id,
                 "responseId": self.response_id,
                 "toolsPending": self.tools_pending,
+                "operationId": self.operation_id,
             },
         }
         if retention_days > 0:
