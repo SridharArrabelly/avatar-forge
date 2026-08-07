@@ -18,6 +18,7 @@ from azure.ai.voicelive.models import (
 )
 
 from .. import audit
+from ..logsafe import fingerprint, keys_only
 from .functions import execute_function
 
 logger = logging.getLogger(__name__)
@@ -94,7 +95,7 @@ async def _send_retrieval_cue(handler, raw) -> None:
     # produces TWO responses — the tool call, then the answer — and a surviving
     # prediction would re-announce a search on the second one, after it finished.
     handler._expected_tool = None
-    logger.info(f"[TOOL] retrieval cue -> {name} (from '{raw}')")
+    logger.info(f"[TOOL] retrieval cue -> {name} [{fingerprint(raw)}]")
     await handler.send_message({
         "type": "function_call_started",
         "functionName": name,
@@ -341,7 +342,7 @@ async def handle_event(handler, event, connection):
             transcript = getattr(event, "transcript", "") or ""
             item_id = getattr(event, "item_id", "") or getattr(event, "itemId", "")
             if transcript.strip():
-                logger.info(f"User transcript (item={item_id}): {transcript!r}")
+                logger.info(f"User transcript (item={item_id}): [{fingerprint(transcript)}]")
                 audit.record_user_text(handler, transcript, item_id)
                 # _last_topic is sticky so a short follow-up can inherit it;
                 # _expected_tool is this turn's prediction and gets retired as
@@ -507,7 +508,7 @@ async def handle_conversation_item(handler, event, connection):
             return
 
         arguments = args_done.arguments
-        logger.info(f"Function args: {arguments}")
+        logger.info(f"Function args: {keys_only(arguments)}")
 
         # Kick off function execution immediately, in parallel with waiting
         # for RESPONSE_DONE. The realtime API requires the prior response to

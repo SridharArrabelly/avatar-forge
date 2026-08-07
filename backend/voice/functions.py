@@ -13,6 +13,7 @@ nothing arrives here.
 import json
 import logging
 
+from ..logsafe import fingerprint
 from .tools import search_minutes, search_web
 
 logger = logging.getLogger(__name__)
@@ -23,7 +24,9 @@ async def execute_function(name: str, arguments: str) -> dict:
     try:
         args = json.loads(arguments) if arguments else {}
     except json.JSONDecodeError:
-        logger.warning(f"Tool {name}: arguments were not valid JSON: {arguments!r}")
+        logger.warning(
+            f"Tool {name}: arguments were not valid JSON: [{fingerprint(arguments)}]"
+        )
         args = {}
     if not isinstance(args, dict):
         args = {}
