@@ -23,12 +23,42 @@ deploys exactly the first six and nothing else.
 
 ## Prerequisites
 
+Before starting, confirm the following.
+
+### Tools
+
+- [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli) (`az`)
 - [Azure Developer CLI](https://aka.ms/azd-install) (`azd`)
-- [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli) (for `az login`)
-- An Azure subscription with **Owner** (or Contributor + User Access Administrator) —
-  the template grants RBAC roles
-- Docker Desktop **running** (the `Dockerfile` is built during `azd up`/`azd deploy`;
-  you don't call `docker build`/`run` yourself — remote ACR build is also supported)
+- [uv](https://docs.astral.sh/uv/) — the deployment hooks run the Python checks and
+  data-plane setup scripts through `uv run`
+- Docker Desktop **running** for a local image build. The project also supports the
+  remote ACR build configured in `azure.yaml`, so Docker Desktop is not required when
+  that option is available.
+
+### Azure access for the deploying user
+
+On the target subscription, the identity running `azd up` needs:
+
+- **Contributor**, to create and update the resource group and Azure resources
+- **User Access Administrator**, to create the RBAC assignments that the template
+  applies to managed identities
+
+**Owner** can be used instead because it includes both capabilities. Contributor alone
+is not sufficient: it cannot create role assignments. If you reuse Foundry or AI Search
+resources in other resource groups, the same deploying identity also needs User Access
+Administrator (or Owner) on those resource groups.
+
+### Authenticate before deployment
+
+```powershell
+az login
+azd auth login
+az account show
+```
+
+The `az` and `azd` sessions must target the tenant and subscription where the deployment
+will be created. The application’s managed-identity roles are assigned by the deployment;
+they are separate from the roles required by the person running `azd up`.
 
 ## Regions
 
