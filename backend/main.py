@@ -13,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .api import routes, websocket as ws
 from .acs import build_acs_router
+from .audit import init_audit, shutdown_audit
 from .config import DEVELOPER_MODE, HOST, PORT, configure_logging
 from .voice.auth import close_credential, create_credential
 from .voice.catalog import close_search_client, prewarm_catalog
@@ -75,6 +76,10 @@ async def _prewarm_startup() -> None:
 async def lifespan(app: FastAPI):
     """Startup/shutdown hook: pre-warms credentials, closes outstanding sessions on shutdown."""
     logger.info("Avatar Forge server starting...")
+    # Audit is awaited rather than fired-and-forgotten: it builds its Cosmos
+    # client and acquires the first managed-identity token here, so no
+    # conversation ever pays that cost mid-turn. It is a no-op when disabled.
+    await init_audit()
     # Fire-and-forget sequenced pre-warm so startup is not blocked but the
     # catalogue fetch benefits from a hot token cache.
     asyncio.create_task(_prewarm_startup())
@@ -84,6 +89,9 @@ async def lifespan(app: FastAPI):
     # Web IQ client and the SearchClient (both of which use the credential),
     # THEN close the credential's underlying aiohttp.ClientSession.
     await ws.shutdown_all()
+    # Drain audit before the credential closes — the reconciler and the Cosmos
+    # sink both still need it to flush what is queued.
+    await shutdown_audit()
     await close_web_client()
     await close_search_client()
     await close_credential()

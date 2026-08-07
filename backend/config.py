@@ -278,6 +278,44 @@ def _list(name: str, default: list[str]) -> list[str]:
     return items or default
 
 
+# --- Audit logging (issue #30) ------------------------------------------------
+# A durable record of every conversation turn: the user's question, what the
+# tools returned, and the answer the model gave. Off by default — when disabled
+# nothing is constructed, no capture code runs, and no Azure resource is
+# deployed, so behaviour and latency are exactly as before.
+#
+# Deliberately best-effort: the queue is bounded and drops rather than ever
+# blocking the event loop that carries audio to the user. See backend/audit/.
+ENABLE_AUDIT = _bool("ENABLE_AUDIT", False)
+
+# cosmos = Azure Cosmos DB for NoSQL (production, Entra RBAC, per-item TTL)
+# file   = newline-delimited JSON on disk (local development)
+# none   = accept and discard (useful for latency A/B testing)
+AUDIT_SINK = _str("AUDIT_SINK", "cosmos").strip().lower()
+
+AUDIT_COSMOS_ENDPOINT = _str("AUDIT_COSMOS_ENDPOINT", "")
+AUDIT_COSMOS_DATABASE = _str("AUDIT_COSMOS_DATABASE", "audit")
+AUDIT_COSMOS_CONTAINER = _str("AUDIT_COSMOS_CONTAINER", "turns")
+
+# Written onto each record as a Cosmos-native `ttl`, so retention needs no
+# cleanup job. 0 or negative disables expiry.
+AUDIT_RETENTION_DAYS = int(_str("AUDIT_RETENTION_DAYS", "365"))
+
+# Bounded so a sink outage costs memory that is capped rather than unbounded.
+AUDIT_QUEUE_MAX = int(_str("AUDIT_QUEUE_MAX", "1000"))
+
+# Mask obvious secrets/PII patterns in captured text before it is persisted.
+AUDIT_REDACT = _bool("AUDIT_REDACT", True)
+
+# Caps per-tool payload size, bounding both writer CPU and storage cost. Tool
+# results are the largest field by far (retrieved passages).
+AUDIT_TOOL_PAYLOAD_MAX_KB = int(_str("AUDIT_TOOL_PAYLOAD_MAX_KB", "32"))
+
+# Agent binding only: fetch tool calls/results from the Foundry conversations
+# API after the turn has finished. Never runs on the turn path.
+AUDIT_RECONCILE_AGENT_TOOLS = _bool("AUDIT_RECONCILE_AGENT_TOOLS", True)
+
+
 def get_ui_defaults() -> dict:
     """Settings sent to the frontend on /api/config.
 

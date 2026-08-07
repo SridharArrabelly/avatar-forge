@@ -17,6 +17,9 @@ For local development see [development.md](development.md); for env vars see
 - **Windows VM + NSG + public FQDN, and a second Azure Bot with the Teams calling
   channel** *(channel D only)* — the media host; created only when the in-call profile
   is selected and its inputs are set. This is the one costly addition (~$283/month).
+- **Azure Cosmos DB for NoSQL** (serverless, local auth disabled) *(audit only)* —
+  the conversation audit trail; created only when `ENABLE_AUDIT=true`. See
+  [audit.md](audit.md).
 
 Everything after the first six lines is additive and conditional: a `web` profile
 deploys exactly the first six and nothing else.

@@ -17,6 +17,7 @@ from azure.ai.voicelive.models import (
     ServerEventType,
 )
 
+from .. import audit
 from .functions import execute_function
 
 logger = logging.getLogger(__name__)
@@ -203,6 +204,9 @@ async def handle_event(handler, event, connection):
 
         elif event_type == ServerEventType.RESPONSE_AUDIO_TRANSCRIPT_DONE:
             transcript = getattr(event, "transcript", "")
+            # The *_DONE event carries the complete transcript, so audit never
+            # has to accumulate deltas and the streaming path stays untouched.
+            audit.record_assistant_text(handler, transcript)
             await handler.send_message({
                 "type": "transcript_done",
                 "role": "assistant",
@@ -220,6 +224,7 @@ async def handle_event(handler, event, connection):
 
         elif event_type == ServerEventType.RESPONSE_TEXT_DONE:
             text = getattr(event, "text", "")
+            audit.record_assistant_text(handler, text)
             await handler.send_message({
                 "type": "text_done",
                 "text": text,
@@ -241,6 +246,14 @@ async def handle_event(handler, event, connection):
                 )
             response_id = getattr(event, "response", None)
             rid = response_id.id if response_id and hasattr(response_id, "id") else ""
+            # Open the audit record for this turn, and capture the Foundry
+            # conversation id while it is available. In agent binding this is
+            # the ONLY moment it is offered: there is no way to enumerate
+            # conversations afterwards, so a turn whose id is missed here can
+            # never have its tool calls recovered. Costs two attribute reads.
+            audit.start_turn(handler)
+            cid = getattr(response_id, "conversation_id", None) if response_id else None
+            audit.set_conversation(handler, cid, rid)
             expected = getattr(handler, "_expected_tool", None)
             if expected:
                 logger.info(f"[TOOL] predicted retrieval for this turn: {expected}")
@@ -300,6 +313,12 @@ async def handle_event(handler, event, connection):
                 )
 
             await handler.send_message({"type": "response_done"})
+            # Hand the completed turn to the background writer. This is the only
+            # audit call that does real work, and all of it happens after the
+            # queue: submit() is put_nowait and returns immediately.
+            audit.finish_turn(
+                handler, status=str(status) if status else None, output_types=out_types
+            )
 
         # Speech detection
         elif event_type == ServerEventType.INPUT_AUDIO_BUFFER_SPEECH_STARTED:
@@ -323,6 +342,7 @@ async def handle_event(handler, event, connection):
             item_id = getattr(event, "item_id", "") or getattr(event, "itemId", "")
             if transcript.strip():
                 logger.info(f"User transcript (item={item_id}): {transcript!r}")
+                audit.record_user_text(handler, transcript, item_id)
                 # _last_topic is sticky so a short follow-up can inherit it;
                 # _expected_tool is this turn's prediction and gets retired as
                 # soon as a real tool event supersedes it.
@@ -493,11 +513,23 @@ async def handle_conversation_item(handler, event, connection):
         # for RESPONSE_DONE. The realtime API requires the prior response to
         # finish before we can create the follow-up response, but there's no
         # reason to keep the tool idle until then.
+        _tool_started_ms = _now_ms()
         exec_task = asyncio.create_task(execute_function(function_name, arguments))
 
         await handler._wait_for_event(connection, {ServerEventType.RESPONSE_DONE})
 
         result = await exec_task
+        # Model binding gives perfect tool fidelity for free: the call happened
+        # in our own process, so we hold the exact arguments and return value.
+        # Enqueued by reference — the writer owns the cost of serialising it.
+        audit.record_tool(
+            handler,
+            name=function_name,
+            args=arguments,
+            results=result,
+            elapsed_ms=_now_ms() - _tool_started_ms,
+            error=result.get("error") if isinstance(result, dict) else None,
+        )
 
         await handler.send_message({
             "type": "function_call_result",

@@ -237,6 +237,32 @@ carry them:
 > honest: both modes run the same code path production runs, with nothing switched at
 > the edge. See [voice-binding.md](voice-binding.md) for the measured trade-off.
 
+## Conversation audit trail
+
+Persists every turn's user question, tool results, and model answer. **Off by
+default**; when off it costs nothing and deploys nothing. Full design, record
+schema, and query examples in **[audit.md](audit.md)**.
+
+> [!IMPORTANT]
+> Enabling this records the substance of conversations. Confirm retention,
+> access control, and any notice/consent obligation before switching it on in an
+> environment real people use.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `ENABLE_AUDIT` | `false` | Master switch. Also a **Bicep parameter** — `azd env set ENABLE_AUDIT true` provisions the Cosmos account, database, container and the app's data-plane role assignment. While `false`, none of it is created. |
+| `AUDIT_SINK` | `cosmos` | Where records go. `cosmos` (production), `file` (JSONL at `audit-log.jsonl`, for local development), or `none` (accept and discard — used to isolate storage cost during latency A/B testing). Falls back to `file` if Cosmos is unreachable or `AUDIT_COSMOS_ENDPOINT` is unset. |
+| `AUDIT_COSMOS_ENDPOINT` | — | Cosmos account endpoint. Set automatically by infra when audit is enabled; only set by hand for a BYO Cosmos account. |
+| `AUDIT_COSMOS_DATABASE` | `audit` | Database name. |
+| `AUDIT_COSMOS_CONTAINER` | `turns` | Container name. Partition key is `/sessionId`. |
+| `AUDIT_RETENTION_DAYS` | `365` | Written to each record as a Cosmos-native `ttl`, so expiry needs no cleanup job. `0` or negative keeps records forever. Also a Bicep parameter. |
+| `AUDIT_REDACT` | `true` | Mask obvious secret/PII patterns (bearer tokens, JWTs, connection-string secrets, card-like digit runs) in text, tool arguments and tool results before persisting. Defence in depth, **not** a compliance control — see [audit.md](audit.md#redaction). |
+| `AUDIT_QUEUE_MAX` | `1000` | Bounded capture queue, so a sink outage costs capped memory. When full, records are **dropped and counted** rather than awaited — blocking here would stall the event loop carrying audio. |
+| `AUDIT_TOOL_PAYLOAD_MAX_KB` | `32` | Cap on each captured tool payload. Retrieved passages are by far the largest field. |
+| `AUDIT_RECONCILE_AGENT_TOOLS` | `true` | In **agent** binding, recover tool name/arguments/results from the Foundry conversation after the turn has finished. Never runs on the turn path. Set `false` to skip it — records are still written, with tool detail absent and `meta.toolsPending` left `true`. |
+
+---
+
 ## Runtime tuning
 
 | Variable | Default | Purpose |

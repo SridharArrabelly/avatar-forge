@@ -264,6 +264,7 @@ Full walkthrough — building the search index, smoke tests, developer mode — 
 | **[docs/architecture.md](docs/architecture.md)** | System design, tool-calling accuracy, meeting-catalogue injection, frontend UX, project structure. |
 | **[docs/voice-binding.md](docs/voice-binding.md)** | Agent mode vs model mode: what binding Voice Live straight to a realtime model gives, what it costs, and the measured numbers. Also why Voice Live itself is in the path at all — dropping it costs the avatar and the custom voice. |
 | **[docs/auth.md](docs/auth.md)** | `DefaultAzureCredential`, required roles, startup pre-warm, IMDS skip, token caching. |
+| **[docs/audit.md](docs/audit.md)** | The optional conversation audit trail: what each binding can prove, how agent-mode tool I/O is recovered, the latency rules, storage and retention. Off by default. |
 
 **Per component**
 

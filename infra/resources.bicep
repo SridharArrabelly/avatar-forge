@@ -112,6 +112,14 @@ param browserJoinVideoEnabled string = ''
 
 var acsEnabled = toLower(enableAcs) == 'true'
 
+// ───────── audit trail (#30) ─────────
+@description('Enable the conversation audit trail ("true"/"false"). When not "true" (default), no Cosmos account is created and the container behaves as today.')
+param enableAudit string = 'false'
+@description('Days each audit record is retained, written as a per-item Cosmos TTL.')
+param auditRetentionDays string = '365'
+
+var auditEnabled = toLower(enableAudit) == 'true'
+
 var abbrs = loadJsonContent('abbreviations.json')
 
 // ───────── Identity ─────────
@@ -298,6 +306,29 @@ module acsRoleForApp 'modules/acsRoleForApp.bicep' = if (acsEnabled) {
   }
 }
 
+// ───────── conversation audit trail (#30) ─────────
+// Only provisioned when auditing is explicitly enabled. Additive + conditional,
+// mirroring the ACS opt-in: a deploy with enableAudit=false never creates Cosmos.
+module cosmosAudit 'modules/cosmosAudit.bicep' = if (auditEnabled) {
+  name: 'cosmos-audit'
+  params: {
+    name: toLower('${abbrs.cosmosDb}-${environmentName}-${resourceToken}')
+    location: location
+    tags: tags
+  }
+}
+
+// Grant the Container App's managed identity data-plane write access. The
+// account disables local auth, so this Cosmos SQL role assignment is the only
+// way in — no key, no connection string.
+module cosmosRoleForApp 'modules/cosmosRoleForApp.bicep' = if (auditEnabled) {
+  name: 'cosmos-role-for-app'
+  params: {
+    accountName: cosmosAudit!.outputs.accountName
+    appPrincipalId: uami.outputs.principalId
+  }
+}
+
 // ───────── Container App ─────────
 var foundryEndpointEffective = createFoundry ? foundry!.outputs.accountEndpoint : 'https://${existingFoundryAccountName}.services.ai.azure.com/'
 var foundryProjectEndpointEffective = createFoundry ? foundry!.outputs.projectEndpoint : existingFoundryProjectEndpoint
@@ -353,6 +384,11 @@ module app 'modules/containerApp.bicep' = {
     acsRequireWakePhrase: acsRequireWakePhrase
     acsAvatarVideoEnabled: acsAvatarVideoEnabled
     browserJoinVideoEnabled: browserJoinVideoEnabled
+    enableAudit: enableAudit
+    auditCosmosEndpoint: auditEnabled ? cosmosAudit!.outputs.endpoint : ''
+    auditCosmosDatabase: auditEnabled ? cosmosAudit!.outputs.databaseName : ''
+    auditCosmosContainer: auditEnabled ? cosmosAudit!.outputs.containerName : ''
+    auditRetentionDays: auditRetentionDays
   }
 }
 
@@ -369,6 +405,7 @@ output searchEndpoint string = searchEndpointEffective
 output appInsightsConnectionString string = appInsightsConnectionStringEffective
 output effectiveAgentProjectName string = createFoundry ? 'proj-${environmentName}' : agentProjectName
 output acsEndpoint string = acsEnabled ? acs!.outputs.endpoint : ''
+output auditCosmosEndpoint string = auditEnabled ? cosmosAudit!.outputs.endpoint : ''
 
 // The two values the agent setup script needs to wire the web tool. When Bing is
 // deployed these are the names that were actually created, so they flow into the

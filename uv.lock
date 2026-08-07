@@ -215,6 +215,7 @@ dependencies = [
     { name = "azure-communication-callautomation" },
     { name = "azure-communication-identity" },
     { name = "azure-core" },
+    { name = "azure-cosmos" },
     { name = "azure-identity" },
     { name = "azure-search-documents" },
     { name = "fastapi" },
@@ -236,6 +237,7 @@ requires-dist = [
     { name = "azure-communication-callautomation", specifier = ">=1.6.0" },
     { name = "azure-communication-identity", specifier = ">=1.5.0" },
     { name = "azure-core", specifier = ">=1.41.0" },
+    { name = "azure-cosmos", specifier = ">=4.16.3" },
     { name = "azure-identity", specifier = ">=1.26.0b2" },
     { name = "azure-search-documents", specifier = ">=12.0.0" },
     { name = "fastapi", specifier = ">=0.141.1" },
@@ -321,6 +323,19 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/a6/f3/b416179e408990df5db0d516283022dde0f5d0111d98c1a848e41853e81c/azure_core-1.41.0.tar.gz", hash = "sha256:f46ff5dfcd230f25cf1c19e8a34b8dc08a337b2503e268bb600a16c00db8ad5a", size = 381042, upload-time = "2026-05-07T23:30:54.302Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/5b/db/325c6d7312d2200251c52323878281045aaffcb5586612296484e4280eaa/azure_core-1.41.0-py3-none-any.whl", hash = "sha256:522b4011e8180b1a3dcd2024396a4e7fe9ac37fb8597db47163d230b5efe892d", size = 220920, upload-time = "2026-05-07T23:30:56.357Z" },
+]
+
+[[package]]
+name = "azure-cosmos"
+version = "4.16.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "azure-core" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/35/21/59863ec67ff0284e6783fef67e2a03e17c3504a3ce0561d525ffb0caccec/azure_cosmos-4.16.3.tar.gz", hash = "sha256:da0a4d9957de7b3f018b2ebb728b7e0494623d4db58639eb92ccd140eddc12d3", size = 2459773, upload-time = "2026-07-29T22:39:46.757464Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/17/f6/bf580f67645dcf4d2b4e9a6f7d5e1e3809bbe0c882519aedad647efcb8db/azure_cosmos-4.16.3-py3-none-any.whl", hash = "sha256:666fa5d40227bc233d0e49d8e6342998603a8ef57780d1986af1b23b6d08e987", size = 501516, upload-time = "2026-07-29T22:39:49.435953Z" },
 ]
 
 [[package]]

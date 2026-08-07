@@ -39,6 +39,7 @@ wrong reason. Open a fresh terminal rather than debugging it.
 | [`test_avatar_identity.py`](test_avatar_identity.py) | That every surface resolves the assistant's name the same way, and that [`rename_avatar.py`](../scripts/rename_avatar.py) still writes enough variables to actually change it. |
 | [`test_agent_model_binding.py`](test_agent_model_binding.py) | That the agent binds to a model deployment that actually exists — evaluated against the generated ARM, not restated in Python. |
 | [`test_agent_tool_wiring.py`](test_agent_tool_wiring.py) | That a missing **optional** tool degrades gracefully while a missing **required** one fails loudly. |
+| [`test_audit.py`](test_audit.py) | That the audit trail can never cost a conversation: a full queue **drops rather than blocks**, a broken sink is contained, and no capture entry point can raise. Also pins the agent-mode tool reconstruction against the real observed conversation-item shape, and that audit is off by default. |
 | [`test_build_package.py`](test_build_package.py) | The Teams manifest and the environment-scoped package filename. |
 | [`test_build_query.py`](test_build_query.py) | That site scoping renders the operators Web IQ documents (a `-domain` exclusion is `-site:domain`, not `site:-domain`). |
 | [`test_hybrid_search.py`](test_hybrid_search.py) | That a new Foundry project paired with BYO Search creates the project connection, cross-RG roles and index before creating the agent. |
