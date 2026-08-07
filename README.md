@@ -155,12 +155,19 @@ Deploying is a *sequence*, not one command: some steps Bicep performs, some only
 person with the right directory role can, and they interleave. Rather than make you
 discover that halfway through, the tooling tells you the whole sequence up front.
 
+**Before running these commands, read the [deployment prerequisites](docs/deployment.md#prerequisites).**
+You need the Azure CLI (`az`), Azure Developer CLI (`azd`), `uv`, and the required
+Azure access: **Contributor + User Access Administrator** on the target subscription,
+or **Owner**. Channel-specific Entra and Teams administrator requirements are listed
+in the [admin checklist](docs/admin-checklist.md).
+
 > **Platform: Windows + PowerShell.** All commands are written for PowerShell; on
 > macOS or Linux the `azd` and Python steps work unchanged, but you translate the
 > shell syntax yourself ([details](docs/channels/README.md)). Channel D requires
 > Windows regardless — the Teams Real-Time Media Platform runs on nothing else.
 
 ```powershell
+az login
 azd auth login
 azd env new <environment-name>
 
