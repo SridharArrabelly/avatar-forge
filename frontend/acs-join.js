@@ -177,8 +177,9 @@ function noteBuildId(id) {
 // StaticInterimResponseConfig is not an option here: it requires the model
 // binding, and the in-call session runs the Foundry agent binding for tools.
 //
-// The wording and the cadence are the web app's (app.js THINKING_*), so a change
-// to the copy lands on both surfaces. Two differences, both deliberate:
+// The wording and cadence mirror the web app's two-phase cue — both read the
+// same constants from thinking-cue.js, so the two channels cannot drift. Two
+// differences, both deliberate:
 //
 //   - Shown after 250ms rather than the web's 700ms. A brief blank on a screen is
 //     nothing; in a meeting the room hears silence and starts talking over her.
@@ -186,28 +187,38 @@ function noteBuildId(id) {
 //     Background tabs clamp timers to ~1Hz and this tab sits behind the Teams
 //     window, so timer-driven rotation would lurch. Same behaviour, no timers.
 let thinkingSince = 0;
+// When the CURRENT wording started. The "taking longer" escalation is measured
+// from this rather than from thinkingSince, so naming a tool part-way through
+// restarts the clock instead of escalating a caption nobody has read yet.
+let thinkingPhaseSince = 0;
+let thinkingFunctionName = "";
+// Predicted from the user's question, used only in agent binding where no tool
+// event ever arrives. Promoted to a caption once the turn has run past
+// CUE.PREDICT_MS, by which point a retrieval is the only explanation.
+let thinkingExpectedName = "";
+const CUE = window.THINKING_CUE || null;
 const THINKING_SHOW_AFTER_MS = 250;
-const THINKING_CAPTIONS = [
-    "Looking through the records…",
-    "Checking the latest information…",
-    "Pulling the details together…",
-];
-const THINKING_SLOW_CAPTION = "Just a moment — getting you a reliable answer…";
-const THINKING_ROTATE_MS = 2200;
-const THINKING_SLOW_MS = 3500;
-// Hard ceiling, mirroring the web's failsafe timer: if the "off" message is ever
-// lost the cue expires on its own instead of pulsing at the room forever.
-const THINKING_MAX_MS = 25000;
 
 // The caption to show right now, or "" when the cue is down.
 function thinkingCaption() {
-    if (!thinkingSince) return "";
-    const age = performance.now() - thinkingSince;
-    if (age < THINKING_SHOW_AFTER_MS || age > THINKING_MAX_MS) return "";
-    const shown = age - THINKING_SHOW_AFTER_MS;
-    if (shown >= THINKING_SLOW_MS) return THINKING_SLOW_CAPTION;
-    const i = Math.floor(shown / THINKING_ROTATE_MS) % THINKING_CAPTIONS.length;
-    return THINKING_CAPTIONS[i];
+    if (!CUE || !thinkingSince) return "";
+    const now = performance.now();
+    const age = now - thinkingSince;
+    if (age < THINKING_SHOW_AFTER_MS || age > CUE.MAX_MS) return "";
+    // A real tool event outranks the prediction; the prediction only counts
+    // once the turn is too slow to be anything but a search.
+    let name = thinkingFunctionName;
+    let phaseSince = thinkingPhaseSince;
+    if (!name && thinkingExpectedName && age >= CUE.PREDICT_MS) {
+        name = thinkingExpectedName;
+        // The wording changes here, so the "taking longer" clock restarts here
+        // too — otherwise the named caption flashes past in under a second.
+        phaseSince = thinkingSince + CUE.PREDICT_MS;
+    }
+    if (now - phaseSince >= CUE.SLOW_MS) return CUE.SLOW_CAPTION;
+    // Neutral phase: she is working, but nothing has told us whether a search is
+    // involved, so the tile shows the wait without naming a cause.
+    return CUE.captionFor(name) || CUE.NEUTRAL_CAPTION;
 }
 
 // Shrink a label until it fits, then report its width. The captions are far
@@ -279,8 +290,24 @@ function openMediaSocket() {
                 } else if (msg.type === "avatar_sdp_answer") {
                     handleAvatarSdpAnswer(msg.serverSdp || "");
                 } else if (msg.type === "thinking") {
-                    thinkingSince = msg.active ? performance.now() : 0;
-                    if (msg.active) hintUntil = 0; // answering beats nudging
+                    if (!msg.active) {
+                        thinkingSince = 0;
+                        thinkingPhaseSince = 0;
+                        thinkingFunctionName = "";
+                        thinkingExpectedName = "";
+                    } else {
+                        const name = msg.functionName || "";
+                        // Already up: this is the neutral cue being named, not a
+                        // new turn. Keep thinkingSince so the badge doesn't blink
+                        // out through the show delay, but restart the phase so
+                        // "taking longer" is timed from the new wording.
+                        const fresh = !thinkingSince;
+                        if (fresh) thinkingSince = performance.now();
+                        if (fresh || name !== thinkingFunctionName) thinkingPhaseSince = performance.now();
+                        thinkingFunctionName = name;
+                        if (msg.expectedFunctionName) thinkingExpectedName = msg.expectedFunctionName;
+                        hintUntil = 0; // answering beats nudging
+                    }
                 } else if (msg.type === "hint") {
                     hintText = msg.text || "";
                     hintUntil = hintText ? performance.now() + HINT_MS : 0;

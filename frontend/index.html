@@ -411,9 +411,9 @@
                                 <div id="avatarNameLabel" class="avatar-name"></div>
                                 <div id="avatarTagline" class="avatar-tagline"></div>
                             </div>
-                            <div id="avatarThinking" class="avatar-thinking">
-                                <div class="avatar-thinking-dots"><span></span><span></span><span></span></div>
-                                <div id="avatarThinkingText" class="avatar-thinking-text">Looking through the records…</div>
+                            <div id="avatarThinking" class="avatar-thinking dots-only">
+                                <div class="avatar-thinking-dots"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
+                                <div id="avatarThinkingText" class="avatar-thinking-text"></div>
                             </div>
                             <!-- Bottom dock: a single flex row across the stage bottom.
                                  The text composer fills the left (flex-grows), and the
@@ -530,6 +530,7 @@
         </main>
     </div>
 
+    <script src="thinking-cue.js"></script>
     <script src="app.js"></script>
     <!-- Teams personal-tab integration (issue #28). No-op unless running inside Teams. -->
     <script src="teams.js"></script>

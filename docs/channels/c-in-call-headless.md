@@ -227,15 +227,20 @@ That claim is now falsifiable rather than asserted — and it was tested. The li
 complaints that drove this port disappeared once the transport changed, so the
 compositor is not the thing that was costing time.
 
-The overlay *wording* converges even though the drawing cannot. The "thinking"
-captions and their cadence are `app.js`'s `THINKING_*` constants — same three
-rotating lines, same 2.2s rotation, same escalation to the slow line after 3.5s,
-same 25s failsafe ceiling — so a change to the copy lands on both surfaces. Two
-things differ on purpose: the cue appears after 250ms rather than 700ms, because a
-brief blank on a screen is nothing but silence in a meeting invites someone to
-start talking; and the rotation is derived from elapsed time on each painted frame
-instead of `setInterval`, because background tabs clamp timers to ~1Hz and this tab
-sits behind the Teams window.
+The overlay *wording* converges even though the drawing cannot. Both surfaces read
+[`frontend/thinking-cue.js`](../../frontend/thinking-cue.js) — one shared file
+holding the captions, the tool→caption map, the 1.8s prediction gate, the 3.5s
+escalation to the slow line and the 25s failsafe ceiling — so a change to the copy
+lands on both and cannot drift. It loads as a classic script (like `brand.js`)
+because `index.html` loads `app.js` classically while `acs-join.html` loads a
+module; classic scripts run first either way.
+
+Two things differ on purpose: the cue appears after 250ms rather than 700ms, because
+a brief blank on a screen is nothing but silence in a meeting invites someone to
+start talking; and the phase is derived from elapsed time on each painted frame
+instead of `setTimeout`, because background tabs clamp timers to ~1Hz and this tab
+sits behind the Teams window. A meeting tile also has no room for animated dots, so
+the neutral phase renders as `…` instead.
 
 The practical consequence is the point: a fix to the web app's avatar path is
 inherited here, because it *is* the same path.
