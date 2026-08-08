@@ -251,7 +251,8 @@ schema, and query examples in **[audit.md](audit.md)**.
 | Variable | Default | Purpose |
 |---|---|---|
 | `ENABLE_AUDIT` | `false` | Master switch. Also a **Bicep parameter** — `azd env set ENABLE_AUDIT true` provisions the Cosmos account, database, container and the app's data-plane role assignment. While `false`, none of it is created. |
-| `AUDIT_SINK` | `cosmos` | Where records go. `cosmos` (production), `file` (JSONL at `audit-log.jsonl`, for local development), or `none` (accept and discard — used to isolate storage cost during latency A/B testing). Falls back to `file` if Cosmos is unreachable or `AUDIT_COSMOS_ENDPOINT` is unset. |
+| `AUDIT_SINK` | `cosmos` | Where records go. `cosmos` (production), `file` (JSONL at `audit-log.jsonl`, for local development), or `none` (accept and discard — used to isolate storage cost during latency A/B testing). If the chosen sink cannot be built, `AUDIT_SINK_FALLBACK` decides what happens. |
+| `AUDIT_SINK_FALLBACK` | `error` | What to do when `AUDIT_SINK` cannot be built — an unset `AUDIT_COSMOS_ENDPOINT`, a Cosmos account that cannot be reached or authorised, or an unrecognised sink name. `error` raises `AuditSinkUnavailable` out of startup, so the app does not serve conversations it silently fails to record. `file` or `none` accept a **degraded** trail instead; both are ephemeral on Container Apps and are lost on the next revision. A degraded trail is reported by `stats()` and on `/health`. |
 | `AUDIT_COSMOS_ENDPOINT` | — | Cosmos account endpoint. Set automatically by infra when audit is enabled; only set by hand for a BYO Cosmos account. |
 | `AUDIT_COSMOS_DATABASE` | `audit` | Database name. |
 | `AUDIT_COSMOS_CONTAINER` | `turns` | Container name. Partition key is `/sessionId`. |

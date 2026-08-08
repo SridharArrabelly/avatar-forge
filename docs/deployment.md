@@ -131,6 +131,9 @@ azd env set AVATAR_MODEL Simone
 # Cosmos DB account, its database and container, and the app's data-plane role
 # assignment. It is a Bicep parameter, so set it before you provision.
 # Confirm retention, access control and any notice obligation first — audit.md.
+# Note audit fails closed: if it is enabled but the sink cannot be reached, the
+# app refuses to start rather than discard records silently. Set
+# AUDIT_SINK_FALLBACK=file to accept a degraded, ephemeral trail instead.
 # azd env set ENABLE_AUDIT true
 
 # 5. Choose the channel AND the brain. Records DEPLOY_PROFILE (web · teams-tab ·

@@ -311,6 +311,7 @@ Full descriptions in [configuration.md](configuration.md#conversation-audit-trai
 | `ENABLE_AUDIT` | `false` | Master switch. Also a Bicep parameter — deploys Cosmos when `true`. |
 | `AUDIT_SINK` | `cosmos` | `cosmos`, `file` (JSONL, local dev), or `none`. Note `none` is **not** an off switch — capture, queue and writer all still run and only the storage write is skipped, which is what makes it the right arm for isolating sink cost. The off switch is `ENABLE_AUDIT=false`. |
 | `AUDIT_COSMOS_ENDPOINT` | — | Set automatically by infra when audit is enabled. |
+| `AUDIT_SINK_FALLBACK` | `error` | What to do when the configured sink cannot be built. `error` refuses to start, so audit is never silently absent. `file` or `none` accept a degraded, **ephemeral** trail instead. See [Failure behaviour](#failure-behaviour). |
 | `AUDIT_RETENTION_DAYS` | `365` | Per-item TTL. `0` or less keeps records forever. |
 | `AUDIT_REDACT` | `true` | Mask obvious secret/PII patterns before persisting. |
 | `AUDIT_QUEUE_MAX` | `1000` | Bounded so a sink outage costs capped memory. |
@@ -360,9 +361,16 @@ Cosmos account.
 
 ## Failure behaviour
 
-Designed so that no audit failure can affect a conversation. Sink selection
-resolves once at startup, and every path that cannot reach Cosmos ends at the
-local file sink rather than at an exception:
+Two different rules apply, and the split is deliberate.
+
+**Once running, no audit failure may affect a conversation.** Writes, drops and
+reconciliation failures are all absorbed, counted and logged; none of them can
+raise into the turn path.
+
+**At startup, a misconfiguration is not absorbed.** Audit is opt-in, so a
+deployment that asked for a trail and cannot produce one stops rather than
+serving conversations it silently fails to record. Nothing about that decision
+is on the latency path, so there is no reason to prefer silence.
 
 ```mermaid
 flowchart TB
@@ -371,33 +379,40 @@ flowchart TB
     sw -->|true| kind{AUDIT_SINK}
     kind -->|none| ns[NullSink<br/>capture runs, record discarded]
     kind -->|file| fs[FileSink<br/>audit-log.jsonl in the working directory]
-    kind -->|anything else| fb[FileSink fallback<br/>warns, then writes locally]
     kind -->|cosmos| ep{AUDIT_COSMOS_ENDPOINT set?}
-    ep -->|no| fb
+    kind -->|anything else| fbp
+    ep -->|no| fbp
     ep -->|yes| ok{client builds and warms?}
     ok -->|yes| cs[(CosmosSink)]
-    ok -->|no| fb
+    ok -->|no| fbp
+    fbp{AUDIT_SINK_FALLBACK} -->|error, the default| stop[AuditSinkUnavailable<br/>startup fails, the app does not serve]
+    fbp -->|file| degf[FileSink<br/>reported as degraded]
+    fbp -->|none| degn[NullSink<br/>reported as degraded]
 ```
 
 | Failure | Behaviour |
 |---|---|
-| Cosmos unreachable at startup | Logged as an error; **falls back to the file sink** so the trail continues locally. The app starts normally. |
-| Sink fails on write | Logged and counted; the writer continues with the next batch. |
-| Queue full | Record dropped, drop counter incremented, warning throttled. Never blocks. |
+| `AUDIT_SINK=cosmos` but no endpoint configured | **Startup fails** with `AuditSinkUnavailable`, unless `AUDIT_SINK_FALLBACK` opts into one. |
+| Cosmos unreachable at startup — missing data-plane role, firewall, private-only account, `azure-cosmos` not installed | **Startup fails** by default. All of these surface in `warm()`, and none of them are transient. |
+| Unrecognised `AUDIT_SINK` value | **Startup fails** by default, so a typo cannot quietly become a different sink. |
+| Sink fails on write | Logged and counted in `failed`; the writer backs off briefly and continues with the next batch. |
+| Queue full | Record dropped, `dropped` incremented, warning throttled. Never blocks. |
 | Foundry reconciliation fails or times out | Record is written without tool detail and `toolsPending` stays `true`. |
-| `AUDIT_SINK=cosmos` but no endpoint configured | Warns and uses the file sink. |
-| `azure-cosmos` not installed | Falls back to the file sink with a warning. |
 | Shutdown | The queue is drained and in-flight batches are flushed before the process exits. |
 
-> [!WARNING]
-> **The fallback fails open, and in a container that is a data-loss path.** Three
-> of the rows above end at `FileSink`, which writes to the container's ephemeral
-> filesystem — so a misconfigured endpoint produces an app that starts cleanly,
-> reports records as written, and loses the entire trail on the next revision or
-> scale-in. With several replicas each writes its own separate local file. The
-> only signal is a log line. If you are enabling audit for a compliance
-> obligation, treat "Cosmos configured but unreachable" as an outage to alert on
-> rather than a condition to fall back from.
+> [!IMPORTANT]
+> **If you opt into a fallback, understand what you are opting into.** Both
+> `AUDIT_SINK_FALLBACK=file` and `=none` are ephemeral on Container Apps:
+> `FileSink` writes to the container's writable layer, which is discarded on the
+> next revision, restart or scale-in, and with several replicas each writes its
+> own partial file that nothing collects. Neither is a durable trail, and
+> `written` counts up regardless.
+>
+> When a fallback is active, audit reports itself as **degraded** — `stats()`
+> carries the reason, `/health` exposes the boolean, and the startup line names
+> the sink actually in use rather than the one configured. Alert on it. A trail
+> with holes invites conclusions it cannot support, which is the argument this
+> document opens with.
 
 ---
 
