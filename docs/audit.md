@@ -32,9 +32,37 @@ repo is organised around not spending it. An audit path that adds even tens of
 milliseconds to the turn path is not worth having.
 
 The resolution to (1) is the Foundry **conversation items** API, which returns
-the complete turn after the fact. The resolution to (2) is that *nothing*
-about audit runs on the turn path: capture is a queue push, and every
-expensive operation happens in a background writer.
+the complete turn after the fact. The resolution to (2) is that the turn path
+does only the cheap half — build a record in memory, push it to a queue — while
+every expensive operation happens in a background writer. Capture is not free
+and this doc does not claim it is: it is [measured](#measured-cost) at **5.5 µs**
+per turn, against a turn budget of hundreds of milliseconds.
+
+---
+
+## Where the data goes
+
+Audit and operational telemetry are **two separate stores with two different
+jobs**, and the split is deliberate. Conversation content goes to Cosmos and
+nowhere else. The operational logs describe the same turn without reproducing
+any of it — they carry fingerprints, counts and timings, so that an engineer
+debugging a production issue never needs access to what a user said.
+
+```mermaid
+flowchart LR
+    turn[One turn<br/>question, tools, answer] --> cap[audit capture<br/>only when ENABLE_AUDIT=true]
+    turn --> ops[operational logging<br/>always on]
+    cap --> cosmos[(Cosmos DB<br/>the content itself:<br/>question, tool I/O, answer)]
+    ops --> appi[App Insights and Log Analytics<br/>fingerprints, counts, timings<br/>no conversation content]
+    cosmos -.->|correlated by meta.operationId| appi
+```
+
+The dotted line is the part that makes both useful at once. An audit record
+carries the `operationId` of the request that produced it, so a slow or failing
+turn found in Log Analytics can be traced to the exact stored turn, without
+either store having to hold the other's data. The rule that keeps the right-hand
+box content-free is enforced by a test, and is written up in
+[development.md](development.md#never-log-conversation-content).
 
 ---
 
@@ -106,6 +134,30 @@ are still written, with tool detail absent and `toolsPending` left `true`.
 
 The guarantee is that the turn path does no audit work beyond appending to an
 in-memory object and one non-blocking queue push.
+
+```mermaid
+flowchart LR
+    subgraph hot["On the turn path — same event loop as the audio"]
+        direction LR
+        E[Voice Live<br/>*_DONE event] --> R[append to the<br/>in-memory TurnRecord]
+        R --> P[put_nowait]
+    end
+    P --> Q[[asyncio.Queue<br/>in memory, in process<br/>bounded by AUDIT_QUEUE_MAX]]
+    P -.->|queue full:<br/>drop and count,<br/>never block| X[dropped counter]
+    subgraph cold["Off the turn path — background writer task"]
+        direction LR
+        B[batch<br/>50 records or 2 s] --> RC[reconcile agent tool I/O<br/>from Foundry]
+        RC --> RD[redact and truncate<br/>under asyncio.to_thread]
+        RD --> W[sink write]
+    end
+    Q --> B
+```
+
+Everything in the left box is charged to the conversation; everything in the
+right box is not. The queue is the boundary, and it is an ordinary in-memory
+`asyncio.Queue` — not a broker, not a file, not durable. That is a deliberate
+trade: it is what makes `put_nowait` an O(1) call that cannot raise, and it is
+also why a hard process kill loses whatever is still queued.
 
 | Rule | Why |
 |---|---|
@@ -257,7 +309,7 @@ Full descriptions in [configuration.md](configuration.md#conversation-audit-trai
 | Variable | Default | Purpose |
 |---|---|---|
 | `ENABLE_AUDIT` | `false` | Master switch. Also a Bicep parameter — deploys Cosmos when `true`. |
-| `AUDIT_SINK` | `cosmos` | `cosmos`, `file` (JSONL, local dev), or `none` (accept and discard). |
+| `AUDIT_SINK` | `cosmos` | `cosmos`, `file` (JSONL, local dev), or `none`. Note `none` is **not** an off switch — capture, queue and writer all still run and only the storage write is skipped, which is what makes it the right arm for isolating sink cost. The off switch is `ENABLE_AUDIT=false`. |
 | `AUDIT_COSMOS_ENDPOINT` | — | Set automatically by infra when audit is enabled. |
 | `AUDIT_RETENTION_DAYS` | `365` | Per-item TTL. `0` or less keeps records forever. |
 | `AUDIT_REDACT` | `true` | Mask obvious secret/PII patterns before persisting. |
@@ -308,7 +360,24 @@ Cosmos account.
 
 ## Failure behaviour
 
-Designed so that no audit failure can affect a conversation.
+Designed so that no audit failure can affect a conversation. Sink selection
+resolves once at startup, and every path that cannot reach Cosmos ends at the
+local file sink rather than at an exception:
+
+```mermaid
+flowchart TB
+    init[init_audit] --> sw{ENABLE_AUDIT}
+    sw -->|false| skip[return immediately<br/>no queue, no writer, no client]
+    sw -->|true| kind{AUDIT_SINK}
+    kind -->|none| ns[NullSink<br/>capture runs, record discarded]
+    kind -->|file| fs[FileSink<br/>audit-log.jsonl in the working directory]
+    kind -->|anything else| fb[FileSink fallback<br/>warns, then writes locally]
+    kind -->|cosmos| ep{AUDIT_COSMOS_ENDPOINT set?}
+    ep -->|no| fb
+    ep -->|yes| ok{client builds and warms?}
+    ok -->|yes| cs[(CosmosSink)]
+    ok -->|no| fb
+```
 
 | Failure | Behaviour |
 |---|---|
@@ -320,13 +389,43 @@ Designed so that no audit failure can affect a conversation.
 | `azure-cosmos` not installed | Falls back to the file sink with a warning. |
 | Shutdown | The queue is drained and in-flight batches are flushed before the process exits. |
 
+> [!WARNING]
+> **The fallback fails open, and in a container that is a data-loss path.** Three
+> of the rows above end at `FileSink`, which writes to the container's ephemeral
+> filesystem — so a misconfigured endpoint produces an app that starts cleanly,
+> reports records as written, and loses the entire trail on the next revision or
+> scale-in. With several replicas each writes its own separate local file. The
+> only signal is a log line. If you are enabling audit for a compliance
+> obligation, treat "Cosmos configured but unreachable" as an outage to alert on
+> rather than a condition to fall back from.
+
 ---
 
 ## Verifying it end to end
 
-Everything except the agent-mode recovery path is covered offline by
-[`tests/test_audit.py`](../tests/test_audit.py). That one exception needs a live
-conversation, so it has its own script:
+[`tests/test_audit.py`](../tests/test_audit.py) covers the feature offline, but
+**two things cannot be proven with a mock** and both need a deployment: whether
+this identity can write to Cosmos, and whether agent-mode tool detail can be
+recovered from Foundry. They have a script each, and the order matters — the
+second one needs a conversation id that only exists once audit is running.
+
+### 1. Can it write? (run this before enabling audit)
+
+```powershell
+uv run python scripts/smoke_audit_cosmos.py
+```
+
+Round-trips one synthetic document through the production `CosmosSink`: connect,
+write, read back, assert redaction held, delete. Its real target is the Entra
+**data-plane** role — the failure the warning above describes begins here, as a
+403 from `warm()`, and this is what turns that into a clear message instead of a
+silent fallback. It writes to a throwaway `sessionId` and carries a one-hour
+`ttl`, so it is safe to run against a production container.
+
+Run it *before* setting `ENABLE_AUDIT=true`. Verifying the store first means the
+first real conversation is not also the first test of the write path.
+
+### 2. Can agent tool detail be recovered?
 
 ```powershell
 uv run python scripts/smoke_audit_conversation.py <conversation-id>

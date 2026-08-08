@@ -47,7 +47,8 @@ command), or individually as `uv run python scripts/<name>.py`.
 | [`rename_avatar.py`](rename_avatar.py) | Rename the persona (`Simone` → `Nuru`) across the azd environment, container app and Foundry agent. `--model <character>` also changes `AVATAR_MODEL`; `--check-only` verifies without changing anything. |
 | [`smoke_aisearch_query.py`](smoke_aisearch_query.py) | "Did the index actually ingest?" Queries it directly. |
 | [`smoke_foundry_agent.py`](smoke_foundry_agent.py) | "Can the deployed agent answer?" One end-to-end question. |
-| [`smoke_audit_conversation.py`](smoke_audit_conversation.py) | "Can agent-mode tool detail actually be recovered?" Replays one Foundry conversation through the **production reconciler** ([`backend/audit/foundry.py`](../backend/audit/foundry.py)) and prints the query and passages the agent used server-side. The one thing about the audit trail that cannot be proven offline. See [audit.md](../docs/audit.md). |
+| [`smoke_audit_conversation.py`](smoke_audit_conversation.py) | "Can agent-mode tool detail actually be recovered?" Replays one Foundry conversation through the **production reconciler** ([`backend/audit/foundry.py`](../backend/audit/foundry.py)) and prints the query and passages the agent used server-side. Reads only. See [audit.md](../docs/audit.md). |
+| [`smoke_audit_cosmos.py`](smoke_audit_cosmos.py) | "Can this identity actually write the audit trail?" Round-trips one document through the **production sink** ([`backend/audit/cosmos.py`](../backend/audit/cosmos.py)) — connect, write, read back, assert redaction held, delete. Proves the Entra **data-plane** role, which is the half of the audit trail no mock can cover. Run it *before* enabling audit on a deployment. |
 | [`bench_routing_agent.py`](bench_routing_agent.py) | Tool-routing accuracy and latency on the **agent** binding. |
 | [`bench_routing_model.py`](bench_routing_model.py) | The same benchmark on the **model** binding. |
 | [`bench_audit_latency.py`](bench_audit_latency.py) | What the audit trail charges the turn it is recording. Three arms — `ENABLE_AUDIT=false`, `AUDIT_SINK=none`, `AUDIT_SINK=file` — so capture cost and sink cost are separated. Offline; touches no Azure resource. |
@@ -74,6 +75,14 @@ data-plane RBAC propagation lag).
   the writer batches with a 2-second window, so a tight loop outruns it and the
   measurement would drift onto the drop path instead of the enqueue path a real
   turn takes.
+- **`smoke_audit_cosmos.py` writes one real document, and the `ttl` is the cleanup
+  guarantee.** It deletes the probe on the way out, but a crash or Ctrl-C skips
+  that, so the document is written with a one-hour `ttl` rather than the
+  configured retention — otherwise a failed run would leave a synthetic record in
+  a real container for a year. It also asserts the *configured* retention was
+  computed correctly before overriding it, so the override does not hide a bug.
+  Note the sink swallows upsert errors by design, so the script checks the
+  returned count: a write failure shows up as `0 of 1 written`, not an exception.
 - **`setup_foundry_agent.py` bakes the assistant's name into the prompt** at
   provisioning time. Rename the persona and every other surface updates on the next
   deploy, but the agent keeps the old name until this script re-runs — so the stage
