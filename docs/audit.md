@@ -12,7 +12,8 @@ Off by default. When `ENABLE_AUDIT=false` the entire feature costs one
 > to the avatar and every passage retrieved on their behalf. Turning it on is a
 > **policy decision, not just a config change** — confirm your retention period,
 > access controls, and any notice or consent obligation before enabling it in an
-> environment real people use.
+> environment real people use. See [Notice and consent](#notice-and-consent) for
+> what the code does and does not give you.
 
 ---
 
@@ -438,6 +439,103 @@ Treat this as **defence in depth, not a compliance control**. It catches
 credentials that leak into a transcript by accident; it cannot classify
 free-form speech. The substantive control is retention plus access to the
 Cosmos account.
+
+---
+
+## Notice and consent
+
+This repository deliberately ships **no** consent mechanism. That is a scoping
+decision, not an oversight: what notice is required, who must give it, and
+whether it must be recorded all depend on the jurisdiction, the channel and who
+is on the other end of the conversation. A built-in dialog that looked
+authoritative would be worse than none, because it would invite deployers to
+treat the question as already answered.
+
+What the code does give you is the machinery to implement whatever your privacy
+review decides.
+
+### What is recorded
+
+| Recorded | Not recorded |
+| --- | --- |
+| What the user said, as text | Audio. No recording of the voice itself is stored |
+| What the avatar answered, as text | Video, including the rendered avatar |
+| Tool calls, their arguments, and retrieved passages | Anything at all when `ENABLE_AUDIT=false` — the default |
+| Timings, session and turn ids | |
+
+The `identity` block exists in the record shape but is populated only where the
+channel authenticates the user. On the anonymous web channel it is null, so a
+record can be tied to a *session* but not to a *person*.
+
+### The deployer's obligations
+
+Enabling `ENABLE_AUDIT` in an environment real people use means you own these:
+
+1. **Tell people.** Nothing in the product does this for you. Someone speaking
+   to the avatar has no way to know a transcript is being kept.
+2. **Decide notice versus consent.** Announcing it and requiring agreement to it
+   are different things with different evidentiary value.
+3. **Offer a way to decline** that is not "do not use the system", if your
+   regime requires one.
+4. **Be able to erase.** See below — the storage design makes this cheap, but
+   nothing performs it automatically.
+5. **Justify the retention period.** `AUDIT_RETENTION_DAYS` defaults to 365.
+   That is a default, not a recommendation, and a demo rarely needs a year.
+
+> [!IMPORTANT]
+> Whatever you implement, wire the notice to `ENABLE_AUDIT` rather than
+> hard-coding it. A banner that claims conversations are recorded when the sink
+> is off is untrue in the same way that a silent deployment with the sink on is
+> untrue. The statement and the behaviour have to move together.
+
+### Implementation options
+
+| Approach | Reaches | Gives you | Costs |
+| --- | --- | --- | --- |
+| Spoken line in the avatar's greeting | Every channel, including Teams and telephony where there is no UI | Notice | One line of agent instructions |
+| Web banner with click-to-proceed | Web channel only | Provable opt-in, timestamped | Frontend work; leaves other channels uncovered |
+| Both, gated on a `AUDIT_REQUIRE_CONSENT` flag that suppresses writes until accepted | Every channel | Consent, and a system that cannot record without it | Most work; needs a decision about what to do when consent is refused mid-session |
+
+The spoken option is the one most often underrated. It is nearly free, it is the
+only option that covers voice-only channels, and for an avatar that presents as
+human it doubles as the disclosure that the user is talking to a machine.
+
+### Erasing a conversation
+
+`sessionId` is the partition key, so erasure by session is a single-partition
+read followed by deletes — the cheapest shape Cosmos offers. There is no script
+for it in the repo, because a destructive operation that ships ungated tends to
+get run by accident:
+
+```python
+container.query_items(
+    "SELECT c.id, c.sessionId FROM c WHERE c.sessionId = @s",
+    parameters=[{"name": "@s", "value": session_id}],
+    partition_key=session_id,
+)
+# then container.delete_item(item=row["id"], partition_key=row["sessionId"])
+```
+
+Erasure by *person* is not possible on the anonymous web channel, because the
+records hold no stable subject identifier. If you need to answer subject-access
+or deletion requests by individual, authenticate the channel first and populate
+`identity` — otherwise you are promising something the data cannot support.
+
+### Legal frameworks to check
+
+Not legal advice, and not exhaustive — raise these with the people who own
+privacy in your organisation:
+
+- **Recording and transcription** of conversations, where "notice" and "consent"
+  carry different obligations by jurisdiction, and some require all parties to
+  agree.
+- **Data subject rights** — access, correction, erasure — which shape whether an
+  anonymous channel is acceptable at all.
+- **Disclosure that the counterpart is an AI**, which is a separate obligation
+  from anything about recording, and which a human-presenting avatar makes more
+  pointed rather than less.
+- **Cross-border transfer**, since the Cosmos account's region is where the
+  transcripts live.
 
 ---
 
