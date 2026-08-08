@@ -442,7 +442,7 @@ def finish_turn(
             return
 
         handler._audit_record = None
-        record.ended_at = utc_now_iso()
+        record.mark_ended()
         record.status = status
         record.truncated = truncated
         record.agent_name = getattr(handler, "audit_agent_name", None)

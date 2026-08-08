@@ -335,6 +335,67 @@ finally:
 
 
 print()
+print("turn duration is measured, and survives a carried exchange")
+
+# `latencyMs` has been in the document shape since the feature shipped, but
+# nothing ever assigned it — every record written so far carried a null. It is
+# measured on the monotonic clock rather than as `endedAt - startedAt`, because
+# a wall-clock step under NTP correction can otherwise yield a negative
+# duration, and a turn that appears to have taken -400ms is worse than no
+# number at all.
+open_turn = TurnRecord(session_id="s", turn_index=0)
+check("duration is null while the turn is still open",
+      open_turn.to_document()["latencyMs"], None)
+
+timed = TurnRecord(session_id="s", turn_index=0)
+timed._monotonic_start -= 1.5
+timed.mark_ended()
+check_true("duration is populated once the turn closes",
+           1500 <= timed.to_document()["latencyMs"] < 1600)
+check_true("closing stamps the end time as well", timed.to_document()["endedAt"])
+
+instant = TurnRecord(session_id="s", turn_index=0)
+instant.mark_ended()
+check_true("duration is never negative", instant.to_document()["latencyMs"] >= 0)
+
+
+class _CapturingQueue:
+    """Keeps what was submitted, so the emitted record can be inspected."""
+
+    def __init__(self):
+        self.records = []
+
+    def submit(self, record) -> None:
+        self.records.append(record)
+
+
+# A model-binding tool call ends one response before the tool has run, and the
+# spoken answer arrives in a second. The record is carried rather than
+# re-created, so the tool's own execution time must stay inside the measured
+# turn instead of vanishing in the gap between two responses.
+captured = _CapturingQueue()
+audit._queue = captured
+try:
+    carried_handler = FakeHandler()
+    audit.start_turn(carried_handler)
+    carried_handler._audit_record._monotonic_start -= 2.0
+    audit.finish_turn(carried_handler, status="completed",
+                      output_types=["ItemType.FUNCTION_CALL"])
+    check("the tool-call response is carried, not written", len(captured.records), 0)
+
+    audit.start_turn(carried_handler)
+    carried_handler._audit_record._monotonic_start -= 1.0
+    audit.record_assistant_text(carried_handler, "the budget was approved")
+    audit.finish_turn(carried_handler, status="completed",
+                      output_types=["ItemType.MESSAGE"])
+    check("the carried exchange lands as a single record", len(captured.records), 1)
+    check_true("and is timed across both responses",
+               captured.records[0].to_document()["latencyMs"] >= 3000)
+finally:
+    audit._queue = None
+
+
+print()
 print("trace correlation is resolved once, and degrades to null")
 
 # OpenTelemetry is deliberately not a dependency yet, so resolution must return
