@@ -403,9 +403,29 @@ flowchart TB
 
 ## Verifying it end to end
 
-Everything except the agent-mode recovery path is covered offline by
-[`tests/test_audit.py`](../tests/test_audit.py). That one exception needs a live
-conversation, so it has its own script:
+[`tests/test_audit.py`](../tests/test_audit.py) covers the feature offline, but
+**two things cannot be proven with a mock** and both need a deployment: whether
+this identity can write to Cosmos, and whether agent-mode tool detail can be
+recovered from Foundry. They have a script each, and the order matters — the
+second one needs a conversation id that only exists once audit is running.
+
+### 1. Can it write? (run this before enabling audit)
+
+```powershell
+uv run python scripts/smoke_audit_cosmos.py
+```
+
+Round-trips one synthetic document through the production `CosmosSink`: connect,
+write, read back, assert redaction held, delete. Its real target is the Entra
+**data-plane** role — the failure the warning above describes begins here, as a
+403 from `warm()`, and this is what turns that into a clear message instead of a
+silent fallback. It writes to a throwaway `sessionId` and carries a one-hour
+`ttl`, so it is safe to run against a production container.
+
+Run it *before* setting `ENABLE_AUDIT=true`. Verifying the store first means the
+first real conversation is not also the first test of the write path.
+
+### 2. Can agent tool detail be recovered?
 
 ```powershell
 uv run python scripts/smoke_audit_conversation.py <conversation-id>
