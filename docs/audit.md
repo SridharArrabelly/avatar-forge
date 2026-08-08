@@ -120,9 +120,34 @@ in-memory object and one non-blocking queue push.
 rather than blocks, that a broken sink is contained, and that no capture entry
 point propagates an exception.
 
-To measure the cost yourself, run with `ENABLE_AUDIT=true` and
-`AUDIT_SINK=none` (accept and discard) and compare the `[LATENCY]` first-audio
-lines against a run with audit off.
+### Measured cost
+
+[`scripts/bench_audit_latency.py`](../scripts/bench_audit_latency.py) measures
+what capture charges the turn, in three arms that separate the switch, the
+capture work, and a sink actually draining. Median per turn, 5,000 turns per arm:
+
+| Arm | Config | Per turn | vs baseline |
+|---|---|---|---|
+| Off | `ENABLE_AUDIT=false` | 0.30 µs | baseline |
+| Capture | `AUDIT_SINK=none` | 5.80 µs | **+5.5 µs** |
+| Capture + sink | `AUDIT_SINK=file` | 5.50 µs | **+5.2 µs** |
+
+Two things follow. The disabled path is the `is None` check claimed above and
+nothing more, at 0.3 µs. And a **draining sink adds nothing measurable to the
+turn** — the file arm lands within noise of the sink-less one, which is the
+queue design doing its job rather than a suspiciously good number.
+
+It also settles whether to A/B this on a deployment: **no.** Separating a 5 µs
+difference from turn latency whose standard deviation is even 5 ms would need
+roughly 15 million turns per arm, and real jitter is worse than that. A live run
+would be measuring the network. What a live run *should* prove is correctness
+rather than latency — that Cosmos accepts writes under managed identity, and that
+the agent-mode reconciler recovers tool I/O, which is what
+[`smoke_audit_conversation.py`](../scripts/smoke_audit_conversation.py) is for.
+
+Caveat worth keeping in view: this bounds the cost *on the turn*. It says nothing
+about a Cosmos sink that is slow or unreachable, where the queue fills and records
+are dropped. That is a data-loss risk, not a latency one, and `stats()` counts it.
 
 ---
 
