@@ -50,6 +50,7 @@ command), or individually as `uv run python scripts/<name>.py`.
 | [`smoke_audit_conversation.py`](smoke_audit_conversation.py) | "Can agent-mode tool detail actually be recovered?" Replays one Foundry conversation through the **production reconciler** ([`backend/audit/foundry.py`](../backend/audit/foundry.py)) and prints the query and passages the agent used server-side. The one thing about the audit trail that cannot be proven offline. See [audit.md](../docs/audit.md). |
 | [`bench_routing_agent.py`](bench_routing_agent.py) | Tool-routing accuracy and latency on the **agent** binding. |
 | [`bench_routing_model.py`](bench_routing_model.py) | The same benchmark on the **model** binding. |
+| [`bench_audit_latency.py`](bench_audit_latency.py) | What the audit trail charges the turn it is recording. Three arms — `ENABLE_AUDIT=false`, `AUDIT_SINK=none`, `AUDIT_SINK=file` — so capture cost and sink cost are separated. Offline; touches no Azure resource. |
 | [`check_media_sdk_age.py`](check_media_sdk_age.py) | Fails once the Graph media SDK pin passes 90 days. Wired into [`../meeting-bot/MeetingBot.csproj`](../meeting-bot/MeetingBot.csproj), so a channel-D build runs it for you. |
 
 Two files have no prefix because they are **libraries**, imported rather than run:
@@ -64,6 +65,15 @@ data-plane RBAC propagation lag).
   the two bindings cannot drift into being scored against different questions.
 - **`bench_*` times completion, not first audio.** Longer answers inflate it. It is a
   routing instrument; do not quote it as a time-to-first-token figure.
+- **`bench_audit_latency.py` runs each arm in a subprocess, deliberately.**
+  `ENABLE_AUDIT` is read at import time, and `backend/config.py` calls
+  `load_dotenv(override=True)` — so a local `.env` would *override* the arm under
+  test and silently invalidate the run. Children are given a working directory
+  where no `.env` is discoverable, and every arm then asserts that the config it
+  resolved is the one intended. It also enlarges `AUDIT_QUEUE_MAX` for the run:
+  the writer batches with a 2-second window, so a tight loop outruns it and the
+  measurement would drift onto the drop path instead of the enqueue path a real
+  turn takes.
 - **`setup_foundry_agent.py` bakes the assistant's name into the prompt** at
   provisioning time. Rename the persona and every other surface updates on the next
   deploy, but the agent keeps the old name until this script re-runs — so the stage
