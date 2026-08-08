@@ -33,7 +33,6 @@ agent cannot start until the words exist.
 ```mermaid
 flowchart LR
     subgraph Doors["Front doors — how people reach the avatar"]
-        direction TB
         A["<b>A</b> · Web browser"]
         B["<b>B</b> · Teams personal tab"]
         C["<b>C</b> · In-call ACS guest"]
@@ -41,7 +40,6 @@ flowchart LR
     end
 
     subgraph Brain["One brain — Python / FastAPI on Azure Container Apps"]
-        direction TB
         API["Session + media bridge"]
         VL["Azure Voice Live<br/>speech in · transcription · speech out · avatar"]
         AG["<b>Foundry agent</b><br/>prompt · model · tool routing"]
@@ -50,7 +48,6 @@ flowchart LR
     end
 
     subgraph Ground["Grounding — where the answers come from"]
-        direction TB
         S["Azure AI Search<br/>your document corpus"]
         N["Grounding with Bing<br/>site-scoped web search"]
     end
@@ -72,7 +69,6 @@ doors are unchanged** — only the middle and the web tool differ.
 ```mermaid
 flowchart LR
     subgraph Doors2["Front doors — identical to agent mode"]
-        direction TB
         A2["<b>A</b> · Web browser"]
         B2["<b>B</b> · Teams personal tab"]
         C2["<b>C</b> · In-call ACS guest"]
@@ -80,7 +76,6 @@ flowchart LR
     end
 
     subgraph Brain2["Same host, different middle"]
-        direction TB
         API2["Session + media bridge"]
         VL2["Azure Voice Live<br/>speech in · transcription · speech out · avatar"]
         RT["<b>Realtime model</b><br/>prompt · tools carried in the session"]
@@ -89,7 +84,6 @@ flowchart LR
     end
 
     subgraph Ground2["Grounding — Bing cannot follow here"]
-        direction TB
         S2["Azure AI Search<br/>your document corpus"]
         W2["<b>Web IQ</b><br/>site-scoped web search"]
     end
