@@ -59,7 +59,12 @@ resource account 'Microsoft.CognitiveServices/accounts@2025-04-01-preview' = {
   properties: {
     customSubDomainName: accountName
     publicNetworkAccess: 'Enabled'
-    disableLocalAuth: false
+    // Entra only. Nothing in this repo authenticates to AI Services with a key:
+    // the app forces `api_key = ""` for Voice Live because agent-v2 sessions
+    // require Entra (backend/api/websocket.py), and every other caller uses
+    // DefaultAzureCredential. Leaving key auth enabled would keep a credential
+    // path open that no code needs and no one is watching.
+    disableLocalAuth: true
     allowProjectManagement: true
   }
 }
