@@ -11,6 +11,7 @@ sites on the event loop. See ``backend/audit/queue.py``.
 
 import json
 import re
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -142,6 +143,14 @@ class TurnRecord:
     ended_at: Optional[str] = None
     latency_ms: Optional[float] = None
 
+    # Duration is measured on the monotonic clock, not by subtracting the two
+    # timestamps above: wall clock can step under NTP correction, and a turn
+    # that appears to take -400ms is worse than no number at all. Excluded from
+    # the document — it is an implementation detail, not audit content. Survives
+    # the carry in `finish_turn`, so a model-binding exchange split across two
+    # responses is still timed end to end.
+    _monotonic_start: float = field(default_factory=time.monotonic, repr=False)
+
     user_text: Optional[str] = None
     user_item_id: Optional[str] = None
     user_at: Optional[str] = None
@@ -172,6 +181,16 @@ class TurnRecord:
     user_id: Optional[str] = None
     display_name: Optional[str] = None
     tenant_id: Optional[str] = None
+
+    def mark_ended(self) -> None:
+        """Stamp the end of the turn.
+
+        Sets ``ended_at`` and ``latency_ms`` together so the two can never
+        disagree, and keeps the monotonic arithmetic next to the field that
+        backs it. Costs one subtraction on the event loop.
+        """
+        self.ended_at = utc_now_iso()
+        self.latency_ms = round((time.monotonic() - self._monotonic_start) * 1000, 1)
 
     def to_document(
         self,
