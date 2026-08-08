@@ -58,6 +58,14 @@ flowchart LR
     D -.-> API
     AG --> S
     AG --> N
+
+    %% Only the stroke is pinned. Fill and text stay with the renderer's theme,
+    %% so this reads correctly in GitHub's light and dark modes alike.
+    classDef default stroke:#539bf5,stroke-width:2px
+    linkStyle default stroke:#539bf5,stroke-width:1.5px
+    style Doors stroke:#539bf5
+    style Brain stroke:#539bf5
+    style Ground stroke:#539bf5
 ```
 
 ### Model mode — `VOICE_BINDING=model`
@@ -94,6 +102,14 @@ flowchart LR
     D2 -.-> API2
     RT --> S2
     RT --> W2
+
+    %% Only the stroke is pinned. Fill and text stay with the renderer's theme,
+    %% so this reads correctly in GitHub's light and dark modes alike.
+    classDef default stroke:#539bf5,stroke-width:2px
+    linkStyle default stroke:#539bf5,stroke-width:1.5px
+    style Doors2 stroke:#539bf5
+    style Brain2 stroke:#539bf5
+    style Ground2 stroke:#539bf5
 ```
 
 Transcription is configured identically in both modes and is **not** a separate
