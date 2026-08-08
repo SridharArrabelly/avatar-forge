@@ -10,7 +10,13 @@ ENV UV_LINK_MODE=copy \
     PYTHONUNBUFFERED=1
 
 COPY pyproject.toml uv.lock README.md ./
-RUN uv sync --frozen --no-install-project --no-dev
+# `--extra cosmos` keeps the Cosmos audit SDK in the image even though it is an
+# optional dependency, so turning ENABLE_AUDIT on is a config change and never a
+# rebuild. The extra is excluded from the default set only so that developer and
+# `azd` machines behind a restricted package mirror are not forced to fetch a
+# wheel they will never load. This build runs remotely in ACR (azure.yaml
+# `remoteBuild: true`), where PyPI is reachable.
+RUN uv sync --frozen --no-install-project --no-dev --extra cosmos
 
 COPY backend/ backend/
 COPY frontend/ frontend/
@@ -23,7 +29,7 @@ COPY assets/ assets/
 # keeping the tree whole avoids a copy that is right for one binding only.
 COPY prompts/ prompts/
 
-RUN uv sync --frozen --no-dev
+RUN uv sync --frozen --no-dev --extra cosmos
 
 EXPOSE 3000
 

@@ -204,8 +204,9 @@ async def main() -> int:
         import azure.cosmos  # noqa: F401
     except ImportError:
         print("The azure-cosmos package is not installed in this environment.")
+        print("It is an optional extra, so a plain `uv sync` does not install it.")
         print("It is what the Cosmos sink imports, so install it before testing:\n")
-        print("    uv sync\n")
+        print("    uv sync --extra cosmos\n")
         return 2
 
     print(f"endpoint   {AUDIT_COSMOS_ENDPOINT}")
