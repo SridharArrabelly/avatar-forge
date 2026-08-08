@@ -293,6 +293,19 @@ ENABLE_AUDIT = _bool("ENABLE_AUDIT", False)
 # none   = accept and discard (useful for latency A/B testing)
 AUDIT_SINK = _str("AUDIT_SINK", "cosmos").strip().lower()
 
+# What happens when the configured sink cannot be built — an unset endpoint, a
+# Cosmos connection that fails, or an unrecognised AUDIT_SINK value.
+#   error = refuse to start (default). Audit is opt-in and off by default, so a
+#           deployment that explicitly asked for a trail and cannot have one
+#           should stop, rather than serve conversations it silently fails to
+#           record. The failure is immediate and named; the alternative is
+#           discovered during an audit, when the data is already gone.
+#   file  = fall back to local JSONL and report audit as degraded.
+#   none  = fall back to discarding and report audit as degraded.
+# Note both fallbacks are ephemeral on Container Apps: the container filesystem
+# does not survive a revision, and each replica keeps its own separate copy.
+AUDIT_SINK_FALLBACK = _str("AUDIT_SINK_FALLBACK", "error").strip().lower()
+
 AUDIT_COSMOS_ENDPOINT = _str("AUDIT_COSMOS_ENDPOINT", "")
 AUDIT_COSMOS_DATABASE = _str("AUDIT_COSMOS_DATABASE", "audit")
 AUDIT_COSMOS_CONTAINER = _str("AUDIT_COSMOS_CONTAINER", "turns")

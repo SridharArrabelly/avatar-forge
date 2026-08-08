@@ -38,6 +38,7 @@ from ..config import (
     AUDIT_REDACT,
     AUDIT_RETENTION_DAYS,
     AUDIT_SINK,
+    AUDIT_SINK_FALLBACK,
     AUDIT_TOOL_PAYLOAD_MAX_KB,
     ENABLE_AUDIT,
 )
@@ -53,6 +54,24 @@ _queue = None
 # cached by Python — it re-walks sys.path on every attempt — so trying this
 # per turn would be exactly the kind of cost this module refuses to incur.
 _trace_id = None
+
+# The sink actually in use, and why it isn't the configured one. Both are needed
+# because the two can differ: without them the startup log reports what was
+# *asked for* rather than what is happening, which is how a deployment writing
+# to an ephemeral file can report itself as writing to Cosmos.
+_sink_name = None
+_degraded = None
+
+
+class AuditSinkUnavailable(RuntimeError):
+    """The configured sink could not be built and no fallback was permitted.
+
+    Raised out of :func:`init_audit` and deliberately not caught there, so the
+    FastAPI lifespan fails and the deployment stops. That is the point: an
+    operator who set ``ENABLE_AUDIT=true`` asked for a record of every
+    conversation, and a process that serves conversations it cannot record is
+    the exact failure the feature exists to prevent.
+    """
 
 
 def _resolve_trace_id():
@@ -96,11 +115,44 @@ def is_enabled() -> bool:
 
 
 def stats() -> dict:
-    return _queue.stats() if _queue is not None else {"enabled": False}
+    """Counters plus the two facts that say whether they can be trusted.
+
+    ``sink`` is the resolved sink, not the configured one, and ``degraded``
+    names the reason they differ. A caller reading ``written`` needs both to
+    know whether those records went anywhere durable.
+    """
+    if _queue is None:
+        return {"enabled": False, "sink": None, "degraded": _degraded}
+    return {**_queue.stats(), "enabled": True, "sink": _sink_name,
+            "degraded": _degraded}
+
+
+async def _fallback_or_raise(reason: str):
+    """Apply ``AUDIT_SINK_FALLBACK`` to a sink that could not be built.
+
+    Every route to a sink other than the configured one passes through here, so
+    there is one place that decides whether a broken audit configuration stops
+    the deployment, and one place that records that audit is degraded.
+    """
+    from .sinks import FileSink, NullSink
+
+    if AUDIT_SINK_FALLBACK not in ("file", "none"):
+        # Covers the default 'error' and any typo. A misspelled fallback must
+        # not be read as permission to fall back.
+        raise AuditSinkUnavailable(reason)
+
+    global _degraded
+    _degraded = reason
+    logger.error(
+        f"[AUDIT] DEGRADED — {reason}. AUDIT_SINK_FALLBACK={AUDIT_SINK_FALLBACK!r}, "
+        f"so the trail is NOT going to the configured destination. Both fallbacks "
+        f"are ephemeral on Container Apps and are lost on the next revision."
+    )
+    return NullSink() if AUDIT_SINK_FALLBACK == "none" else FileSink()
 
 
 async def _build_sink():
-    """Construct the configured sink, falling back to file on any failure."""
+    """Construct the configured sink, or apply the fallback policy."""
     from .sinks import FileSink, NullSink
 
     kind = AUDIT_SINK
@@ -110,11 +162,9 @@ async def _build_sink():
         return FileSink()
     if kind == "cosmos":
         if not AUDIT_COSMOS_ENDPOINT:
-            logger.warning(
-                "[AUDIT] AUDIT_SINK=cosmos but AUDIT_COSMOS_ENDPOINT is unset — "
-                "falling back to the local file sink"
+            return await _fallback_or_raise(
+                "AUDIT_SINK=cosmos but AUDIT_COSMOS_ENDPOINT is unset"
             )
-            return FileSink()
         try:
             from .cosmos import CosmosSink
 
@@ -126,10 +176,11 @@ async def _build_sink():
             await sink.warm()
             return sink
         except Exception as e:
-            logger.error(f"[AUDIT] Cosmos sink unavailable ({e}) — using file sink")
-            return FileSink()
-    logger.warning(f"[AUDIT] unknown AUDIT_SINK={kind!r} — using file sink")
-    return FileSink()
+            # warm() is where a missing data-plane role, a firewall rule or a
+            # private-only account first shows up, and all three are permanent
+            # rather than transient. See scripts/smoke_audit_cosmos.py.
+            return await _fallback_or_raise(f"Cosmos sink unavailable ({e})")
+    return await _fallback_or_raise(f"unknown AUDIT_SINK={kind!r}")
 
 
 async def init_audit() -> None:
@@ -147,7 +198,7 @@ async def init_audit() -> None:
     try:
         from .queue import AuditQueue
 
-        global _trace_id
+        global _trace_id, _sink_name
         _trace_id = _resolve_trace_id()
         sink = await _build_sink()
         _queue = AuditQueue(
@@ -158,10 +209,29 @@ async def init_audit() -> None:
             max_payload_bytes=AUDIT_TOOL_PAYLOAD_MAX_KB * 1024,
         )
         _queue.start()
-        logger.info(f"[AUDIT] enabled — sink={AUDIT_SINK}")
+        _sink_name = type(sink).__name__
+        # Report what is actually in use. Logging the configured value instead
+        # is what let a degraded deployment announce "sink=cosmos" while
+        # appending to a file nobody would ever read.
+        suffix = f" (configured: {AUDIT_SINK}, DEGRADED)" if _degraded else ""
+        logger.info(f"[AUDIT] enabled — sink={_sink_name}{suffix}")
+    except AuditSinkUnavailable:
+        # Not absorbed, unlike everything else here. This is the one audit
+        # failure allowed to stop the app, because continuing would mean
+        # serving conversations that are silently not recorded.
+        _queue = None
+        _sink_name = None
+        logger.critical(
+            "[AUDIT] refusing to start: audit was requested but no sink could be "
+            "built, and AUDIT_SINK_FALLBACK does not permit a fallback. Fix the "
+            "configuration, or set AUDIT_SINK_FALLBACK=file|none to accept an "
+            "ephemeral trail, or set ENABLE_AUDIT=false to run without audit."
+        )
+        raise
     except Exception as e:
         # A broken audit configuration must not stop the app from serving.
         _queue = None
+        _sink_name = None
         logger.error(f"[AUDIT] failed to start, continuing without audit: {e}")
 
 
@@ -175,8 +245,10 @@ async def shutdown_audit() -> None:
         logger.debug(f"[AUDIT] drain failed: {e}")
     finally:
         _queue = None
-        global _trace_id
+        global _trace_id, _sink_name, _degraded
         _trace_id = None
+        _sink_name = None
+        _degraded = None
     try:
         from . import foundry
 

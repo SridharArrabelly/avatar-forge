@@ -269,7 +269,8 @@ audit.finish_turn(h, status="completed")
 
 check("audit is off unless enabled", audit.is_enabled(), False)
 check("no record created when disabled", getattr(h, "_audit_record", None), None)
-check("stats report disabled", audit.stats(), {"enabled": False})
+check("stats report disabled", audit.stats(),
+      {"enabled": False, "sink": None, "degraded": None})
 
 
 print()
@@ -376,6 +377,148 @@ try:
 finally:
     audit._queue = None
     audit._trace_id = None
+
+
+print()
+print("sink selection and the fallback policy (#104)")
+
+# This path had no coverage at all, which is how a silent fallback shipped. The
+# three conditions below each used to return FileSink while the app reported
+# audit as working — on Container Apps that means an ephemeral file, lost on the
+# next revision, with `written` still counting up.
+import backend.audit.cosmos as cosmos_mod  # noqa: E402
+from backend.audit import AuditSinkUnavailable  # noqa: E402
+
+
+class _ConfigPatch:
+    """Patch the config constants bound into backend.audit, restoring after.
+
+    They are attributes of the module because __init__ does
+    ``from ..config import ...``, and _build_sink() resolves them from module
+    globals at call time, so setting them here is what the running app sees.
+    """
+
+    def __init__(self, **overrides):
+        self._overrides = overrides
+        self._saved = {}
+
+    def __enter__(self):
+        self._saved = {k: getattr(audit, k) for k in self._overrides}
+        for k, v in self._overrides.items():
+            setattr(audit, k, v)
+        audit._degraded = None
+        return self
+
+    def __exit__(self, *exc):
+        for k, v in self._saved.items():
+            setattr(audit, k, v)
+        audit._degraded = None
+        audit._sink_name = None
+        audit._queue = None
+        return False
+
+
+def _build(**overrides):
+    """Build a sink under the given config. Returns (class name, degraded reason)."""
+    with _ConfigPatch(**overrides):
+        sink = asyncio.run(audit._build_sink())
+        return type(sink).__name__, audit._degraded
+
+
+def _refuses(**overrides) -> bool:
+    with _ConfigPatch(**overrides):
+        try:
+            asyncio.run(audit._build_sink())
+            return False
+        except AuditSinkUnavailable:
+            return True
+
+
+class _BrokenCosmosSink:
+    """Stands in for the real sink failing in warm(), where RBAC and firewall
+    problems both surface. No network, so this stays a unit test."""
+
+    def __init__(self, **kwargs):
+        pass
+
+    async def warm(self):
+        raise RuntimeError("403 Forbidden — blocked by firewall settings")
+
+
+check("a configured 'none' sink is built as asked", _build(AUDIT_SINK="none")[0],
+      "NullSink")
+check("a configured 'file' sink is built as asked", _build(AUDIT_SINK="file")[0],
+      "FileSink")
+
+check_true("cosmos without an endpoint refuses to start",
+           _refuses(AUDIT_SINK="cosmos", AUDIT_COSMOS_ENDPOINT="",
+                    AUDIT_SINK_FALLBACK="error"))
+check_true("an unrecognised sink name refuses to start",
+           _refuses(AUDIT_SINK="cosmosdb", AUDIT_SINK_FALLBACK="error"))
+
+_real_cosmos_sink = cosmos_mod.CosmosSink
+cosmos_mod.CosmosSink = _BrokenCosmosSink
+try:
+    check_true("a cosmos sink that cannot connect refuses to start",
+               _refuses(AUDIT_SINK="cosmos",
+                        AUDIT_COSMOS_ENDPOINT="https://x.documents.azure.com:443/",
+                        AUDIT_SINK_FALLBACK="error"))
+    name, reason = _build(AUDIT_SINK="cosmos",
+                          AUDIT_COSMOS_ENDPOINT="https://x.documents.azure.com:443/",
+                          AUDIT_SINK_FALLBACK="file")
+    check("an opted-in fallback still yields a working sink", name, "FileSink")
+    check_true("a failed connection is recorded as the degraded reason", reason)
+finally:
+    cosmos_mod.CosmosSink = _real_cosmos_sink
+
+name, reason = _build(AUDIT_SINK="cosmos", AUDIT_COSMOS_ENDPOINT="",
+                      AUDIT_SINK_FALLBACK="file")
+check("fallback=file yields the file sink", name, "FileSink")
+check_true("fallback=file says why audit is degraded", reason)
+
+name, reason = _build(AUDIT_SINK="cosmos", AUDIT_COSMOS_ENDPOINT="",
+                      AUDIT_SINK_FALLBACK="none")
+check("fallback=none yields the null sink", name, "NullSink")
+check_true("fallback=none says why audit is degraded", reason)
+
+# A typo in the fallback must not read as permission to fall back — that would
+# turn a second configuration mistake into the silent behaviour being removed.
+check_true("a misspelled fallback is not permission to fall back",
+           _refuses(AUDIT_SINK="cosmos", AUDIT_COSMOS_ENDPOINT="",
+                    AUDIT_SINK_FALLBACK="flie"))
+
+# init_audit absorbs almost every failure on purpose, so that a broken audit
+# config cannot take the app down. This is the one exception, and it only works
+# if the catch-all does not swallow it.
+with _ConfigPatch(ENABLE_AUDIT=True, AUDIT_SINK="cosmos",
+                  AUDIT_COSMOS_ENDPOINT="", AUDIT_SINK_FALLBACK="error"):
+    refused = False
+    try:
+        asyncio.run(audit.init_audit())
+    except AuditSinkUnavailable:
+        refused = True
+    check_true("init_audit lets the refusal reach the lifespan", refused)
+    check("a refused start leaves audit off", audit.is_enabled(), False)
+
+
+async def _init_stats_shutdown():
+    # One event loop for all three: the writer task is bound to the loop it was
+    # started on, so draining it from a second asyncio.run would not work.
+    await audit.init_audit()
+    reported = audit.stats()
+    await audit.shutdown_audit()
+    return reported, audit._degraded
+
+
+with _ConfigPatch(ENABLE_AUDIT=True, AUDIT_SINK="cosmos",
+                  AUDIT_COSMOS_ENDPOINT="", AUDIT_SINK_FALLBACK="file"):
+    reported, after_shutdown = asyncio.run(_init_stats_shutdown())
+    check("stats name the resolved sink, not the configured one",
+          reported["sink"], "FileSink")
+    check_true("stats expose the degraded reason", reported["degraded"])
+    check_true("stats still report audit as enabled while degraded",
+               reported["enabled"])
+    check("shutdown clears the degraded flag", after_shutdown, None)
 
 
 print()
