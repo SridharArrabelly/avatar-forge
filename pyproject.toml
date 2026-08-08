@@ -8,7 +8,6 @@ dependencies = [
     "azure-ai-projects>=2.4.0",
     "azure-ai-voicelive[aiohttp]>=1.2.0",
     "azure-core>=1.41.0",
-    "azure-cosmos>=4.16.3",
     "azure-identity>=1.26.0b2",
     "azure-search-documents>=12.0.0",
     "fastapi>=0.141.1",
@@ -26,6 +25,22 @@ dependencies = [
     # Container App and keeps the Windows media bot free of any decoder.
     "av>=18.0.0",
 ]
+
+# Needed only by AUDIT_SINK=cosmos, which cannot be reached unless ENABLE_AUDIT
+# is true — and audit is off by default. `backend/audit/cosmos.py` imports the
+# SDK lazily inside `_connect()`, so nothing touches `azure.cosmos` until a
+# Cosmos sink is actually built.
+#
+# Keeping it out of the required set matters on restricted networks: every azd
+# hook shells out to `uv run`, which syncs first, so one unreachable wheel fails
+# `azd provision` outright — even with audit disabled and no Cosmos in the
+# deployment. A dependency that most deployments never use must not be able to
+# block all of them.
+#
+# The container image installs this extra (see Dockerfile), so a deployed app
+# can always write to Cosmos. Locally: `uv sync --extra cosmos`.
+[project.optional-dependencies]
+cosmos = ["azure-cosmos>=4.16.3"]
 
 [tool.uv]
 prerelease = "allow"

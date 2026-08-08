@@ -44,7 +44,19 @@ class CosmosSink:
         await asyncio.to_thread(self._connect)
 
     def _connect(self) -> None:
-        from azure.cosmos import CosmosClient
+        try:
+            from azure.cosmos import CosmosClient
+        except ImportError as e:
+            # Optional extra, so this is a configuration mistake rather than a
+            # broken install: say which command fixes it and which settings
+            # avoid needing it at all.
+            raise RuntimeError(
+                "AUDIT_SINK=cosmos needs the azure-cosmos package, which is an "
+                "optional dependency. Install it with `uv sync --extra cosmos` "
+                "(the container image already includes it), or choose "
+                "AUDIT_SINK=file|none, or set ENABLE_AUDIT=false."
+            ) from e
+
         from azure.identity import DefaultAzureCredential
 
         self._credential = DefaultAzureCredential()
