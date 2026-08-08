@@ -59,18 +59,57 @@ SMOKE_TTL_SECONDS = 3600
 SMOKE_EMAIL = "smoke.probe@example.com"
 
 
+def _with_raw(summary: str, text: str) -> str:
+    """Show the interpretation, then the message Azure actually sent.
+
+    Keeping the raw text is the difference between a diagnosis and a guess: when
+    the guess is wrong, the operator can still see the truth underneath it.
+    """
+    first = text.strip().splitlines()[0] if text.strip() else "(no message)"
+    return f"{summary}\n\n  Azure said:\n    {first[:400]}"
+
+
 def diagnose(error: Exception) -> str:
     """Turn an Azure exception into the specific thing to go and fix.
 
     A smoke test that only says "failed" leaves the operator with the same
-    problem they started with. These four causes look nearly identical from the
+    problem they started with. These causes look nearly identical from the
     traceback and have completely different fixes, so they are separated here.
+
+    The interpretation is always printed *alongside* the raw Azure message, never
+    instead of it. An earlier version returned only the guess, and when a network
+    403 was reported as an RBAC 403 the real cause stayed invisible through
+    several rounds of chasing role assignments that were correct all along.
     """
     status = getattr(error, "status_code", None)
     text = str(error)
 
     if status == 403 or "Forbidden" in text:
-        return (
+        # Two unrelated failures both return 403. The firewall one names itself
+        # in the response, so test for it before falling through to RBAC.
+        lowered = text.lower()
+        if ("firewall" in lowered or "public internet" in lowered
+                or "publicnetworkaccess" in lowered):
+            return _with_raw(
+                "403 Forbidden — the network blocked this, not RBAC. The account\n"
+                "  is refusing the caller's IP. Either publicNetworkAccess is\n"
+                "  Disabled, or an ipRules allowlist does not include this host.\n"
+                "  Check with:\n"
+                "    az cosmosdb show -n <account> -g <rg> \\\n"
+                "      --query '{public:publicNetworkAccess, ipRules:ipRules}'\n"
+                "  Note the template is not the last word here: an Azure Policy\n"
+                "  'modify' effect can force publicNetworkAccess to Disabled at\n"
+                "  deploy time, so the account can differ from the Bicep that\n"
+                "  created it. Check with:\n"
+                "    az policy state list --resource <accountId> \\\n"
+                "      --filter \"policyDefinitionAction eq 'modify'\"\n"
+                "  If it is Disabled and no private endpoint exists, then nothing\n"
+                "  outside the VNet can reach this account — including the\n"
+                "  container app. In that case the sink will fail warm() in\n"
+                "  production too and fall back to local file (see #104).",
+                text,
+            )
+        return _with_raw(
             "403 Forbidden — the identity is authenticated but has no data-plane\n"
             "  role on this account. This is the common one, because the RBAC\n"
             "  roles shown in the portal are CONTROL plane and do not grant data\n"
@@ -78,26 +117,30 @@ def diagnose(error: Exception) -> str:
             "  assigned via sqlRoleAssignments — infra/modules/cosmosRoleForApp.bicep\n"
             "  does this for the app identity. To run this script as yourself,\n"
             "  assign the same role to your user principal.\n"
-            "  Note role assignments take a few minutes to propagate."
+            "  Note role assignments take a few minutes to propagate.",
+            text,
         )
     if status == 401 or "Unauthorized" in text:
-        return (
+        return _with_raw(
             "401 Unauthorized — no usable token. Run 'az login', or run this\n"
-            "  where the managed identity is available."
+            "  where the managed identity is available.",
+            text,
         )
     if status == 404 or "NotFound" in text or "does not exist" in text:
-        return (
+        return _with_raw(
             "404 Not Found — endpoint reachable, but the database or container\n"
-            f"  is not there. Check AUDIT_COSMOS_DATABASE and AUDIT_COSMOS_CONTAINER.\n"
+            "  is not there. Check AUDIT_COSMOS_DATABASE and AUDIT_COSMOS_CONTAINER.\n"
             "  Note these are only created when the app is deployed with\n"
             "  ENABLE_AUDIT=true, so an infra deploy that had it false will not\n"
-            "  have made them."
+            "  have made them.",
+            text,
         )
     if "ServiceRequestError" in type(error).__name__ or "getaddrinfo" in text:
-        return (
+        return _with_raw(
             "Could not reach the account at all — DNS or network. Check\n"
             "  AUDIT_COSMOS_ENDPOINT is the full https://<account>.documents.azure.com:443/\n"
-            "  URL and that the account still exists."
+            "  URL and that the account still exists.",
+            text,
         )
     return f"{type(error).__name__}: {text}"
 
