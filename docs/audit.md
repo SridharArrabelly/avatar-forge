@@ -328,7 +328,46 @@ uv run python -m backend.main
 
 Records are appended as JSONL to `audit-log.jsonl` in the working directory.
 Have a conversation, then read the file — one JSON object per turn, in the
-shape above.
+shape above. The file is git-ignored: it holds real questions and answers.
+
+`file` and `none` need no extra packages. Only `AUDIT_SINK=cosmos` does — see
+below.
+
+### The `cosmos` extra
+
+`azure-cosmos` is an **optional** dependency, so `uv sync` does not install it:
+
+```powershell
+uv sync --extra cosmos
+```
+
+It is optional because every `azd` hook shells out to `uv run`, which syncs
+first. As a required dependency, one unreachable wheel failed the preprovision
+hook and stopped `azd provision` before it reached Azure — even with audit
+disabled and no Cosmos in the deployment. A dependency that most deployments
+never load should not be able to block all of them.
+
+Deployments are unaffected: the container image installs the extra (see
+`Dockerfile`), so turning audit on stays a config change, never a rebuild. The
+image builds remotely in ACR, where PyPI is reachable.
+
+If it is missing, `AUDIT_SINK=cosmos` fails at startup with a message naming the
+command — and, being an unbuildable sink, it obeys `AUDIT_SINK_FALLBACK` like
+any other. It never degrades silently.
+
+Behind a package mirror that cannot reach PyPI, install the wheel straight into
+the venv instead, then run without a re-sync:
+
+```powershell
+uv pip install <path-to>\azure_cosmos-4.16.3-py3-none-any.whl
+uv run --no-sync python -m backend.main
+```
+
+`uv pip install` does not touch `uv.lock`. Avoid `uv sync --index-url <mirror>`,
+which **rewrites every artifact URL in `uv.lock`** to mirror-specific paths and
+breaks the build for anyone outside that network. If you ever run it, restore
+the lock with `git checkout uv.lock`. Note that a plain `uv sync` (or a bare
+`uv run`, which syncs) prunes the manually installed wheel again.
 
 ### Enable it on a deployment
 
@@ -393,7 +432,7 @@ flowchart TB
 | Failure | Behaviour |
 |---|---|
 | `AUDIT_SINK=cosmos` but no endpoint configured | **Startup fails** with `AuditSinkUnavailable`, unless `AUDIT_SINK_FALLBACK` opts into one. |
-| Cosmos unreachable at startup — missing data-plane role, firewall, private-only account, `azure-cosmos` not installed | **Startup fails** by default. All of these surface in `warm()`, and none of them are transient. |
+| Cosmos unreachable at startup — missing data-plane role, firewall, private-only account, `azure-cosmos` not installed (`uv sync --extra cosmos`) | **Startup fails** by default. All of these surface in `warm()`, and none of them are transient. |
 | Unrecognised `AUDIT_SINK` value | **Startup fails** by default, so a typo cannot quietly become a different sink. |
 | Sink fails on write | Logged and counted in `failed`; the writer backs off briefly and continues with the next batch. |
 | Queue full | Record dropped, `dropped` incremented, warning throttled. Never blocks. |
