@@ -22,6 +22,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 import re
@@ -176,7 +177,102 @@ def check_login() -> CheckResult:
         return CheckResult("az login", False, err.strip() or "not signed in", fix="        az login")
     acct = json.loads(out)
     user = acct.get("user", {}).get("name", "?")
-    return CheckResult("az login", True, f"{user} / sub {acct.get('name')}")
+    tenant = acct.get("tenantId", "?")
+    # The tenant is shown because switching tenants is the one change that leaves
+    # `az` correct and every other credential store stale, and it is invisible
+    # from the account name alone.
+    return CheckResult("az login", True, f"{user} / sub {acct.get('name')} / tenant {tenant}")
+
+
+def check_azd_login() -> CheckResult:
+    """Verify `azd` itself can get a token for the environment's subscription.
+
+    `az` and `azd` keep entirely separate credential stores. Signing into a new
+    tenant with `az login` leaves azd authenticated to the old one, and azd also
+    caches AZURE_SUBSCRIPTION_ID in the environment, so it keeps targeting a
+    subscription the new identity may not be able to see. Checking only `az`
+    reports green and the failure surfaces minutes later, inside `azd up`, as an
+    error naming an account the user thought they had stopped using.
+
+    `azd auth token` is the same call `azd up` makes, so it fails here for the
+    same reason it would fail there — in about a second rather than after
+    provisioning has started.
+    """
+    exe = shutil.which("azd") or shutil.which("azd.exe")
+    if not exe:
+        return CheckResult("azd login", True, "azd not on PATH — skipped", warn_only=True)
+
+    res = subprocess.run(
+        [exe, "auth", "token", "--output", "json"],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=120,
+    )
+    if res.returncode != 0:
+        raw = (res.stderr or res.stdout or "").strip()
+        # azd emits JSON-wrapped console messages; its own text is the best
+        # guidance available, so surface it rather than paraphrasing.
+        message = raw
+        for line in raw.splitlines():
+            try:
+                payload = json.loads(line)
+            except ValueError:
+                continue
+            found = payload.get("data", {}).get("message", "")
+            if found:
+                message = found.strip()
+                break
+        message = " ".join(message.split())
+        if len(message) > 240:
+            message = message[:237] + "..."
+        return CheckResult(
+            "azd login",
+            False,
+            message or f"`azd auth token` exited {res.returncode}",
+            fix=(
+                "        azd auth login\n"
+                "        If you switched tenants, name it explicitly:\n"
+                "        azd auth login --tenant-id <tenant-id>\n"
+                "        If the environment still points at the old subscription:\n"
+                "        azd env set AZURE_SUBSCRIPTION_ID <subscription-id>"
+            ),
+        )
+
+    # The token proves azd can authenticate. Compare the tenant it actually got
+    # against `az`, because the two can succeed independently against different
+    # tenants and still produce a deployment in the wrong place.
+    azd_tenant = ""
+    try:
+        token = json.loads(res.stdout).get("token", "")
+        body = token.split(".")[1]
+        body += "=" * (-len(body) % 4)
+        azd_tenant = json.loads(base64.urlsafe_b64decode(body)).get("tid", "")
+    except Exception:
+        # Never fail the check on token shape: the token is proof enough, and the
+        # claim is only used to make a mismatch legible.
+        azd_tenant = ""
+
+    code, out, _ = _run(["account", "show", "--query", "tenantId", "-o", "tsv"])
+    az_tenant = out.strip() if code == 0 else ""
+
+    if azd_tenant and az_tenant and azd_tenant != az_tenant:
+        return CheckResult(
+            "azd login",
+            False,
+            f"azd is signed into tenant {azd_tenant}, `az` into {az_tenant}",
+            fix=(
+                "        The two will deploy to different places. Point azd at the\n"
+                "        tenant you want:\n"
+                f"        azd auth login --tenant-id {az_tenant}"
+            ),
+        )
+    detail = "authenticated"
+    if azd_tenant:
+        detail += f" / tenant {azd_tenant}"
+        if az_tenant:
+            detail += " (matches `az`)"
+    return CheckResult("azd login", True, detail)
 
 
 # ── Regions ──────────────────────────────────────────────────────────────────
@@ -645,6 +741,7 @@ def main() -> int:
         check_tool("azd", "https://aka.ms/azd-install"),
         check_tool("uv", "https://docs.astral.sh/uv/getting-started/installation/"),
         check_login(),
+        check_azd_login(),
     ]
     for provider in BASE_PROVIDERS + profile.providers:
         checks.append(check_provider_registered(provider))

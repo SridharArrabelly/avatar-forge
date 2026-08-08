@@ -63,6 +63,22 @@ The `az` and `azd` sessions must target the tenant and subscription where the de
 will be created. The application’s managed-identity roles are assigned by the deployment;
 they are separate from the roles required by the person running `azd up`.
 
+> [!IMPORTANT]
+> `az` and `azd` keep **separate** credential stores, and `azd` additionally caches
+> `AZURE_SUBSCRIPTION_ID` in the environment. Signing into a different tenant with
+> `az login` alone therefore leaves `azd` authenticated to the old one and still
+> targeting the old subscription, and `azd up` fails partway with an error naming an
+> account you thought you had stopped using. After switching tenants, name the tenant
+> explicitly and re-point the environment:
+>
+> ```powershell
+> azd auth login --tenant-id <tenant-id>
+> azd env set AZURE_SUBSCRIPTION_ID <subscription-id>
+> ```
+>
+> Preflight checks this before anything is provisioned, by asking `azd` for a token the
+> same way `azd up` does — so a mismatch costs a second rather than a failed deployment.
+
 ## Regions
 
 Voice Live and the avatar are each limited to a handful of regions, and you need the
