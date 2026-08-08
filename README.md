@@ -184,6 +184,11 @@ azd env set AVATAR_MODEL Simone
 # Set this before deployment only if you want a different name.
 # azd env set AGENT_NAME ContosoAvatarAgent
 
+# Optional: record each turn's question, tool results and answer for audit.
+# Off by default. Turning it on provisions a Cosmos DB account, so confirm
+# retention, access control and any notice obligation first — docs/audit.md.
+# azd env set ENABLE_AUDIT true
+
 # 2. Choose which channel you are deploying. Sets DEPLOY_PROFILE and prints
 #    the full numbered plan, marking who performs each step.
 uv run python scripts/set_profile.py

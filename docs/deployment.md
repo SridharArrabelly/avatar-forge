@@ -127,6 +127,11 @@ azd env set AVATAR_MODEL Simone
 # Agent mode creates a Foundry agent named AvatarAgent by default.
 # Optional: choose a different name before the first deployment.
 # azd env set AGENT_NAME ContosoAvatarAgent
+# Optional: the conversation audit trail. Off by default; true provisions a
+# Cosmos DB account, its database and container, and the app's data-plane role
+# assignment. It is a Bicep parameter, so set it before you provision.
+# Confirm retention, access control and any notice obligation first — audit.md.
+# azd env set ENABLE_AUDIT true
 
 # 5. Choose the channel AND the brain. Records DEPLOY_PROFILE (web · teams-tab ·
 #    in-call-browser · in-call) and VOICE_BINDING (agent · model), sets every flag
