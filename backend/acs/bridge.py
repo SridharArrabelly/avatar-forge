@@ -45,6 +45,7 @@ from ..config import (
     MEETING_BOT_VIDEO_HEIGHT,
     MEETING_BOT_VIDEO_WIDTH,
 )
+from ..logsafe import fingerprint
 from .avatar_stream import AvatarStreamDecoder
 
 logger = logging.getLogger(__name__)
@@ -444,7 +445,7 @@ class AcsVoiceBridge:
     def _on_user_utterance(self, transcript: str) -> None:
         """Arm the answer gate when an utterance is addressed to the avatar."""
         self._last_activity_ms = time.monotonic() * 1000.0
-        logger.info(f"[ACS {self.client_id}] heard utterance: {transcript!r}")
+        logger.info(f"[ACS {self.client_id}] heard utterance: [{fingerprint(transcript)}]")
         if not ACS_REQUIRE_WAKE_PHRASE:
             self._answer_armed = True
             return
@@ -455,13 +456,13 @@ class AcsVoiceBridge:
             logger.info(
                 f"[ACS {self.client_id}] follow-up window "
                 f"({ACS_FOLLOWUP_WINDOW_S:.0f}s) active — answering without wake "
-                f"phrase: {transcript!r}"
+                f"phrase: [{fingerprint(transcript)}]"
             )
         self._answer_armed = armed
         if armed:
             logger.info(
                 f"[ACS {self.client_id}] wake phrase detected — answering: "
-                f"{transcript!r}"
+                f"[{fingerprint(transcript)}]"
             )
         else:
             logger.info(
@@ -849,7 +850,7 @@ class BrowserVoiceBridge:
     def _on_user_utterance(self, transcript: str) -> None:
         """Arm the answer gate when an utterance is addressed to the avatar."""
         self._last_activity_ms = time.monotonic() * 1000.0
-        logger.info(f"[browser {self.client_id}] heard utterance: {transcript!r}")
+        logger.info(f"[browser {self.client_id}] heard utterance: [{fingerprint(transcript)}]")
         if not ACS_REQUIRE_WAKE_PHRASE:
             self._answer_armed = True
             return
@@ -860,13 +861,13 @@ class BrowserVoiceBridge:
             logger.info(
                 f"[browser {self.client_id}] follow-up window "
                 f"({ACS_FOLLOWUP_WINDOW_S:.0f}s) active — answering without wake "
-                f"phrase: {transcript!r}"
+                f"phrase: [{fingerprint(transcript)}]"
             )
         self._answer_armed = armed
         if armed:
             logger.info(
                 f"[browser {self.client_id}] wake phrase detected — answering: "
-                f"{transcript!r}"
+                f"[{fingerprint(transcript)}]"
             )
         else:
             logger.info(

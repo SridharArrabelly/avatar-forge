@@ -37,6 +37,7 @@ import httpx
 from azure.search.documents.models import VectorizableTextQuery
 
 from ..document_titles import display_document_title
+from ..logsafe import fingerprint
 from .catalog import get_search_client
 
 logger = logging.getLogger(__name__)
@@ -431,7 +432,7 @@ async def search_web(query: str) -> dict[str, Any]:
             return {"error": f"Web search failed (HTTP {resp.status_code})."}
         payload = resp.json() or {}
     except Exception as e:
-        logger.warning(f"search_web failed for {query!r}: {type(e).__name__}: {e}")
+        logger.warning(f"search_web failed [{fingerprint(query)}]: {type(e).__name__}: {e}")
         return {"error": f"The web search failed: {type(e).__name__}"}
 
     # Web IQ names the result list per feature; take whichever is present.
@@ -476,7 +477,7 @@ async def search_web(query: str) -> dict[str, Any]:
 
     elapsed_ms = (time.monotonic() - started) * 1000
     logger.info(
-        f"[TOOL] search_web({feature}) {elapsed_ms:.0f}ms  n={len(results)}  q={query!r}"
+        f"[TOOL] search_web({feature}) {elapsed_ms:.0f}ms  n={len(results)}  [{fingerprint(query)}]"
     )
     if not results:
         return {"results": [], "note": "No results found on the web for that."}
@@ -566,13 +567,13 @@ async def search_minutes(query: str, top: int = DEFAULT_TOP) -> dict[str, Any]:
         # gracefully and can say so, but an exception strands the turn with the
         # user listening to silence.
         logger.warning(
-            f"search_minutes failed for {query!r}: {type(e).__name__}: {e}"
+            f"search_minutes failed [{fingerprint(query)}]: {type(e).__name__}: {e}"
         )
         return {"error": f"The internal document search failed: {type(e).__name__}"}
 
     elapsed_ms = (time.monotonic() - started) * 1000
     logger.info(
-        f"[TOOL] search_minutes {elapsed_ms:.0f}ms  n={len(passages)}  q={query!r}"
+        f"[TOOL] search_minutes {elapsed_ms:.0f}ms  n={len(passages)}  [{fingerprint(query)}]"
     )
     if not passages:
         return {

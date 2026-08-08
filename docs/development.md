@@ -141,7 +141,7 @@ test checklist + model-shootout results live in
 ## Automated tests
 
 Everything above is a *smoke test* — it needs live Azure resources. Most of the suite
-does not: **twelve checks run fully offline**, with no Azure, no credentials and no
+does not: **sixteen checks run fully offline**, with no Azure, no credentials and no
 network. They live in [`tests/`](../tests/README.md) — in this repo the `test_` prefix
 means exactly that, and anything that costs money to run sits in
 [`scripts/`](../scripts/README.md) under a `setup_` / `grant_` / `smoke_` / `bench_`
@@ -160,6 +160,10 @@ uv run python tests/test_agent_tool_wiring.py    # required vs optional agent to
 uv run python tests/test_prompt_tool_names.py    # prompt tool-name placeholders match each binding
 uv run python tests/test_rbac_propagation.py # the RBAC-propagation wait used by postprovision
 uv run python tests/test_set_profile.py      # profile flags are authoritative, not cumulative
+uv run python tests/test_realtime_policy_mode.py # the realtime policy mode wiring
+uv run python tests/test_thinking_cue.py     # the wait indicator never claims work it is not doing
+uv run python tests/test_voice_interrupt.py  # barge-in stops playback
+uv run python tests/test_ops_logs.py         # no conversation content reaches the ops logs
 ```
 
 There is no single runner — each is a standalone script, so run the one that covers what
@@ -178,6 +182,35 @@ or wrongly named — Bing connection only disables the web tool. Run it after to
 **`test_build_package.py`** must run in a *clean* shell. It asserts the builder's
 behaviour when variables are unset, so a hydrated environment (one where you have
 `azd env get-values`'d into your session) makes it fail for the wrong reason.
+
+### Never log conversation content
+
+Container stdout is collected into Log Analytics. That is *operational* storage —
+broad team access, dashboards, export, and a retention window chosen for debugging
+convenience. Conversation content written there bypasses every control the audit
+trail applies, including `ENABLE_AUDIT=false`, which a deployment may have chosen
+precisely because it does not want conversations recorded.
+
+So: **no `logger` or `print` call may interpolate a user's question, a model's
+answer, or a retrieved passage.** Use [`backend/logsafe.py`](../backend/logsafe.py):
+
+```python
+from ..logsafe import fingerprint, keys_only
+
+logger.info(f"[TOOL] search_minutes {ms:.0f}ms  n={len(passages)}  [{fingerprint(query)}]")
+```
+
+`fingerprint` renders `len=37 fp=9c1a4be2` — it keeps the two things these lines are
+actually read for ("how big was it", "is this the same one again") and discards the
+words. It is not a confidentiality guarantee; conversational text is short enough to
+be guessable by anyone hashing a candidate list. Anything needing a real guarantee
+belongs in the audit trail.
+
+[`test_ops_logs.py`](../tests/test_ops_logs.py) enforces this across `backend/` by
+parsing the AST — not by scanning lines, since most of these calls span several and a
+line-based check misses them. If you have a genuinely safe case (a value that only
+looks like content, such as a hint built from configuration), add it to the
+`ALLOWLIST` there with a reason.
 
 ```powershell
 cd meeting-bot\tests\BridgeContract.Tests

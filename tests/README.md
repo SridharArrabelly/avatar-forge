@@ -46,6 +46,7 @@ wrong reason. Open a fresh terminal rather than debugging it.
 | [`test_prompt_tool_names.py`](test_prompt_tool_names.py) | That prompt tool-name placeholders match the tools each binding really registers. |
 | [`test_rbac_propagation.py`](test_rbac_propagation.py) | The retry/backoff used by `postprovision` — including that 404 is *not* retried, so a missing optional connection fails fast instead of stalling for 20 minutes. |
 | [`test_set_profile.py`](test_set_profile.py) | That profile flags are authoritative rather than cumulative, so switching profiles clears the previous one's flags instead of leaving you paying for its resources. |
+| [`test_ops_logs.py`](test_ops_logs.py) | That no `logger`/`print` call in `backend/` interpolates conversation content. Container stdout goes to Log Analytics, which is operational storage — a question logged there bypasses every control the audit trail applies, including `ENABLE_AUDIT=false`. Parses the AST rather than scanning lines, because most of these calls span several lines and a line-based check silently misses them. |
 
 ## If you add one
 
