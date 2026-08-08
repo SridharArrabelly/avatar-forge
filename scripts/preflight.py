@@ -338,6 +338,68 @@ def check_voice_binding(cfg: dict[str, str]) -> list[CheckResult]:
     return results
 
 
+def check_audit(cfg: dict[str, str]) -> list[CheckResult]:
+    """Validate the conversation audit trail (docs/audit.md).
+
+    Audit is opt-in and off by default, and until now nothing in preflight
+    mentioned it. That was a real gap: turning it on adds a Cosmos DB account
+    that no other check knows about, so a subscription without
+    ``Microsoft.DocumentDB`` registered only failed once provisioning was
+    already underway.
+
+    Defaults mirror backend/config.py deliberately — AUDIT_SINK defaults to
+    ``cosmos`` and AUDIT_SINK_FALLBACK to ``error``, so an operator who sets
+    only ENABLE_AUDIT=true gets the Cosmos path and an app that refuses to
+    start if that path is broken. Both are worth stating out loud before a
+    deploy rather than after one.
+    """
+    raw = cfg.get("ENABLE_AUDIT", "").strip()
+    if raw.lower() not in ("1", "true", "yes", "on"):
+        return [
+            CheckResult(
+                "Audit trail",
+                True,
+                "off — no Cosmos account will be created"
+                + (f" (ENABLE_AUDIT={raw})" if raw else " (ENABLE_AUDIT not set)"),
+            )
+        ]
+
+    sink = cfg.get("AUDIT_SINK", "").strip().lower() or "cosmos"
+    fallback = cfg.get("AUDIT_SINK_FALLBACK", "").strip().lower() or "error"
+    results = [CheckResult("Audit trail", True, f"on — sink={sink}, fallback={fallback}")]
+    if sink != "cosmos":
+        return results
+
+    # Only the Cosmos sink provisions infrastructure, so this is the only sink
+    # whose provider can be missing.
+    results.append(check_provider_registered("Microsoft.DocumentDB"))
+
+    # The failure this is really guarding against is not a missing provider but
+    # a governed tenant: a Modify policy rewrites publicNetworkAccess to
+    # Disabled after ARM accepts the template, so provisioning reports success
+    # and the container app then cannot reach the account it was given. It
+    # cannot be detected reliably before the account exists, so preflight only
+    # names it and postprovision asserts the deployed truth.
+    #
+    # Stated in `detail` rather than `fix` because only failing checks print
+    # their fix, and this is a correct default rather than a problem.
+    #
+    # Mirrors backend/audit/__init__.py:_fallback_or_raise: anything that is not
+    # an explicit 'file' or 'none' is fail-closed, so a typo is reported as the
+    # fail-closed posture it actually produces.
+    if fallback not in ("file", "none"):
+        results.append(
+            CheckResult(
+                "Audit trail: fail-closed",
+                True,
+                f"AUDIT_SINK_FALLBACK={fallback} — the app refuses to start if Cosmos is "
+                "unreachable (set it to `file` to degrade instead)",
+            )
+        )
+
+    return results
+
+
 def check_dns_label(cfg: dict[str, str], location: str) -> CheckResult | None:
     label = cfg.get("MEETING_BOT_DNS_LABEL", "").strip()
     if not label:
@@ -596,6 +658,7 @@ def main() -> int:
         ]
     checks += check_required_inputs(profile, cfg)
     checks += check_voice_binding(cfg)
+    checks += check_audit(cfg)
     for extra in (
         check_dns_label(cfg, location),
         check_vm_password(cfg),

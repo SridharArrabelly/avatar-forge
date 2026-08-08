@@ -315,10 +315,14 @@ avatar-forge/
 │   ├── setup_foundry_agent.py     # Creates the Foundry agent with AI Search + Bing Custom Search tools
 │   ├── grant_byo_rbac.py          # Idempotently grants BYO runtime RBAC (brownfield)
 │   ├── check_media_sdk_age.py     # Fails once the Graph media SDK pin passes 90 days (channel D)
+│   ├── check_audit_sink.py        # Postprovision: asserts the deployed Cosmos audit sink is writable
 │   ├── smoke_aisearch_query.py    # Live: queries the index (hybrid + semantic)
 │   ├── smoke_foundry_agent.py     # Live: end-to-end question against the deployed agent
+│   ├── smoke_audit_cosmos.py      # Live: round-trips one document through the production CosmosSink
+│   ├── smoke_audit_conversation.py # Live: replays a Foundry conversation through the reconciler
 │   ├── bench_routing_agent.py     # Live: tool-routing + latency benchmark, agent binding
-│   └── bench_routing_model.py     # Live: the same benchmark on the model binding
+│   ├── bench_routing_model.py     # Live: the same benchmark on the model binding
+│   └── bench_audit_latency.py     # What audit capture charges the turn (off / capture / capture+sink)
 │
 ├── tests/                         # Offline: no network, no credentials, free to run
 │   ├── README.md                   # How to run them, and why test_ means exactly one thing
@@ -332,6 +336,8 @@ avatar-forge/
 │   ├── test_build_query.py         # Site scoping renders the operators Web IQ documents
 │   ├── test_prompt_tool_names.py   # Prompt tool-name placeholders match each binding
 │   ├── test_rbac_propagation.py    # The RBAC-propagation wait used by postprovision
+│   ├── test_audit.py               # Capture, queue, redaction, and the sink fallback ladder
+│   ├── test_audit_tool_leak.py     # Reconciliation attributes each tool call to exactly one turn
 │   └── test_set_profile.py         # Profile flags are authoritative, not cumulative
 │
 ├── teams/                         # Teams app package for channel B (and the optional in-call bot)

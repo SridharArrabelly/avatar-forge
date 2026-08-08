@@ -284,6 +284,14 @@ def start_turn(handler) -> None:
             channel=getattr(handler, "audit_channel", "web"),
             binding="model" if getattr(handler, "model_binding", False) else "agent",
         )
+        # One ledger per session, shared by reference with every record in it,
+        # so tool reconciliation can tell this turn's calls from earlier ones.
+        # Lives on the handler and dies with it.
+        seen = getattr(handler, "_audit_seen_calls", None)
+        if seen is None:
+            seen = set()
+            handler._audit_seen_calls = seen
+        record.seen_call_ids = seen
         # A user transcript arrives *before* response.created, so carry across
         # whatever was stashed for this turn.
         pending = getattr(handler, "_audit_pending_user", None)

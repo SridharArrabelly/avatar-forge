@@ -161,6 +161,20 @@ class TurnRecord:
 
     tools: list[ToolCall] = field(default_factory=list)
 
+    # Shared, session-scoped ledger of tool call ids already attributed to an
+    # earlier turn. Foundry's conversations API returns every item in the
+    # session with no timestamp to filter on, so without this each turn
+    # re-reports all preceding tool calls — turn 9 of a ten-turn session was
+    # writing nine, eight of them copies. Owned by the handler and passed by
+    # reference, so it lives exactly as long as the session and needs no
+    # eviction. Never serialised: see :meth:`to_document`.
+    #
+    # "Attributed", not "written": ids are registered at reconcile time, before
+    # the sink confirms the write, so a record lost at render or write time
+    # takes its tool detail with it rather than having it re-reported later.
+    # That is the accepted cost of not re-reporting on every turn.
+    seen_call_ids: Optional[set] = field(default=None, repr=False)
+
     # Agent binding: the handle that makes this turn's tool I/O recoverable.
     # There is no `list` operation on Foundry conversations, so if this is not
     # captured live from `response.created` the tool detail is lost forever.

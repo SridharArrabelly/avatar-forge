@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.43.8.12551",
-      "templateHash": "17367266739031402220"
+      "templateHash": "15934607587298670958"
     }
   },
   "parameters": {
@@ -693,7 +693,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.43.8.12551",
-              "templateHash": "10408048344882964715"
+              "templateHash": "18214715492607337617"
             }
           },
           "parameters": {
@@ -1475,7 +1475,7 @@
                     "_generator": {
                       "name": "bicep",
                       "version": "0.43.8.12551",
-                      "templateHash": "433770032466175673"
+                      "templateHash": "11902605709419162171"
                     }
                   },
                   "parameters": {
@@ -1627,7 +1627,7 @@
                       "properties": {
                         "customSubDomainName": "[parameters('accountName')]",
                         "publicNetworkAccess": "Enabled",
-                        "disableLocalAuth": false,
+                        "disableLocalAuth": true,
                         "allowProjectManagement": true
                       }
                     },
@@ -3758,6 +3758,10 @@
     "ACS_ENDPOINT": {
       "type": "string",
       "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('resourceGroupName')), 'Microsoft.Resources/deployments', 'resources'), '2025-04-01').outputs.acsEndpoint.value]"
+    },
+    "AUDIT_COSMOS_ENDPOINT": {
+      "type": "string",
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('resourceGroupName')), 'Microsoft.Resources/deployments', 'resources'), '2025-04-01').outputs.auditCosmosEndpoint.value]"
     },
     "DEPLOY_PROFILE": {
       "type": "string",
