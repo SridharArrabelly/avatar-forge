@@ -407,6 +407,12 @@ output APPLICATIONINSIGHTS_CONNECTION_STRING string = resources.outputs.appInsig
 // Channel C in-call media (#27). Empty unless enableAcs=true.
 output ACS_ENDPOINT string = resources.outputs.acsEndpoint
 
+// Conversation audit trail (#30). Empty unless enableAudit=true. Exported so it
+// lands in the azd env: the postprovision sink check and scripts/smoke_audit_cosmos.py
+// both read it back with `azd env get-values`, and operators need it to point a
+// local run at the deployed account.
+output AUDIT_COSMOS_ENDPOINT string = resources.outputs.auditCosmosEndpoint
+
 // Channel D Windows media host. Empty strings unless the in-call channel deployed.
 output DEPLOY_PROFILE string = deployProfile
 output MEETING_BOT_HOST_DEPLOYED string = deployHost ? 'true' : 'false'

@@ -157,7 +157,11 @@ def extract_tools(items: list) -> list[ToolCall]:
             ordered.append(tool)
 
         elif itype == "remote_function_call_output":
-            call_id = item.get("call_id") or ""
+            # Same `id` fallback as the call above. Without it an output item
+            # that arrives with no `call_id` collapses onto the key "", becomes
+            # an anonymous ToolCall, and — having nothing to dedupe on — is
+            # re-reported by every later reconcile in the session.
+            call_id = item.get("call_id") or item.get("id") or ""
             outputs[call_id] = item
 
     for call_id, item in outputs.items():
@@ -176,6 +180,52 @@ def extract_tools(items: list) -> list[ToolCall]:
             tool.error = str(item.get("status"))
 
     return ordered
+
+
+def _dedupe_key(tool: ToolCall) -> str:
+    """Content identity for a tool call that Foundry gave no id.
+
+    ``call_id`` is present on every item observed in practice, but anything
+    without one would bypass the ledger entirely and be re-appended on every
+    reconcile for the life of the session — reintroducing exactly the unbounded
+    growth the ledger exists to prevent.
+    """
+    if tool.call_id:
+        return tool.call_id
+    try:
+        args = json.dumps(tool.args, sort_keys=True, default=str)
+    except Exception:
+        # Deliberately not `repr`: it embeds memory addresses for exotic values,
+        # which differ on every fetch, so the key would never match and the
+        # unbounded growth would return silently.
+        args = "<unkeyable>"
+    return f"{tool.name}\x00{args}"
+
+
+def _dedupe_keys(tools: list[ToolCall]) -> list[str]:
+    """One stable key per tool, positioned within the session's history.
+
+    Content alone is not an identity: asking the same question twice in one
+    session is two real calls, and keying them on content would drop the second
+    — writing a turn that did search as ``tools: []``, the one thing the trail
+    must never do silently. Anonymous calls therefore carry an ordinal.
+
+    Items arrive newest-first, so ordinals are counted from the **oldest** end.
+    History only grows at the newest end, so a given physical call keeps its
+    ordinal for the life of the session; counting the other way would shift
+    every ordinal on every turn and defeat the ledger entirely.
+    """
+    counts: dict[str, int] = {}
+    keys: list[str] = [""] * len(tools)
+    for i in range(len(tools) - 1, -1, -1):
+        base = _dedupe_key(tools[i])
+        if tools[i].call_id:
+            keys[i] = base
+            continue
+        n = counts.get(base, 0)
+        counts[base] = n + 1
+        keys[i] = f"{base}\x00#{n}"
+    return keys
 
 
 async def reconcile(record: TurnRecord) -> bool:
@@ -212,11 +262,28 @@ async def reconcile(record: TurnRecord) -> bool:
 
     tools = extract_tools(items)
     if tools:
+        # `items` is the whole session, not this turn: the conversations API has
+        # no per-response filter and the items carry no timestamp, so the only
+        # way to tell new calls from old ones is to remember what has already
+        # been attributed. Without this, every turn re-reported all preceding
+        # tool calls, growing each document until a long session would breach
+        # the 2MB Cosmos item limit and stop the trail entirely.
+        #
         # Keep anything already captured in-process; append what only Foundry
         # can see. In practice agent binding yields nothing in-process, so this
         # is normally a plain assignment.
-        known = {t.call_id for t in record.tools if t.call_id}
-        record.tools.extend(t for t in tools if t.call_id not in known)
+        seen = record.seen_call_ids
+        keys = _dedupe_keys(tools)
+        known = {_dedupe_key(t) for t in record.tools}
+        fresh = []
+        for tool, key in zip(tools, keys):
+            if key in known or (seen is not None and key in seen):
+                continue
+            fresh.append(tool)
+            known.add(key)
+            if seen is not None:
+                seen.add(key)
+        record.tools.extend(fresh)
 
     record.tools_pending = False
     return True

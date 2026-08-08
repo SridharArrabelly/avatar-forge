@@ -165,6 +165,12 @@ hooks:
         Write-Host "  uv run python scripts/setup_aisearch_index.py"
         Write-Host "  uv run python scripts/setup_foundry_agent.py"
 
+        # Audit sink (#30). Provisioning can succeed while a Modify policy leaves
+        # the Cosmos account unreachable, which surfaces later as a crash-looping
+        # container rather than a deployment error. Check it here instead.
+        uv run python scripts/check_audit_sink.py
+        $auditBroken = ($LASTEXITCODE -ne 0)
+
         if ($indexState -eq 'failed') {
           Write-Host ""
           Write-Error "Infrastructure deployed, but the Search index was NOT created. Fix the error above, then run: azd hooks run postprovision. Your Azure resources are fine; nothing needs re-provisioning."
@@ -173,6 +179,11 @@ hooks:
         if ($agentState -eq 'failed') {
           Write-Host ""
           Write-Error "Infrastructure deployed, but the Foundry agent was NOT created - the app cannot answer. Fix the error above, then run: uv run python scripts/setup_foundry_agent.py (or: azd hooks run postprovision). Your Azure resources are fine; nothing needs re-provisioning."
+          exit 1
+        }
+        if ($auditBroken) {
+          Write-Host ""
+          Write-Error "Infrastructure deployed, but the audit sink is unusable and ENABLE_AUDIT is on with AUDIT_SINK_FALLBACK=error - the container app will refuse to start. Follow the guidance above. Your Azure resources are fine; nothing needs re-provisioning."
           exit 1
         }
     posix:
@@ -277,6 +288,12 @@ hooks:
         echo "  uv run python scripts/setup_aisearch_index.py"
         echo "  uv run python scripts/setup_foundry_agent.py"
 
+        # Audit sink (#30). Provisioning can succeed while a Modify policy leaves
+        # the Cosmos account unreachable, which surfaces later as a crash-looping
+        # container rather than a deployment error. Check it here instead.
+        audit_broken=false
+        uv run python scripts/check_audit_sink.py || audit_broken=true
+
         if [ "$index_state" = "failed" ]; then
           echo ""
           echo "ERROR: Infrastructure deployed, but the Search index was NOT created." >&2
@@ -289,6 +306,13 @@ hooks:
           echo "ERROR: Infrastructure deployed, but the Foundry agent was NOT created - the app cannot answer." >&2
           echo "       Fix the error above, then run: uv run python scripts/setup_foundry_agent.py" >&2
           echo "       (or: azd hooks run postprovision). Your Azure resources are fine." >&2
+          exit 1
+        fi
+        if [ "$audit_broken" = "true" ]; then
+          echo ""
+          echo "ERROR: Infrastructure deployed, but the audit sink is unusable and ENABLE_AUDIT" >&2
+          echo "       is on with AUDIT_SINK_FALLBACK=error - the container app will refuse to" >&2
+          echo "       start. Follow the guidance above. Your Azure resources are fine." >&2
           exit 1
         fi
 

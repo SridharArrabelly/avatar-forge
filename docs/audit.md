@@ -79,15 +79,32 @@ the real value, or a reconstruction?
 | Barge-in / truncation | interrupt path | same | **exact**, both |
 | Tool **name** | [`backend/voice/functions.py`](../backend/voice/functions.py) | `remote_function_call.name` | **exact**, both |
 | Tool **arguments** (the query) | in-process call args | `remote_function_call.arguments` | **exact**, both |
-| Tool **results** (retrieved passages) | in-process return value | `remote_function_call_output.output.documents[]` | **exact**, both |
-| Citations / sources | derived from results | document `id` + `content` per output doc | **exact**, both |
+| Tool **results** (retrieved passages) | in-process return value | `remote_function_call_output.output.documents[]` | **exact** for AI Search; **empty** for Grounding with Bing (see below) |
+| Citations / sources | derived from results | document `id` + `content` per output doc | **exact** for AI Search; **unavailable** for Bing |
 | Per-tool latency | measured in-process | not exposed by the API | exact / **unavailable** |
 | Session & identity metadata | app | app | exact, both |
 
-**The one real asymmetry:** per-tool latency. In model binding the tool runs in
-our process, so we time it. In agent binding it runs inside Foundry and the
-conversation item carries no timing, so `elapsedMs` is `null`. Everything else
-is captured at full fidelity in both bindings.
+**Two asymmetries, both upstream of us and neither fixable here.**
+
+*Per-tool latency.* In model binding the tool runs in our process, so we time it.
+In agent binding it runs inside Foundry and the conversation item carries no
+timing, so `elapsedMs` is `null`.
+
+*Grounding-with-Bing results.* Verified against a real ten-turn agent-binding
+session: `azure_ai_search` returns a structured output we record in full, but
+`bing_custom_search` returns an **empty string**, so there is nothing to record:
+
+| Tool | `output` type | Recorded |
+|---|---|---|
+| `azure_ai_search` | `dict` with `documents[8]`, `get_urls[8]` | ~12 KB, `hitCount: 8` |
+| `bing_custom_search` | `str`, length **0** | `results: ""`, `hitCount: null` |
+
+The call itself is still audited — name, `args` (the exact query sent to Bing),
+`callId` and `status: completed` are all recorded, so the trail proves *that* a
+web search happened and *what was asked*. What it cannot prove is **what came
+back**, which means a web-grounded answer is not fully reconstructible from the
+audit trail. If that matters for a given deployment, prefer AI Search grounding,
+or bind in model mode where the tool runs in-process.
 
 Each captured tool call records **how** we learned it, in `tools[].source`:
 
@@ -122,8 +139,34 @@ response.created ──► conversation_id captured on the turn record
 > rather than being derived later.
 
 Until reconciliation completes, the record carries `meta.toolsPending: true`.
-The reconciler clears it. Incompleteness is therefore always **explicit in the
-data** rather than silently indistinguishable from "no tools were used".
+The reconciler clears it, so an incomplete fetch stays **explicit in the data**
+rather than silently indistinguishable from "no tools were used" — with one
+narrow exception, noted below.
+
+> [!IMPORTANT]
+> `conversations.items.list` returns **every item in the session**, not just the
+> current turn's, and the items carry no timestamp to filter on. Each turn record
+> therefore keeps a reference to one session-scoped set of already-attributed
+> tool calls (`TurnRecord.seen_call_ids`, owned by the handler) and appends only
+> calls it has not seen. Without it every turn re-reported all preceding tool
+> calls: in a real ten-turn session, turn 9 carried nine tool calls of which
+> eight were copies, and each document grew by roughly 12 KB per prior search —
+> which a long session would eventually push past the 2 MB Cosmos item limit,
+> failing the write and (under the default `AUDIT_SINK_FALLBACK=error`) stopping
+> the app. Calls are keyed by `call_id`; the rare item without one is keyed by
+> name, arguments **and its position in the session**, so that asking the same
+> question twice stays two calls rather than collapsing into one. Covered by
+> `tests/test_audit_tool_leak.py`.
+>
+> **Known limitation.** Attribution is "first claimant wins", which is exact only
+> because reconciliation runs in turn order on a single writer. If a turn's fetch
+> is delayed until *after* the next turn's tool call has landed in the
+> conversation — a backed-up writer, several seconds late — the earlier turn
+> absorbs the later turn's call, and the later turn is written as `tools: []`
+> with `toolsPending: false`. Not observed in production, but possible under
+> load. An exact join is not currently available: the `response_id` on a Foundry
+> conversation item belongs to Foundry's id space, while the `meta.responseId` we
+> capture is Voice Live's, and the two do not correspond.
 
 Set `AUDIT_RECONCILE_AGENT_TOOLS=false` to skip reconciliation entirely; records
 are still written, with tool detail absent and `toolsPending` left `true`.
