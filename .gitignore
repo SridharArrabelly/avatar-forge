@@ -28,6 +28,11 @@ build/
 # Logs
 *.log
 
+# Conversation audit trail written by AUDIT_SINK=file (backend/audit/sinks.py).
+# Real user questions and assistant answers, and *.log above does not match it.
+# This repo is PUBLIC — these must never be committed.
+audit-log*.jsonl
+
 # azd local state (per-developer env, deployment plan)
 .azure/
 
