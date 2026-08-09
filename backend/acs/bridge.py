@@ -619,7 +619,16 @@ class BrowserVoiceBridge:
                 # claiming a cause. expectedTool is a prediction the browser
                 # only promotes once the turn has run long enough that a search
                 # is the only explanation.
-                await self._send_thinking(True, expected=msg.get("expectedTool"))
+                #
+                # activeTool is the opposite: a retrieval already named for this
+                # question and still running, present only on the continuation
+                # response of a model-binding tool turn. It is fact, so it goes
+                # straight in as the caption rather than back to dots.
+                await self._send_thinking(
+                    True,
+                    msg.get("activeTool"),
+                    expected=msg.get("expectedTool"),
+                )
 
         elif mtype == "function_call_started":
             # A real tool event — outranks the prediction, so name it now.

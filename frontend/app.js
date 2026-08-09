@@ -894,7 +894,15 @@ function handleServerMessage(msg) {
             currentAssistantContentEl = null;
             addMessage('assistant', '');
             isSpeaking = true;
-            startThinking(msg.expectedTool);
+            // activeTool means this response CONTINUES a tool turn whose cue is
+            // already on screen and correctly named (model binding splits a tool
+            // turn into call + answer). Re-arming would reset the pill to the
+            // neutral dots phase mid-search, so upgrade in place instead.
+            if (msg.activeTool) {
+                upgradeThinking(msg.activeTool);
+            } else {
+                startThinking(msg.expectedTool);
+            }
             break;
         case 'function_call_started':
             upgradeThinking(msg.functionName);
