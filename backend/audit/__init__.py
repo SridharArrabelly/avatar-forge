@@ -416,7 +416,11 @@ def record_tool(
             return
         hit_count = None
         if isinstance(results, dict):
-            for key in ("results", "documents", "hits"):
+            # Every payload key a tool in this repo returns. search_minutes
+            # returns "passages", which was missing here, so hitCount was null
+            # on every internal-corpus call and the "which turns retrieved
+            # nothing" query in docs/audit.md silently skipped half the tools.
+            for key in ("results", "documents", "hits", "passages", "webResults"):
                 value = results.get(key)
                 if isinstance(value, list):
                     hit_count = len(value)

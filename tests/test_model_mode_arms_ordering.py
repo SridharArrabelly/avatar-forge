@@ -202,6 +202,59 @@ async def main() -> int:
     await queue2.drain()
     await audit.shutdown_audit()
 
+    # --- hitCount must understand the shapes our tools actually return ------
+    #
+    # Live records showed hitCount=None on every search_minutes call while the
+    # payload held four passages. The heuristic knew "results"/"documents"/"hits"
+    # and search_minutes returns "passages", so the summary field the audit docs
+    # tell operators to query was null for half the tool set.
+
+    print("\nhitCount understands both tools' real return shapes")
+    print("-" * 70)
+
+    sink3 = CollectingSink()
+    queue3 = AuditQueue(sink3, max_size=100, retention_days=1, redact=True)
+    queue3.start()
+    audit._queue = queue3
+
+    shapes = FakeHandler()
+    audit.start_turn(shapes)
+
+    # The exact shapes backend/voice/tools.py returns.
+    audit.record_tool(
+        shapes,
+        name="search_minutes",
+        args={"query": "board"},
+        results={"passages": [{"title": "a"}, {"title": "b"}], "note": "..."},
+        elapsed_ms=1.0,
+    )
+    audit.record_tool(
+        shapes,
+        name="search_web",
+        args={"query": "mtn"},
+        results={"results": [{"title": "x"}, {"title": "y"}, {"title": "z"}]},
+        elapsed_ms=1.0,
+    )
+
+    inflight3 = getattr(shapes, "_audit_record", None)
+    by_name = {t.name: t for t in (inflight3.tools if inflight3 else [])}
+    check(
+        "search_minutes hitCount counts its passages",
+        by_name.get("search_minutes") is not None
+        and by_name["search_minutes"].hit_count == 2,
+        f"got {getattr(by_name.get('search_minutes'), 'hit_count', 'no tool')!r}",
+    )
+    check(
+        "search_web hitCount counts its results",
+        by_name.get("search_web") is not None and by_name["search_web"].hit_count == 3,
+        f"got {getattr(by_name.get('search_web'), 'hit_count', 'no tool')!r}",
+    )
+
+    audit.record_assistant_text(shapes, "done")
+    audit.finish_turn(shapes, status="completed", output_types=["message"])
+    await queue3.drain()
+    await audit.shutdown_audit()
+
     print("\n" + "-" * 70)
     if failures:
         print(f"{len(failures)} FAILED: " + "; ".join(failures))
