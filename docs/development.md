@@ -53,8 +53,8 @@ The app binds Voice Live to one of two things, and the default is `agent`:
 | | `VOICE_BINDING=agent` (default) | `VOICE_BINDING=model` |
 | --- | --- | --- |
 | Answers come from | a **Foundry agent** that owns its own tools | the **realtime model**, with tools executed by this backend |
-| Web grounding | Grounding-with-Bing-Custom-Search (a native Foundry tool) | Web IQ, which needs `WEBIQ_API_KEY` in your `.env` |
-| Extra local setup | none beyond the above | that key |
+| Web grounding | Grounding-with-Bing-Custom-Search (a native Foundry tool) | Web IQ, which uses `WEBIQ_API_KEY` if you set one, otherwise your `az login` identity |
+| Extra local setup | none beyond the above | none — the web tool switches itself on if Web IQ is reachable |
 
 Switch by setting `VOICE_BINDING` in `.env` — nothing else changes, and the same
 `az login` covers both. What each costs and how they compare on measured latency is in

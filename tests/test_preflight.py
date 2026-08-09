@@ -239,9 +239,12 @@ def main() -> int:
 
     r = binding({"VOICE_BINDING": "model"})
     check(
-        "binding: model mode without Web IQ warns, never blocks",
-        not r["Model mode: WEBIQ_API_KEY"].ok
-        and r["Model mode: WEBIQ_API_KEY"].warn_only,
+        "binding: model mode without a Web IQ key still passes, never blocks",
+        r["Model mode: Web IQ"].ok and r["Model mode: Web IQ"].warn_only,
+    )
+    check(
+        "binding: keyless model mode is reported as Entra, not as a defect",
+        "Entra" in r["Model mode: Web IQ"].detail,
     )
     check(
         "binding: model mode does not demand AGENT_NAME",
@@ -269,7 +272,7 @@ def main() -> int:
     r = binding({"VOICE_BINDING": "model", "WEBIQ_API_KEY": "k"})
     check(
         "binding: model mode with a Web IQ key passes",
-        r["Model mode: WEBIQ_API_KEY"].ok,
+        r["Model mode: Web IQ"].ok and "key set" in r["Model mode: Web IQ"].detail,
     )
 
     print()

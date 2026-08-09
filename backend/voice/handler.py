@@ -279,7 +279,7 @@ class VoiceSessionHandler:
             **(
                 {
                     "instructions": load_realtime_instructions(),
-                    "tools": build_realtime_tools(),
+                    "tools": await build_realtime_tools(),
                     # One tool per question. The prompt asks for this, but the
                     # model is free to ignore prose; this makes it structural.
                     # Two parallel retrievals would double the silence before
