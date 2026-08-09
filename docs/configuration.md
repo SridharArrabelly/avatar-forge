@@ -194,6 +194,13 @@ startup can obtain a Web IQ token.
 > proves *authentication*, not *entitlement* — the service can still refuse an
 > authenticated caller, which surfaces as a 4xx from `search_web`.
 
+> **The keyless route needs a one-off registration in the Web IQ portal.** Web IQ
+> authorises by application, so the managed identity's **client id** must be bound
+> under **Profile Management → Application (Client) IDs** before any token it
+> presents is accepted. Nothing in Azure reports this as missing — the symptom is
+> simply that `search_web` never appears. Steps are in
+> [auth.md](auth.md#the-keyless-web-iq-route-needs-one-thing-azure-cannot-give-you).
+
 > **`site:` matches a domain and every subdomain under it — it is not a hostname
 > filter.** Two consequences, both measured against the live API:
 >

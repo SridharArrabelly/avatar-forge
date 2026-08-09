@@ -147,6 +147,11 @@ WEB_MAX_LENGTH = 800
 
 WEBIQ_TIMEOUT = httpx.Timeout(connect=3.0, read=8.0, write=3.0, pool=3.0)
 
+# Cap on the startup capability probe. Generous next to WEBIQ_TIMEOUT because a
+# cold credential chain legitimately takes seconds, but finite because the
+# answer gates session setup.
+WEBIQ_PROBE_TIMEOUT_S = 10.0
+
 _web_client: httpx.AsyncClient | None = None
 _web_client_lock = asyncio.Lock()
 _aad_credential: Any = None
@@ -165,10 +170,32 @@ async def _credential() -> Any:
 
 
 async def _probe_webiq_scope() -> bool:
-    """Ask for a Web IQ token once, and report whether one came back."""
+    """Ask for a Web IQ token once, and report whether one came back.
+
+    Bounded, because "no answer" is a real outcome and not a rare one: a token
+    request for an unknown or consent-requiring resource can stall rather than
+    refuse. Measured on a dev box, ``az account get-access-token --resource
+    https://api.microsoft.ai`` returns nothing for minutes while the same call
+    for ``ai.azure.com`` succeeds immediately. Unbounded, that stall would
+    propagate through ``build_realtime_tools()`` into session setup and hang the
+    first conversation — strictly worse than the missing tool this replaced.
+    A timeout is therefore a "no": the tool is not usable if we cannot find out
+    in time.
+    """
     try:
         credential = await _credential()
-        await credential.get_token(WEBIQ_API_SCOPE)
+        await asyncio.wait_for(
+            credential.get_token(WEBIQ_API_SCOPE), WEBIQ_PROBE_TIMEOUT_S
+        )
+    except (asyncio.TimeoutError, TimeoutError):
+        logger.warning(
+            "Web IQ: no answer for %s within %.0fs - search_web will not be "
+            "offered. A stalled token request usually means the scope is not "
+            "consented in this tenant.",
+            WEBIQ_API_SCOPE,
+            WEBIQ_PROBE_TIMEOUT_S,
+        )
+        return False
     except Exception as e:
         logger.info(
             "Web IQ: no token for %s (%s) - search_web will not be offered.",
@@ -465,7 +492,20 @@ async def search_web(query: str) -> dict[str, Any]:
         "maxResults": WEB_MAX_RESULTS + 2,
         "language": os.getenv("WEBIQ_LANGUAGE", "en"),
         "region": os.getenv("WEBIQ_REGION", "ZA"),
-        "contentFormat": "text",
+        # `passage`, not `text`. The API documents four content formats, and the
+        # difference decides whether the model reads the answer or the navbar:
+        #
+        #   passage  query-contextual extraction -- a model picks the paragraphs
+        #            of the page most relevant to *this* query, up to maxLength
+        #   text     the full document in plain text, from the top
+        #
+        # With `text` and an 800-character cap we were sending the first 800
+        # characters of each page, which on a typical corporate site is a cookie
+        # banner and a menu. The documentation is explicit that there is no
+        # `snippet` field on the web API and that `passage` is how you get
+        # query-dependent content; the quick start recommends it as the default
+        # operating point. Same budget, spent on the part that answers.
+        "contentFormat": "passage",
         "maxLength": WEB_MAX_LENGTH,
     }
 
