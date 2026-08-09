@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.43.8.12551",
-      "templateHash": "15934607587298670958"
+      "templateHash": "12544062769859907099"
     }
   },
   "parameters": {
@@ -693,7 +693,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.43.8.12551",
-              "templateHash": "18214715492607337617"
+              "templateHash": "6322967766461399574"
             }
           },
           "parameters": {
@@ -2858,7 +2858,7 @@
                     "_generator": {
                       "name": "bicep",
                       "version": "0.43.8.12551",
-                      "templateHash": "5613071276699754669"
+                      "templateHash": "9753749465486170982"
                     }
                   },
                   "parameters": {
@@ -2944,7 +2944,7 @@
                       "type": "securestring",
                       "defaultValue": "",
                       "metadata": {
-                        "description": "Web IQ API key. Passed as a container-app SECRET, never as a plain env var. Empty leaves the web tool switched off."
+                        "description": "Web IQ API key. Passed as a container-app SECRET, never as a plain env var. Optional: with no key the app authenticates to Web IQ with its managed identity, and decides at startup whether that works."
                       }
                     },
                     "appInsightsConnectionString": {
@@ -3105,9 +3105,9 @@
                     "acsEnv": "[if(not(empty(parameters('acsEndpoint'))), createArray(createObject('name', 'ACS_ENDPOINT', 'value', parameters('acsEndpoint'))), createArray())]",
                     "auditEnv": "[if(equals(toLower(parameters('enableAudit')), 'true'), createArray(createObject('name', 'ENABLE_AUDIT', 'value', 'true'), createObject('name', 'AUDIT_SINK', 'value', 'cosmos'), createObject('name', 'AUDIT_COSMOS_ENDPOINT', 'value', parameters('auditCosmosEndpoint')), createObject('name', 'AUDIT_COSMOS_DATABASE', 'value', parameters('auditCosmosDatabase')), createObject('name', 'AUDIT_COSMOS_CONTAINER', 'value', parameters('auditCosmosContainer')), createObject('name', 'AUDIT_RETENTION_DAYS', 'value', parameters('auditRetentionDays'))), createArray())]",
                     "voiceBindingEnv": "[concat(createArray(createObject('name', 'VOICE_BINDING', 'value', parameters('voiceBinding'))), if(empty(parameters('voiceLiveModel')), createArray(), createArray(createObject('name', 'VOICELIVE_MODEL', 'value', parameters('voiceLiveModel')))))]",
-                    "webIqConfigured": "[not(empty(parameters('webIqApiKey')))]",
-                    "webIqSecrets": "[if(variables('webIqConfigured'), createArray(createObject('name', 'webiq-api-key', 'value', parameters('webIqApiKey'))), createArray())]",
-                    "webIqEnv": "[if(variables('webIqConfigured'), concat(createArray(createObject('name', 'WEBIQ_API_KEY', 'secretRef', 'webiq-api-key')), if(empty(parameters('webIqBaseUrl')), createArray(), createArray(createObject('name', 'WEBIQ_BASE_URL', 'value', parameters('webIqBaseUrl')))), if(empty(parameters('webIqAllowedDomains')), createArray(), createArray(createObject('name', 'WEBIQ_ALLOWED_DOMAINS', 'value', parameters('webIqAllowedDomains'))))), createArray())]",
+                    "webIqKeyed": "[not(empty(parameters('webIqApiKey')))]",
+                    "webIqSecrets": "[if(variables('webIqKeyed'), createArray(createObject('name', 'webiq-api-key', 'value', parameters('webIqApiKey'))), createArray())]",
+                    "webIqEnv": "[concat(if(variables('webIqKeyed'), createArray(createObject('name', 'WEBIQ_API_KEY', 'secretRef', 'webiq-api-key')), createArray()), if(empty(parameters('webIqBaseUrl')), createArray(), createArray(createObject('name', 'WEBIQ_BASE_URL', 'value', parameters('webIqBaseUrl')))), if(empty(parameters('webIqAllowedDomains')), createArray(), createArray(createObject('name', 'WEBIQ_ALLOWED_DOMAINS', 'value', parameters('webIqAllowedDomains')))))]",
                     "meetingBotOn": "[equals(toLower(parameters('meetingBotEnabled')), 'true')]",
                     "meetingBotEnv": "[concat(if(variables('meetingBotOn'), createArray(createObject('name', 'MEETING_BOT_ENABLED', 'value', 'true')), createArray()), if(not(empty(parameters('acsAudioSampleRate'))), createArray(createObject('name', 'ACS_AUDIO_SAMPLE_RATE', 'value', parameters('acsAudioSampleRate'))), createArray()), if(not(empty(parameters('acsRequireWakePhrase'))), createArray(createObject('name', 'ACS_REQUIRE_WAKE_PHRASE', 'value', parameters('acsRequireWakePhrase'))), createArray()), if(not(empty(parameters('acsAvatarVideoEnabled'))), createArray(createObject('name', 'ACS_AVATAR_VIDEO_ENABLED', 'value', parameters('acsAvatarVideoEnabled'))), createArray()), if(not(empty(parameters('browserJoinVideoEnabled'))), createArray(createObject('name', 'BROWSER_JOIN_VIDEO_ENABLED', 'value', parameters('browserJoinVideoEnabled'))), createArray()))]"
                   },

@@ -150,16 +150,66 @@ WEBIQ_TIMEOUT = httpx.Timeout(connect=3.0, read=8.0, write=3.0, pool=3.0)
 _web_client: httpx.AsyncClient | None = None
 _web_client_lock = asyncio.Lock()
 _aad_credential: Any = None
+_web_probe: "asyncio.Task[bool] | None" = None
+_web_probe_lock = asyncio.Lock()
 
 
-def web_search_configured() -> bool:
-    """True when a Web IQ credential is available.
+async def _credential() -> Any:
+    """The lazily-created Entra credential, shared by the probe and the caller."""
+    global _aad_credential
+    if _aad_credential is None:
+        from azure.identity.aio import DefaultAzureCredential
 
-    Checked at session start so the tool is only advertised to the model when it
-    can actually run — offering a tool that always errors is worse than not
-    having one, because the model will keep trying it.
+        _aad_credential = DefaultAzureCredential()
+    return _aad_credential
+
+
+async def _probe_webiq_scope() -> bool:
+    """Ask for a Web IQ token once, and report whether one came back."""
+    try:
+        credential = await _credential()
+        await credential.get_token(WEBIQ_API_SCOPE)
+    except Exception as e:
+        logger.info(
+            "Web IQ: no token for %s (%s) - search_web will not be offered.",
+            WEBIQ_API_SCOPE,
+            e,
+        )
+        return False
+    logger.info("Web IQ: token acquired for %s - search_web enabled.", WEBIQ_API_SCOPE)
+    return True
+
+
+async def web_search_available() -> bool:
+    """True when Web IQ can actually be called.
+
+    Checked before the tool is advertised, because offering a tool that always
+    errors is worse than not having one: the model will keep trying it, and each
+    attempt costs a turn of silence before she can say she cannot answer.
+
+    An API key is taken at face value — it is either right or the call fails
+    visibly. With no key we *probe* the Entra scope instead of trusting a
+    configuration flag, because ``DefaultAzureCredential`` always constructs
+    successfully and only fails when a token is actually requested. A flag can
+    claim an entitlement the deployment does not have; a token cannot. This
+    matters because ``api.microsoft.ai`` is a Microsoft-internal endpoint and
+    this repository is public, so most deployments genuinely cannot reach it.
+
+    The probe runs once per process and the result is cached, including a
+    negative one, so the answer is stable for the life of a revision rather than
+    varying between sessions. ``backend/main.py`` kicks it off at startup so no
+    conversation waits on it.
+
+    A token is necessary but not sufficient: the service can still refuse an
+    authenticated caller, which surfaces as a 4xx from ``search_web``.
     """
-    return bool(os.getenv("WEBIQ_API_KEY") or os.getenv("WEBIQ_USE_ENTRA"))
+    if os.getenv("WEBIQ_API_KEY"):
+        return True
+    global _web_probe
+    async with _web_probe_lock:
+        if _web_probe is None:
+            _web_probe = asyncio.create_task(_probe_webiq_scope())
+    return await _web_probe
 
 
 SEARCH_WEB_TOOL: dict[str, Any] = {
@@ -345,24 +395,23 @@ async def _get_web_client() -> httpx.AsyncClient:
 
 async def _auth_headers() -> dict[str, str]:
     """API key when set, otherwise an Entra token (matching our keyless posture)."""
-    global _aad_credential
     key = os.getenv("WEBIQ_API_KEY")
     if key:
         return {"x-apikey": key}
-    if _aad_credential is None:
-        from azure.identity.aio import DefaultAzureCredential
-
-        _aad_credential = DefaultAzureCredential()
-    token = await _aad_credential.get_token(WEBIQ_API_SCOPE)
+    credential = await _credential()
+    token = await credential.get_token(WEBIQ_API_SCOPE)
     return {"Authorization": f"Bearer {token.token}"}
 
 
 async def close_web_client() -> None:
     """Release the pooled client and credential on shutdown."""
-    global _web_client, _aad_credential
+    global _web_client, _aad_credential, _web_probe
     if _web_client is not None:
         await _web_client.aclose()
         _web_client = None
+    # Drop the cached probe with the credential that produced it, so a restarted
+    # app re-probes rather than inheriting a verdict from a dead credential.
+    _web_probe = None
     if _aad_credential is not None:
         await _aad_credential.close()
         _aad_credential = None
@@ -405,7 +454,7 @@ async def search_web(query: str) -> dict[str, Any]:
         return {"error": "query is required"}
     feature = "web"
 
-    if not web_search_configured():
+    if not await web_search_available():
         return {"error": "Web search is not configured on this deployment."}
 
     domains = _allowed_domains()
@@ -484,19 +533,19 @@ async def search_web(query: str) -> dict[str, Any]:
     return {"results": results, "note": BREVITY_NOTE}
 
 
-def build_realtime_tools() -> list[dict[str, Any]]:
+async def build_realtime_tools() -> list[dict[str, Any]]:
     """The tool set advertised for this session.
 
     The web tool appears only when it is actually usable, so a deployment
-    without a Web IQ credential degrades to the internal minutes-and-policies
+    without a reachable Web IQ degrades to the internal minutes-and-policies
     corpus rather than to a model that keeps calling a tool that always fails.
     """
     tools = list(REALTIME_TOOLS)
-    if web_search_configured():
+    if await web_search_available():
         tools.append(SEARCH_WEB_TOOL)
     else:
         logger.info(
-            "Web IQ not configured - model mode will ground on internal "
+            "Web IQ unavailable - model mode will ground on internal "
             "minutes and policies only."
         )
     return tools

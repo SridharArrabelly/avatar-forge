@@ -27,7 +27,7 @@ param webIqBaseUrl string = ''
 @description('Comma-separated host allow-list applied to Web IQ results. Same security boundary as bingAllowedDomains — and by default the same sources: main.bicep derives these bare hosts from bingAllowedDomains, because site: cannot express the paths and boost levels Bing Custom Search enforces.')
 param webIqAllowedDomains string = ''
 
-@description('Web IQ API key. Passed as a container-app SECRET, never as a plain env var. Empty leaves the web tool switched off.')
+@description('Web IQ API key. Passed as a container-app SECRET, never as a plain env var. Optional: with no key the app authenticates to Web IQ with its managed identity, and decides at startup whether that works.')
 @secure()
 param webIqApiKey string = ''
 param appInsightsConnectionString string
@@ -149,20 +149,28 @@ var voiceBindingEnv = concat([
 // allow-list mirrors bingAllowedDomains — literally, since main.bicep derives it
 // from that list rather than trusting anyone to retype it: a hard host
 // restriction is what makes an open-web tool safe to hand an executive assistant.
-var webIqConfigured = !empty(webIqApiKey)
-var webIqSecrets = webIqConfigured ? [
+//
+// There is deliberately no enable flag. The app decides at startup whether the
+// tool is usable by asking for a Web IQ token (web_search_available() in
+// backend/voice/tools.py), because a flag can claim an entitlement a tenant does
+// not have and a token cannot. That means the app can switch search_web on with
+// no key present, so the allow-list must ALWAYS be here — the dangerous state is
+// an enabled web tool with no host restriction, which would answer from the
+// entire open web while agent mode stayed scoped to bingAllowedDomains.
+var webIqKeyed = !empty(webIqApiKey)
+var webIqSecrets = webIqKeyed ? [
   {
     name: 'webiq-api-key'
     value: webIqApiKey
   }
 ] : []
-var webIqEnv = webIqConfigured ? concat([
+var webIqEnv = concat(webIqKeyed ? [
   { name: 'WEBIQ_API_KEY', secretRef: 'webiq-api-key' }
-], empty(webIqBaseUrl) ? [] : [
+] : [], empty(webIqBaseUrl) ? [] : [
   { name: 'WEBIQ_BASE_URL', value: webIqBaseUrl }
 ], empty(webIqAllowedDomains) ? [] : [
   { name: 'WEBIQ_ALLOWED_DOMAINS', value: webIqAllowedDomains }
-]) : []
+])
 
 // Channel D Teams media-bot env (additive). The .NET media bot connects to the
 // /ws/acs/audio bridge, which only needs Voice Live (no ACS resource). MEETING_BOT_ENABLED

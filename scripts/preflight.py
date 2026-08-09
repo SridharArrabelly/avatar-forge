@@ -404,12 +404,16 @@ def check_voice_binding(cfg: dict[str, str]) -> list[CheckResult]:
         web_iq = cfg.get("WEBIQ_API_KEY", "").strip()
         results.append(
             CheckResult(
-                "Model mode: WEBIQ_API_KEY",
-                bool(web_iq),
-                "set" if web_iq else "not set — the avatar will have no web search",
+                "Model mode: Web IQ",
+                True,
+                "key set"
+                if web_iq
+                else "no key — the app will try its Entra identity at startup",
                 fix="        Grounding with Bing cannot follow into model mode, so web\n"
-                    "        search runs through Web IQ. Without a key the tool is never\n"
-                    "        registered and the avatar answers from AI Search alone.\n"
+                    "        search runs through Web IQ. With no key the app asks for a\n"
+                    "        Web IQ token at startup and only registers the tool if one\n"
+                    "        comes back; otherwise the avatar answers from AI Search\n"
+                    "        alone. Set a key to skip that check:\n"
                     "        azd env set WEBIQ_API_KEY <key>",
                 warn_only=True,
             )

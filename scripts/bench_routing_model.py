@@ -105,7 +105,7 @@ from backend.voice.tools import (  # noqa: E402
     SEARCH_WEB_TOOL,
     build_realtime_tools,
     close_web_client,
-    web_search_configured,
+    web_search_available,
 )
 
 _spec = importlib.util.spec_from_file_location(
@@ -369,8 +369,8 @@ async def main() -> int:
     if not endpoint:
         raise SystemExit("AZURE_VOICELIVE_ENDPOINT is not set in this azd environment.")
 
-    web_live = web_search_configured()
-    tools = build_realtime_tools()
+    web_live = await web_search_available()
+    tools = await build_realtime_tools()
     if not web_live:
         # Routing can only be measured when both choices exist. The production
         # app correctly omits an unusable web tool; this benchmark keeps its

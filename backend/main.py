@@ -14,10 +14,10 @@ from fastapi.staticfiles import StaticFiles
 from .api import routes, websocket as ws
 from .acs import build_acs_router
 from .audit import init_audit, shutdown_audit
-from .config import DEVELOPER_MODE, HOST, PORT, configure_logging
+from .config import DEVELOPER_MODE, HOST, MODEL_BINDING, PORT, configure_logging
 from .voice.auth import close_credential, create_credential
 from .voice.catalog import close_search_client, prewarm_catalog
-from .voice.tools import close_web_client
+from .voice.tools import close_web_client, web_search_available
 
 configure_logging()
 logger = logging.getLogger(__name__)
@@ -67,9 +67,16 @@ async def _prewarm_startup() -> None:
 
     Sequenced: catalogue fetch starts with a hot token cache; it only pays
     the AI Search round-trip cost.
+
+    The Web IQ probe goes last and only in model mode. It decides whether
+    ``search_web`` is advertised at all, so resolving it here means the first
+    session reads a settled answer instead of waiting on a token — and in agent
+    mode, where Foundry owns web grounding, it is never asked for.
     """
     await _prewarm_credential()
     await prewarm_catalog()
+    if MODEL_BINDING:
+        await web_search_available()
 
 
 @asynccontextmanager

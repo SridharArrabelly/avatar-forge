@@ -174,16 +174,25 @@ Model mode takes the agent out of the picture, and its managed `azure_ai_search`
 and `bing_grounding` tools go with it — the tool surface becomes in-process Python
 (`backend/voice/tools.py`). The historically named `search_minutes` tool queries
 the same mixed `knowledge-index` of meeting minutes **and official policies**;
-`search_web` is Web IQ and is advertised to the model **only when a key is set**.
+`search_web` is Web IQ and is advertised to the model **only when Web IQ can
+actually be called** — an API key, or a managed identity that the app proves at
+startup can obtain a Web IQ token.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `WEBIQ_API_KEY` | — | Enables the `search_web` tool in model mode. Passed to the container app as a **secret**, never as a plain environment variable. Unset leaves the web tool off entirely and the assistant answers from the internal minutes-and-policies corpus alone. |
+| `WEBIQ_API_KEY` | — | Enables the `search_web` tool in model mode without a startup check. Passed to the container app as a **secret**, never as a plain environment variable. Leave it unset and the app authenticates with its managed identity instead, enabling the tool only if that works — see the note under the table. If neither route works the web tool stays off and the assistant answers from the internal minutes-and-policies corpus alone. |
 | `WEBIQ_BASE_URL` | `https://api.microsoft.ai/v3` | Web IQ endpoint. |
-| `WEBIQ_ALLOWED_DOMAINS` | *derived from `bingAllowedDomains`* | Comma-separated hosts that scope the search, e.g. `jse.co.za,mtn.com`. Web IQ has no server-side allow-list — its request model exposes no `site` field — so [`build_query()`](../backend/voice/tools.py) compiles these into `site:a OR site:b` operators on the query, which is the mechanism the Web IQ API documents. Same intent as `bingAllowedDomains`, and by default the **same sources**: leave this empty and `main.bicep` derives the bare hosts from `bingAllowedDomains`, so the two bindings cannot drift apart. Set it only to make model mode diverge deliberately. **Write bare hosts, not URLs and not `www.`** — see the two notes below. |
+| `WEBIQ_ALLOWED_DOMAINS` | *derived from `bingAllowedDomains`* | Comma-separated hosts that scope the search, e.g. `jse.co.za,mtn.com`. Web IQ has no server-side allow-list — its request model exposes no `site` field — so [`build_query()`](../backend/voice/tools.py) compiles these into `site:a OR site:b` operators on the query, which is the mechanism the Web IQ API documents. Same intent as `bingAllowedDomains`, and by default the **same sources**: leave this empty and `main.bicep` derives the bare hosts from `bingAllowedDomains`, so the two bindings cannot drift apart. Set it only to make model mode diverge deliberately. **Write bare hosts, not URLs and not `www.`** — see the two notes below. It is emitted **unconditionally**, whether or not a key is set, because the app can enable `search_web` on its own — so an enabled `search_web` is never an unscoped open-web search. |
 | `WEBIQ_LANGUAGE` | `en` | Result language hint. |
 | `WEBIQ_REGION` | `ZA` | Result region hint. |
-| `WEBIQ_USE_ENTRA` | — | Set to authenticate to Web IQ with Entra instead of an API key. |
+
+> **There is no enable flag, and `WEBIQ_USE_ENTRA` is gone.** With no key,
+> [`web_search_available()`](../backend/voice/tools.py) asks for a Web IQ token
+> at startup and registers `search_web` only if one comes back, so the tool is
+> never advertised to a deployment that cannot call it. A flag could claim an
+> entitlement your tenant does not have; a token cannot. Note that a token
+> proves *authentication*, not *entitlement* — the service can still refuse an
+> authenticated caller, which surfaces as a 4xx from `search_web`.
 
 > **`site:` matches a domain and every subdomain under it — it is not a hostname
 > filter.** Two consequences, both measured against the live API:

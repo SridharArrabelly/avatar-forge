@@ -7,7 +7,7 @@ Four identities show up in this repo and they are easy to confuse. Start here:
 | **Backend principal** | your signed-in user locally; the **user-assigned managed identity** in Azure | Voice Live, the Foundry agent/model, AI Search queries | `az login` / assigned by the template |
 | **Deploying principal** | whoever runs `azd up` | creating resources, stamping RBAC, building the index, registering the agent | `az login` + `azd auth login` |
 | **Calling bot** *(channel D only)* | an Entra app registration behind an Azure Bot | the Teams calling/Graph channel | [`../meeting-bot/README.md`](../meeting-bot/README.md) |
-| **Web IQ key** *(model mode only)* | a service API key, not an Entra identity | the web-search tool | `WEBIQ_API_KEY` in your env |
+| **Web IQ** *(model mode only)* | either a service API key **or** the backend managed identity | the web-search tool | `WEBIQ_API_KEY`, or nothing at all — the app tries the identity by itself |
 
 The first two are what almost everything below is about. They are usually *different*
 principals with *different* roles, which is why a deploy can succeed and the running app
@@ -50,7 +50,7 @@ assignment that will not help:
 
 | Variable | Path | When |
 | --- | --- | --- |
-| `WEBIQ_API_KEY` | the Web IQ web-search tool ([`backend/voice/tools.py`](../backend/voice/tools.py)) | **model mode only** — agent mode uses Grounding-with-Bing-Custom-Search, a native Foundry tool that rides the Entra path. `WEBIQ_USE_ENTRA` switches this to a token instead. |
+| `WEBIQ_API_KEY` | the Web IQ web-search tool ([`backend/voice/tools.py`](../backend/voice/tools.py)) | **model mode only**, and **optional** — agent mode uses Grounding-with-Bing-Custom-Search, a native Foundry tool that rides the Entra path. Unset, the backend authenticates to Web IQ with the managed identity on the `https://api.microsoft.ai/.default` scope, and proves at startup that it can before offering the tool. Set the key to skip that check. |
 | `AZURE_SEARCH_API_KEY` | the meeting-catalogue `SearchClient` ([`backend/voice/catalog.py`](../backend/voice/catalog.py)) | optional fallback. Unset — the normal case — it uses the credential above. |
 
 `AZURE_VOICELIVE_API_KEY` is deliberately **ignored** on the agent path
