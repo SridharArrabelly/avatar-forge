@@ -58,6 +58,38 @@ assignment that will not help:
 setting it will not rescue a broken agent session. Both variables in the table above are
 documented in [configuration.md](configuration.md).
 
+### The keyless Web IQ route needs one thing Azure cannot give you
+
+Having a managed identity is necessary but **not sufficient**. Web IQ authorises
+by *application*, and the application has to be registered with Web IQ itself —
+a step that happens in their portal, not in Azure:
+
+1. Take the **client id** of the app's user-assigned managed identity. A managed
+   identity is an app registration, so it has one:
+   ```powershell
+   az identity show -g <rg> -n <identity-name> --query clientId -o tsv
+   ```
+2. In the [Web IQ portal](https://webiq.microsoft.ai/profiles/) open **Profile
+   Management → Application (Client) IDs** and **Bind Application (Client) ID**.
+   Allow about a minute to sync.
+
+Until that binding exists, the identity is just another unknown caller: the token
+request fails or the call comes back `401`/`403`, `search_web` is not offered, and
+the assistant answers from the internal corpus alone. That is the designed
+degradation, not a fault — but if you expected web grounding and did not get it,
+**this is the first thing to check**, because nothing in Azure will show it as
+missing.
+
+> No **Application (Client) IDs** tab? Web IQ's own documentation notes that
+> Entra authentication is unavailable in some trial scenarios and you have to
+> request a dedicated app id through your Microsoft contact. In that case use
+> `WEBIQ_API_KEY`, which needs no binding.
+
+The scope, the header names and the request shape all follow the published
+contract and are pinned by
+[`tests/test_webiq_contract.py`](../tests/test_webiq_contract.py) so they cannot
+drift from it unnoticed.
+
 ## Startup credential pre-warm
 
 To avoid paying token-acquisition cost on the first user connect, the FastAPI lifespan

@@ -492,7 +492,20 @@ async def search_web(query: str) -> dict[str, Any]:
         "maxResults": WEB_MAX_RESULTS + 2,
         "language": os.getenv("WEBIQ_LANGUAGE", "en"),
         "region": os.getenv("WEBIQ_REGION", "ZA"),
-        "contentFormat": "text",
+        # `passage`, not `text`. The API documents four content formats, and the
+        # difference decides whether the model reads the answer or the navbar:
+        #
+        #   passage  query-contextual extraction -- a model picks the paragraphs
+        #            of the page most relevant to *this* query, up to maxLength
+        #   text     the full document in plain text, from the top
+        #
+        # With `text` and an 800-character cap we were sending the first 800
+        # characters of each page, which on a typical corporate site is a cookie
+        # banner and a menu. The documentation is explicit that there is no
+        # `snippet` field on the web API and that `passage` is how you get
+        # query-dependent content; the quick start recommends it as the default
+        # operating point. Same budget, spent on the part that answers.
+        "contentFormat": "passage",
         "maxLength": WEB_MAX_LENGTH,
     }
 
