@@ -272,6 +272,22 @@ def start_turn(handler) -> None:
         return
     try:
         carried = getattr(handler, "_audit_carry", None)
+        if carried is None and getattr(handler, "model_binding", False):
+            # Model binding only. A tool-call response never reaches finish_turn:
+            # handle_conversation_item consumes its RESPONSE_DONE with
+            # _wait_for_event, which *returns* the event rather than dispatching
+            # it, so the carry in finish_turn never runs. The record holding the
+            # tool call is therefore still in flight here, and building a new one
+            # would drop the tools we just captured.
+            #
+            # Agent binding cannot reach this: its tools are filled in by
+            # foundry.reconcile() in the writer task, long after the record has
+            # left the handler, so an in-flight agent record never has any.
+            # The guard is explicit anyway, so the isolation is a stated
+            # property rather than a coincidence of ordering.
+            inflight = getattr(handler, "_audit_record", None)
+            if inflight is not None and inflight.tools and not inflight.assistant_text:
+                carried = inflight
         if carried is not None:
             handler._audit_carry = None
             handler._audit_record = carried
