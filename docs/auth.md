@@ -62,28 +62,49 @@ documented in [configuration.md](configuration.md).
 
 Having a managed identity is necessary but **not sufficient**. Web IQ authorises
 by *application*, and the application has to be registered with Web IQ itself —
-a step that happens in their portal, not in Azure:
+a step that happens in their portal, not in Azure.
 
-1. Take the **client id** of the app's user-assigned managed identity. A managed
-   identity is an app registration, so it has one:
+You do **not** need to create an app registration or a client secret. A
+user-assigned managed identity already *is* an app registration, and it gets its
+tokens from the Azure platform rather than from a secret — which is the entire
+reason to prefer it. Two steps:
+
+1. Read the client id of the identity the container app runs as:
    ```powershell
-   az identity show -g <rg> -n <identity-name> --query clientId -o tsv
+   az containerapp show -g <rg> -n <container-app> --query "identity.userAssignedIdentities" -o json
    ```
+   The `clientId` in the output is the GUID you need.
 2. In the [Web IQ portal](https://webiq.microsoft.ai/profiles/) open **Profile
    Management → Application (Client) IDs** and **Bind Application (Client) ID**.
    Allow about a minute to sync.
 
-Until that binding exists, the identity is just another unknown caller: the token
-request fails or the call comes back `401`/`403`, `search_web` is not offered, and
+Until that binding exists the identity is just another unknown caller: the token
+request fails or the call returns `401`/`403`, `search_web` is not offered, and
 the assistant answers from the internal corpus alone. That is the designed
 degradation, not a fault — but if you expected web grounding and did not get it,
-**this is the first thing to check**, because nothing in Azure will show it as
-missing.
+**check the binding first**, because nothing in Azure will report it as missing.
+
+> **This is why keyless does not work on your laptop.** Web IQ's Entra route is
+> *app-only* (OAuth 2.0 client credentials). Locally `DefaultAzureCredential`
+> falls through to your `az login`, which is a **user** — `az account show`
+> reports `"type": "user"`. A user is not an application and has no client id you
+> could bind. So:
+>
+> | | keyless (managed identity) | `WEBIQ_API_KEY` |
+> | --- | --- | --- |
+> | Deployed to Azure | **yes**, once bound | works, but unnecessary |
+> | Local development | **no** — you are a user, not an app | **use this** |
+>
+> Set the key in `.env` (git-ignored) for local work and leave it unset in Azure.
 
 > No **Application (Client) IDs** tab? Web IQ's own documentation notes that
 > Entra authentication is unavailable in some trial scenarios and you have to
 > request a dedicated app id through your Microsoft contact. In that case use
 > `WEBIQ_API_KEY`, which needs no binding.
+
+A token proves *authentication*, not *entitlement*. The startup probe asks only
+whether a token can be obtained, so a bound-but-unauthorised application can
+still fail at call time with a 4xx from `search_web`.
 
 The scope, the header names and the request shape all follow the published
 contract and are pinned by
