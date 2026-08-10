@@ -7,7 +7,7 @@ Four identities show up in this repo and they are easy to confuse. Start here:
 | **Backend principal** | your signed-in user locally; the **user-assigned managed identity** in Azure | Voice Live, the Foundry agent/model, AI Search queries | `az login` / assigned by the template |
 | **Deploying principal** | whoever runs `azd up` | creating resources, stamping RBAC, building the index, registering the agent | `az login` + `azd auth login` |
 | **Calling bot** *(channel D only)* | an Entra app registration behind an Azure Bot | the Teams calling/Graph channel | [`../meeting-bot/README.md`](../meeting-bot/README.md) |
-| **Web IQ** *(model mode only)* | either a service API key **or** the backend managed identity | the web-search tool | `WEBIQ_API_KEY`, or nothing at all — the app tries the identity by itself |
+| **Web IQ** *(model mode only)* | either a service API key **or** the backend managed identity | the web-search tool | `WEBIQ_API_KEY`, or the identity — which only works once its client id is **bound in the Web IQ portal**, and some profiles cannot bind at all |
 
 The first two are what almost everything below is about. They are usually *different*
 principals with *different* roles, which is why a deploy can succeed and the running app
@@ -50,7 +50,7 @@ assignment that will not help:
 
 | Variable | Path | When |
 | --- | --- | --- |
-| `WEBIQ_API_KEY` | the Web IQ web-search tool ([`backend/voice/tools.py`](../backend/voice/tools.py)) | **model mode only**, and **optional** — agent mode uses Grounding-with-Bing-Custom-Search, a native Foundry tool that rides the Entra path. Unset, the backend authenticates to Web IQ with the managed identity on the `https://api.microsoft.ai/.default` scope, and proves at startup that it can before offering the tool. Set the key to skip that check. |
+| `WEBIQ_API_KEY` | the Web IQ web-search tool ([`backend/voice/tools.py`](../backend/voice/tools.py)) | **model mode only**, and optional *if* the keyless route is open to you — agent mode uses Grounding-with-Bing-Custom-Search, a native Foundry tool that rides the Entra path. Unset, the backend authenticates to Web IQ with the managed identity on the `https://api.microsoft.ai/.default` scope, and proves at startup that it can obtain a token before offering the tool. That token still has to be **entitled** — see [below](#the-keyless-web-iq-route-needs-one-thing-azure-cannot-give-you). Set the key to skip both the check and the binding. |
 | `AZURE_SEARCH_API_KEY` | the meeting-catalogue `SearchClient` ([`backend/voice/catalog.py`](../backend/voice/catalog.py)) | optional fallback. Unset — the normal case — it uses the credential above. |
 
 `AZURE_VOICELIVE_API_KEY` is deliberately **ignored** on the agent path
@@ -67,7 +67,13 @@ a step that happens in their portal, not in Azure.
 You do **not** need to create an app registration or a client secret. A
 user-assigned managed identity already *is* an app registration, and it gets its
 tokens from the Azure platform rather than from a secret — which is the entire
-reason to prefer it. Two steps:
+reason to prefer it.
+
+**Check you can bind at all before you start.** Open the
+[Web IQ portal](https://webiq.microsoft.ai/profiles/) and look for **Profile
+Management → Application (Client) IDs**. If that tab is not there, the Entra
+route is closed to your profile and nothing you do in Azure will open it — skip
+to [when you cannot bind](#when-you-cannot-bind). If it is there, two steps:
 
 1. Read the client id of the identity the container app runs as:
    ```powershell
@@ -78,33 +84,64 @@ reason to prefer it. Two steps:
    Management → Application (Client) IDs** and **Bind Application (Client) ID**.
    Allow about a minute to sync.
 
-Until that binding exists the identity is just another unknown caller: the token
-request fails or the call returns `401`/`403`, `search_web` is not offered, and
-the assistant answers from the internal corpus alone. That is the designed
-degradation, not a fault — but if you expected web grounding and did not get it,
-**check the binding first**, because nothing in Azure will report it as missing.
+Until that binding exists the identity is just another unknown caller, and it
+fails in one of **two** ways. Knowing which one you are looking at saves a lot of
+time, because they look nothing alike:
 
-> **This is why keyless does not work on your laptop.** Web IQ's Entra route is
-> *app-only* (OAuth 2.0 client credentials). Locally `DefaultAzureCredential`
+| Symptom | What happened | Where you see it |
+| --- | --- | --- |
+| `search_web` is never offered; answers come from the internal corpus only | the token request itself failed, so the startup probe returned false | `Web IQ: token unavailable` in the container-app log |
+| `search_web` **is** offered, the model calls it, and every call fails | a token *was* issued, but Web IQ does not recognise the calling application | `401` with `"errorCode": "AuthUnauthorizedEntryId"` — *"Unauthorized entry ID"* |
+
+The second is the confusing one: the startup probe passes and the tool is
+advertised, so everything looks configured, yet no web question can be answered.
+The probe is not lying — **a token proves *authentication*, not *entitlement***.
+It asks only whether a token can be obtained, which is the strongest check that
+can be made without spending a real query, so a bound-but-unauthorised
+application still fails at call time. `web_search_available()` in
+[`backend/voice/tools.py`](../backend/voice/tools.py) says so in its own
+docstring.
+
+Either way, nothing in Azure reports the binding as missing, so **check it first**
+when you expected web grounding and did not get it.
+
+#### When you cannot bind
+
+Web IQ's own documentation notes that Entra authentication is unavailable on some
+profiles — typically trial or non-enterprise ones — and that a dedicated app id
+has to be requested through your Microsoft contact. If you have no **Application
+(Client) IDs** tab, that is where you are.
+
+In that case set `WEBIQ_API_KEY`. It needs no binding: with a key present
+`web_search_available()` short-circuits to true and `_auth_headers()` sends
+`x-apikey` instead of a bearer token, so the identity route is bypassed
+completely. This applies **in Azure as much as locally** — a deployed app whose
+identity cannot be bound needs the key exactly like a laptop does.
+
+> **Keyless can never work on your laptop, binding or not.** Web IQ's Entra route
+> is *app-only* (OAuth 2.0 client credentials). Locally `DefaultAzureCredential`
 > falls through to your `az login`, which is a **user** — `az account show`
 > reports `"type": "user"`. A user is not an application and has no client id you
-> could bind. So:
->
-> | | keyless (managed identity) | `WEBIQ_API_KEY` |
-> | --- | --- | --- |
-> | Deployed to Azure | **yes**, once bound | works, but unnecessary |
-> | Local development | **no** — you are a user, not an app | **use this** |
->
-> Set the key in `.env` (git-ignored) for local work and leave it unset in Azure.
+> could bind.
 
-> No **Application (Client) IDs** tab? Web IQ's own documentation notes that
-> Entra authentication is unavailable in some trial scenarios and you have to
-> request a dedicated app id through your Microsoft contact. In that case use
-> `WEBIQ_API_KEY`, which needs no binding.
+Which route to use, then:
 
-A token proves *authentication*, not *entitlement*. The startup probe asks only
-whether a token can be obtained, so a bound-but-unauthorised application can
-still fail at call time with a 4xx from `search_web`.
+| | keyless (managed identity) | `WEBIQ_API_KEY` |
+| --- | --- | --- |
+| Azure, identity **bound** | **preferred** — no secret to rotate or leak | works, but unnecessary |
+| Azure, binding **unavailable** | not possible | **use this** |
+| Local development | not possible — you are a user, not an app | **use this** |
+
+Set the key in `.env` (git-ignored) locally. In Azure set it with
+`azd env set WEBIQ_API_KEY <key>`; the template passes it as a **container-app
+secret**, never as a plain environment variable, so a bare
+`az containerapp update --set-env-vars WEBIQ_API_KEY=<key>` is the wrong shape —
+create the secret and reference it, or re-run `azd provision`.
+
+> **A fresh deployment mints a fresh identity.** `azd up` into a new resource
+> group creates a new user-assigned managed identity with a new client id, which
+> is not the one you bound last time. On the keyless route every new environment
+> needs its own binding.
 
 The scope, the header names and the request shape all follow the published
 contract and are pinned by

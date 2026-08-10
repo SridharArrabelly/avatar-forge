@@ -21,11 +21,16 @@ Usage (from anywhere -- the repo is located from this file)::
 
     uv run python scripts/rename_avatar.py Nuru
     uv run python scripts/rename_avatar.py Nuru --model Sakura  # also switch character
+    uv run python scripts/rename_avatar.py Nuru --model Nuru --type custom-photo
     uv run python scripts/rename_avatar.py Simone --check-only  # verify only
     uv run python scripts/rename_avatar.py Nuru -e staging      # non-default azd env
 
-The persona name and the Speech character are separate knobs: ``AVATAR_DISPLAY_NAME``
-brands the assistant and ``AVATAR_MODEL`` selects the Speech character.
+The persona name, the Speech character and the modality are separate knobs:
+``AVATAR_DISPLAY_NAME`` brands the assistant, ``AVATAR_MODEL`` selects the Speech
+character and ``AVATAR_TYPE`` decides whether that character is looked up in the
+prebuilt catalogue or in your own Speech resource. Switching to an avatar you
+trained yourself means moving the last two together, so ``--model`` asks about
+``--type`` rather than failing on a name it cannot find in the catalogue.
 
 Exit 0 = every surface agrees on the new name. The last step cannot be
 automated: open the app and ask "what is your name?".
@@ -45,15 +50,16 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
-from backend.avatar_identity import avatar_type  # noqa: E402
+from backend.avatar_identity import AVATAR_TYPES, avatar_type  # noqa: E402
 
-# The variable a rename writes. AVATAR_DISPLAY_NAME is the branding knob and it
-# outranks every other input to the resolver.
+# The variables a rename can write. AVATAR_DISPLAY_NAME is the branding knob and
+# it outranks every other input to the resolver; the other two only move when
+# asked for, via --model and --type.
 #
-# Branding and model are separate knobs by design. Change the model only via
-# --model, which is validated against the catalogue.
+# Branding, character and modality are separate knobs by design. The character
+# changes only via --model, validated against the catalogue.
 # tests/test_avatar_identity.py pins this against the resolver's real inputs.
-RENAME_VARS = ("AVATAR_DISPLAY_NAME",)
+RENAME_VARS = ("AVATAR_DISPLAY_NAME", "AVATAR_MODEL", "AVATAR_TYPE")
 
 GREEN, RED, YEL, DIM, RST = "\033[32m", "\033[31m", "\033[33m", "\033[2m", "\033[0m"
 
@@ -161,6 +167,17 @@ def character_var(env: dict[str, str]) -> str:
     return "AVATAR_MODEL"
 
 
+def uses_agent(env: dict[str, str]) -> bool:
+    """True when this deployment answers through a Foundry agent.
+
+    Model mode binds a realtime model directly, so there is no agent to re-brand
+    and no agent prompt to verify. azure.yaml already skips
+    ``setup_foundry_agent.py`` on that path; this mirrors it, because running it
+    anyway fails and then reports a HALF APPLIED rename that never happened.
+    """
+    return (env.get("VOICE_BINDING") or "agent").strip().lower() != "model"
+
+
 def live_agent_instructions(env: dict[str, str]) -> tuple[str, str]:
     """Return (version, instructions) for the agent version currently deployed."""
     from azure.ai.projects import AIProjectClient
@@ -201,11 +218,61 @@ def push_agent(env_name: str | None, overrides: dict[str, str]) -> int:
     return proc.returncode
 
 
+def resolve_custom_type(model: str, display: str, valid: set[str], current_type: str) -> str:
+    """Decide what an unrecognised ``--model`` means: custom avatar, or a typo?
+
+    Only the prebuilt catalogue can be checked locally, so a name outside it is
+    either a model trained in the caller's own Speech resource or a mistake.
+    Guessing either way is wrong. Assume custom and a typo ships an avatar that
+    never renders; assume typo and a custom avatar cannot be selected by this
+    script at all -- which is the state that made people set AVATAR_TYPE by hand
+    and then discover the container app had not moved with it.
+
+    So ask, and on a yes return the custom type to write. Non-interactive callers
+    get the old hard failure, with the flag that resolves it.
+    """
+    chosen = "custom-video" if current_type.endswith("-video") else "custom-photo"
+    lead = (f"\n{model!r} is not one of the avatars Speech offers out of the box, and "
+            f"AVATAR_TYPE is {current_type!r}.\nThat combination renders nothing -- but it "
+            f"is exactly what you would expect if you\ntrained {model!r} yourself in your "
+            f"Speech resource.\n")
+    hint = (f"\nIf it was a typo, the prebuilt characters are:\n\n  {', '.join(sorted(valid))}\n\n"
+            f"To brand her {display!r} while keeping the current character, omit --model.\n")
+
+    print(lead)
+    reply: str | None = None
+    if sys.stdin.isatty():
+        try:
+            reply = input(f"  Is {model!r} a custom avatar in your Speech resource? [y/N] ")
+        except (EOFError, KeyboardInterrupt):
+            # isatty() can report a terminal with nothing attached to read from --
+            # piped shells and CI runners both do it -- so a bare input() here
+            # dies with a traceback on the one path that most needs to explain
+            # itself. Fall through to the explicit-flag advice instead.
+            print()
+
+    if reply is None:
+        raise SystemExit(
+            f"\nIf it is a custom avatar, say so explicitly:\n\n"
+            f"  uv run python scripts/rename_avatar.py {display} --model {model} "
+            f"--type {chosen}\n"
+            + hint
+        )
+    if reply.strip().lower() not in ("y", "yes"):
+        raise SystemExit(hint)
+    info(f"AVATAR_TYPE {current_type!r} -> {chosen!r} (pass --type to choose the other)")
+    return chosen
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Rename the avatar persona everywhere, then verify.")
     ap.add_argument("name", help='New persona name, e.g. "Nuru"')
     ap.add_argument("--model", help="Also switch the Speech photo-avatar character "
                                     "(validated); omit to keep the current one")
+    ap.add_argument("--type", choices=AVATAR_TYPES,
+                    help="Also switch AVATAR_TYPE, e.g. custom-photo when moving to an "
+                         "avatar you trained yourself. Asked for interactively when "
+                         "--model names something outside the prebuilt catalogue.")
     ap.add_argument("--check-only", action="store_true", help="Verify only; change nothing")
     ap.add_argument("-e", "--env", help="azd environment name (default: azd's own default)")
     ap.add_argument("--resource-group", help="Override the resource group from the azd env")
@@ -225,32 +292,44 @@ def main() -> int:
     # The Speech character is only touched when asked for explicitly. Defaulting
     # it to the persona name is what broke rendering: the character is a model
     # id, so "Nuru" is not a character Speech can draw unless it was trained.
+    print(f"azd env: {env_name}    resource group: {rg}")
+
     overrides = {"AVATAR_DISPLAY_NAME": display}
     model = None
     char_var = write_var = character_var(env)
+
+    # The type has to settle BEFORE the character is validated. A custom model is
+    # legitimately absent from the prebuilt catalogue, so checking the new name
+    # against a stale AVATAR_TYPE rejects the very avatar being switched to.
+    current_type = avatar_type(env)
+    new_type = a.type or current_type
     if a.model:
         model = a.model.strip()
-        # Only the prebuilt catalogue can be checked locally. Custom models may
-        # legitimately use a name that is not in the catalogue.
-        is_custom = avatar_type(env).startswith("custom-")
         valid = valid_photo_characters()
-        if is_custom:
-            if valid and model not in valid:
-                warn(f"{model!r} is not a prebuilt character. This is only valid if a model\n"
-                     "        of that name exists in your Speech "
-                     "resource.")
-        elif valid and model not in valid:
-            raise SystemExit(
-                f"\n{model!r} is not a photo avatar that Speech offers, so the avatar would\n"
-                f"silently fail to render. Valid characters:\n\n  {', '.join(sorted(valid))}\n\n"
-                f"The persona name and the Speech character are separate knobs: to brand her\n"
-                f"{display!r} while keeping the current character, just omit --model."
-            )
+        unknown = bool(valid) and model not in valid
+        if unknown and not new_type.startswith("custom-"):
+            if a.check_only:
+                warn(f"{model!r} is not a prebuilt character and AVATAR_TYPE is "
+                     f"{new_type!r}, so the avatar would not render.")
+            else:
+                new_type = resolve_custom_type(model, display, valid, current_type)
+        if unknown and new_type.startswith("custom-"):
+            warn(f"{model!r} is not a prebuilt character. This is only valid if a model\n"
+                 "        of that name exists in your Speech resource.")
         write_var = "AVATAR_MODEL"
         overrides[write_var] = model
 
-    print(f"azd env: {env_name}    resource group: {rg}")
+    if new_type != current_type:
+        # AVATAR_TYPE is what makes the backend mark the avatar customized and the
+        # frontend request the photo modality, so it has to reach the same three
+        # surfaces as the name. Writing it to the azd environment alone leaves the
+        # running app on the old type until someone redeploys -- drift the VERIFY
+        # block below already reports, and which this script should not create.
+        overrides["AVATAR_TYPE"] = new_type
+
     current_model = env.get(char_var) or ""
+    print(f"avatar type: AVATAR_TYPE={current_type!r}"
+          + (f" -> {new_type!r}" if new_type != current_type else "  (unchanged)"))
     print(f"speech character: {char_var}={current_model!r}"
           + (f" -> {write_var}={model!r}" if model else "  (unchanged)"))
     print(f"current: AVATAR_DISPLAY_NAME={env.get('AVATAR_DISPLAY_NAME')!r}\n")
@@ -278,18 +357,25 @@ def main() -> int:
 
         # --- 3. Foundry agent: the prompt is rendered and FROZEN at push time,
         #     so without this she keeps introducing herself by the old name.
-        print("\n3. Foundry agent (re-render prompt, new version)")
-        rc = push_agent(a.env, overrides)
-        (ok if rc in (0, 3) else bad)(f"setup_foundry_agent.py exit {rc}"
-                                      + (" (degraded: web tool off)" if rc == 3 else ""))
-        if rc not in (0, 3):
-            # Steps 1 and 2 already landed, so the deployment is now internally
-            # inconsistent in exactly the way this script exists to prevent. Say so
-            # here rather than leaving it to be inferred from the VERIFY table.
-            print(f"\n{RED}The rename is HALF APPLIED.{RST} Steps 1 and 2 succeeded, so the "
-                  f"stage will show {display!r}\nwhile she still introduces herself by the old "
-                  "name. Fix the error above and re-run:\nthis script is idempotent, so a "
-                  "second run completes the rename.\n")
+        #     Model mode has no agent, so there is nothing to re-render.
+        if not uses_agent(env):
+            print("\n3. Foundry agent")
+            info("skipped - VOICE_BINDING=model binds a realtime model directly, so the "
+                 "persona\n        reaches Voice Live from the container app in step 2. "
+                 "Nothing is frozen.")
+        else:
+            print("\n3. Foundry agent (re-render prompt, new version)")
+            rc = push_agent(a.env, overrides)
+            (ok if rc in (0, 3) else bad)(f"setup_foundry_agent.py exit {rc}"
+                                          + (" (degraded: web tool off)" if rc == 3 else ""))
+            if rc not in (0, 3):
+                # Steps 1 and 2 already landed, so the deployment is now internally
+                # inconsistent in exactly the way this script exists to prevent. Say so
+                # here rather than leaving it to be inferred from the VERIFY table.
+                print(f"\n{RED}The rename is HALF APPLIED.{RST} Steps 1 and 2 succeeded, so the "
+                      f"stage will show {display!r}\nwhile she still introduces herself by the "
+                      "old name. Fix the error above and re-run:\nthis script is idempotent, so "
+                      "a second run completes the rename.\n")
 
     # --- verification: read every surface back, independently
     print(f"\n{'=' * 74}\nVERIFY\n{'=' * 74}")
@@ -352,18 +438,23 @@ def main() -> int:
             "AVATAR_TYPE is not custom -- the avatar will not render")
         failures += 1
 
-    version, text = live_agent_instructions(env)
-    first = text.splitlines()[0] if text else "<empty>"
-    if text.count(display) >= 2 and first.startswith(f"You are {display},"):
-        ok(f"agent v{version} says {display!r} ({text.count(display)}x) -- {first[:58]}...")
+    if not uses_agent(env):
+        # No agent means no frozen prompt, so the surface simply does not exist.
+        # Saying so beats silently reporting one fewer check than agent mode.
+        ok("no agent prompt to check - VOICE_BINDING=model")
     else:
-        bad(f"agent v{version} first line: {first[:70]}")
-        failures += 1
-    if "{{AVATAR_NAME}}" in text:
-        bad("agent prompt still contains an unresolved {{AVATAR_NAME}} placeholder")
-        failures += 1
-    else:
-        ok("no unresolved placeholders in the deployed prompt")
+        version, text = live_agent_instructions(env)
+        first = text.splitlines()[0] if text else "<empty>"
+        if text.count(display) >= 2 and first.startswith(f"You are {display},"):
+            ok(f"agent v{version} says {display!r} ({text.count(display)}x) -- {first[:58]}...")
+        else:
+            bad(f"agent v{version} first line: {first[:70]}")
+            failures += 1
+        if "{{AVATAR_NAME}}" in text:
+            bad("agent prompt still contains an unresolved {{AVATAR_NAME}} placeholder")
+            failures += 1
+        else:
+            ok("no unresolved placeholders in the deployed prompt")
 
     print()
     if failures:

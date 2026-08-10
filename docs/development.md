@@ -53,7 +53,7 @@ The app binds Voice Live to one of two things, and the default is `agent`:
 | | `VOICE_BINDING=agent` (default) | `VOICE_BINDING=model` |
 | --- | --- | --- |
 | Answers come from | a **Foundry agent** that owns its own tools | the **realtime model**, with tools executed by this backend |
-| Web grounding | Grounding-with-Bing-Custom-Search (a native Foundry tool) | Web IQ — **set `WEBIQ_API_KEY` locally.** Your `az login` is a *user*; Web IQ's Entra route is *app-only*, so the keyless path works in Azure (managed identity) but not on your machine. See [auth.md](auth.md#the-keyless-web-iq-route-needs-one-thing-azure-cannot-give-you) |
+| Web grounding | Grounding-with-Bing-Custom-Search (a native Foundry tool) | Web IQ — **set `WEBIQ_API_KEY` locally.** Your `az login` is a *user*; Web IQ's Entra route is *app-only*, so the keyless path can never work on your machine. In Azure it works only once the managed identity's client id is **bound in the Web IQ portal** — and if your profile has no binding tab, set the key there too. See [auth.md](auth.md#the-keyless-web-iq-route-needs-one-thing-azure-cannot-give-you) |
 | Extra local setup | none beyond the above | a Web IQ key if you want `search_web`; without one it stays off and answers come from the internal corpus |
 
 Switch by setting `VOICE_BINDING` in `.env` — nothing else changes, and the same
