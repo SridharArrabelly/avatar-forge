@@ -189,6 +189,144 @@ for page, html, after in (
     check(f"{page} loads thinking-cue.js", i_cue != -1, True)
     check(f"{page} loads it before {after}", i_cue != -1 and i_cue < i_app, True)
 
+
+# ── A tool turn must not flash back to dots halfway through ──────────────────
+#
+# Model binding splits a tool turn into TWO responses: the function call, then
+# the answer written from its output. Both raise RESPONSE_CREATED, and the
+# second one used to reset the cue, so the user watched
+#
+#     "........"  ->  "Searching the web..."  ->  "........"
+#
+# and reasonably read the second dots phase as the search having been abandoned.
+# Reported live against the deployed app on "who is the CFO?". Agent binding
+# never showed it, because the Foundry agent runs its tools inside a single
+# response -- which is exactly why this needs a test rather than a live retest.
+print("a tool turn keeps its caption across the continuation response")
+
+import asyncio  # noqa: E402
+
+from backend.voice.event_handlers import handle_event, _send_retrieval_cue  # noqa: E402
+
+
+class _Resp:
+    def __init__(self, rid):
+        self.id = rid
+        self.conversation_id = None
+
+
+class _Ev:
+    """Minimal stand-in for a Voice Live server event."""
+
+    def __init__(self, type_, **kw):
+        self.type = type_
+        for k, v in kw.items():
+            setattr(self, k, v)
+
+
+class _FakeHandler:
+    def __init__(self):
+        self.sent = []
+        self._expected_tool = None
+        self._last_topic = None
+        self.model_binding = True
+
+    async def send_message(self, msg):
+        self.sent.append(msg)
+
+    def last(self, mtype):
+        for m in reversed(self.sent):
+            if m.get("type") == mtype:
+                return m
+        return None
+
+
+async def _ask(h, text):
+    await handle_event(
+        h,
+        _Ev(
+            ServerEventType.CONVERSATION_ITEM_INPUT_AUDIO_TRANSCRIPTION_COMPLETED,
+            transcript=text,
+            item_id="item-1",
+        ),
+        None,
+    )
+
+
+async def _response_created(h, rid):
+    await handle_event(
+        h, _Ev(ServerEventType.RESPONSE_CREATED, response=_Resp(rid)), None
+    )
+    return h.last("response_created")
+
+
+async def _tool_turn():
+    h = _FakeHandler()
+    await _ask(h, "who is the CFO?")
+
+    first = await _response_created(h, "resp-A")
+    check("the first response of a turn names no running retrieval",
+          first and first.get("activeTool"), None)
+
+    # The function call arrives and names the wait.
+    await _send_retrieval_cue(h, "search_web")
+    check("the tool event names the cue",
+          (h.last("function_call_started") or {}).get("functionName"), "search_web")
+
+    # The tool-call response produced no audio and no text -- it existed only to
+    # carry the call. The response that follows it CONTINUES the same question.
+    cont = await _response_created(h, "resp-B")
+    check("the continuation response keeps the retrieval named - "
+          "this is the dots-flash regression",
+          cont and cont.get("activeTool"), "search_web")
+
+    # The carry also has to survive on the handler, not just in the message:
+    # a managed event repeating the same retrieval inside the continuation must
+    # not re-announce it, which would restart the "taking longer" escalation
+    # from zero and make a 4s search read as two separate 2s ones.
+    before = len([m for m in h.sent if m.get("type") == "function_call_started"])
+    await _send_retrieval_cue(h, "web_search_call")
+    after = len([m for m in h.sent if m.get("type") == "function_call_started"])
+    check("the same retrieval is not re-announced in the continuation",
+          after, before)
+
+    # She answers. Now the turn is genuinely over.
+    h._first_audio_logged = True
+    await _ask(h, "and who is the CEO?")
+    nxt = await _response_created(h, "resp-C")
+    check("the next question starts clean", nxt and nxt.get("activeTool"), None)
+
+    # Plain chat never carries a cue at all.
+    h2 = _FakeHandler()
+    await _ask(h2, "how are you?")
+    chat = await _response_created(h2, "resp-D")
+    check("a chit-chat turn names nothing", chat and chat.get("activeTool"), None)
+
+    # Barge-in: a response cancelled before it produced anything leaves a cue
+    # behind. The next question must retire it rather than inherit a claim
+    # about a search that belonged to the question before it.
+    h3 = _FakeHandler()
+    h3._retrieval_cue_sent = "search_web"
+    h3._first_audio_logged = False
+    h3._first_text_logged = False
+    await _ask(h3, "how are you?")
+    barge = await _response_created(h3, "resp-E")
+    check("a new question retires a cue stranded by a cancelled response",
+          barge and barge.get("activeTool"), None)
+
+
+asyncio.run(_tool_turn())
+
+# Both channels have to act on it: the web stage upgrades the pill in place,
+# and the meeting tile takes it as the caption. Upgrading matters -- re-arming
+# would drop the pill to the neutral phase, which is the bug itself.
+bridge_py = (ROOT / "backend" / "acs" / "bridge.py").read_text(encoding="utf-8")
+check("app.js reads activeTool", "msg.activeTool" in app_js, True)
+check("app.js upgrades in place rather than re-arming",
+      "upgradeThinking(msg.activeTool)" in app_js, True)
+check("the meeting bridge forwards activeTool",
+      'msg.get("activeTool")' in bridge_py, True)
+
 print()
 if FAILED:
     print(f"{FAILED} check(s) FAILED")

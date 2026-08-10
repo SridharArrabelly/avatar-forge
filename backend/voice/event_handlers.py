@@ -233,13 +233,41 @@ async def handle_event(handler, event, connection):
 
         # Response lifecycle
         elif event_type == ServerEventType.RESPONSE_CREATED:
+            # Model binding splits a tool turn into TWO responses: the function
+            # call, then the answer written from its output. The second one
+            # CONTINUES the same user question, and treating it as a new turn
+            # tore the named cue back down to bare dots mid-retrieval, so the
+            # user watched
+            #
+            #     "........"  ->  "Searching the web..."  ->  "........"
+            #
+            # which reads as the search having been abandoned. Agent binding
+            # never showed it: the Foundry agent runs its tools inside a single
+            # response, so there is no second RESPONSE_CREATED to reset.
+            #
+            # A continuation is identifiable without tracking response ids: the
+            # response that just ended named a retrieval and produced no
+            # assistant output. Anything that spoke or wrote was a finished
+            # answer, so whatever follows it is genuinely new. Read BEFORE the
+            # per-response flags below are reset -- until then they still
+            # describe the response that ended.
+            answered = getattr(handler, "_first_audio_logged", False) or getattr(
+                handler, "_first_text_logged", False
+            )
+            active_tool = (
+                None if answered else getattr(handler, "_retrieval_cue_sent", None)
+            )
+
             handler._response_active = True
             handler._t_response_created_ms = _now_ms()
             handler._first_audio_logged = False
             handler._first_video_logged = False
             handler._first_text_logged = False
-            # New turn: allow the retrieval cue to fire again.
-            handler._retrieval_cue_sent = None
+            # Carry a still-running retrieval across the continuation; a
+            # genuinely new turn clears it so the cue can fire fresh. The new
+            # question also clears it on arrival, which covers the case where a
+            # response is cancelled before producing anything.
+            handler._retrieval_cue_sent = active_tool
             t_user = getattr(handler, "_t_user_done_ms", None)
             if t_user is not None:
                 logger.info(
@@ -265,6 +293,11 @@ async def handle_event(handler, event, connection):
                 # the turn has run long enough that a search is the only
                 # explanation. See _classify_question.
                 "expectedTool": expected,
+                # Fact, not prediction: a retrieval already named for THIS
+                # question and still running. Present only on the continuation
+                # response of a tool turn, where the browser must keep the
+                # caption it is already showing instead of resetting to dots.
+                "activeTool": active_tool,
             })
 
         elif event_type == ServerEventType.RESPONSE_DONE:
@@ -351,6 +384,12 @@ async def handle_event(handler, event, connection):
                     transcript, getattr(handler, "_last_topic", None)
                 )
                 handler._expected_tool = handler._last_topic
+                # A new question is the one unambiguous turn boundary, so retire
+                # the previous turn's named retrieval here. RESPONSE_CREATED
+                # cannot be trusted to do it alone -- see the continuation carry
+                # there -- and a cue surviving into an unrelated question is the
+                # false retrieval claim this whole mechanism exists to prevent.
+                handler._retrieval_cue_sent = None
                 await handler.send_message({
                     "type": "transcript_done",
                     "role": "user",
