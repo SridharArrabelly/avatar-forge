@@ -890,19 +890,27 @@ function handleServerMessage(msg) {
             onTranscriptEmpty(msg.itemId);
             break;
         case 'response_created':
-            pendingAssistantText = '';
-            currentAssistantContentEl = null;
-            addMessage('assistant', '');
-            isSpeaking = true;
-            // activeTool means this response CONTINUES a tool turn whose cue is
-            // already on screen and correctly named (model binding splits a tool
-            // turn into call + answer). Re-arming would reset the pill to the
-            // neutral dots phase mid-search, so upgrade in place instead.
+            // activeTool means this response CONTINUES a tool turn (model
+            // binding splits one exchange into call + answer).
             if (msg.activeTool) {
+                // Same exchange, so keep the same bubble. Creating another one
+                // left a stray empty assistant bubble in the transcript when
+                // the tool call said nothing, and split the reply in two when
+                // it spoke a preamble first. Keep the accumulated text so the
+                // answer appends to the preamble instead of erasing it.
+                if (pendingAssistantText && !/\s$/.test(pendingAssistantText)) {
+                    pendingAssistantText += ' ';
+                }
+                // The cue is already on screen and correctly named; re-arming
+                // would reset the pill to the neutral dots phase mid-search.
                 upgradeThinking(msg.activeTool);
             } else {
+                pendingAssistantText = '';
+                currentAssistantContentEl = null;
+                addMessage('assistant', '');
                 startThinking(msg.expectedTool);
             }
+            isSpeaking = true;
             break;
         case 'function_call_started':
             upgradeThinking(msg.functionName);
