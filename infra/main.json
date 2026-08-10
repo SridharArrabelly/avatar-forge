@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.43.8.12551",
-      "templateHash": "8518898772278201547"
+      "templateHash": "13782540376781436422"
     }
   },
   "parameters": {
@@ -733,7 +733,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.43.8.12551",
-              "templateHash": "6322967766461399574"
+              "templateHash": "18064381251811609644"
             }
           },
           "parameters": {
@@ -1515,7 +1515,7 @@
                     "_generator": {
                       "name": "bicep",
                       "version": "0.43.8.12551",
-                      "templateHash": "11902605709419162171"
+                      "templateHash": "885384303716343834"
                     }
                   },
                   "parameters": {
@@ -1707,7 +1707,8 @@
                         "versionUpgradeOption": "OnceNewDefaultVersionAvailable"
                       },
                       "dependsOn": [
-                        "[resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName'))]"
+                        "[resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName'))]",
+                        "[resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('accountName'), parameters('projectName'))]"
                       ]
                     },
                     {
@@ -1729,7 +1730,8 @@
                       },
                       "dependsOn": [
                         "[resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName'))]",
-                        "[resourceId('Microsoft.CognitiveServices/accounts/deployments', parameters('accountName'), parameters('modelDeploymentName'))]"
+                        "[resourceId('Microsoft.CognitiveServices/accounts/deployments', parameters('accountName'), parameters('modelDeploymentName'))]",
+                        "[resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('accountName'), parameters('projectName'))]"
                       ]
                     },
                     {

@@ -81,6 +81,14 @@ resource project 'Microsoft.CognitiveServices/accounts/projects@2025-04-01-previ
   }
 }
 
+// Every child of a CognitiveServices account is serialized behind `project`.
+// The account takes a single write lock, so any two children submitted in
+// parallel race and the loser returns 409 RequestConflict. ARM has no way to
+// express "these are mutually exclusive", so the only lever is an explicit
+// chain: account -> project -> chat deployment -> embedding deployment.
+//
+// The project goes first because it is the fastest of the three (~7s against
+// ~40s for a deployment), so serializing costs the least this way round.
 resource deployment 'Microsoft.CognitiveServices/accounts/deployments@2025-04-01-preview' = if (deployAgentModel) {
   parent: account
   name: modelDeploymentName
@@ -97,18 +105,27 @@ resource deployment 'Microsoft.CognitiveServices/accounts/deployments@2025-04-01
     raiPolicyName: 'Microsoft.DefaultV2'
     versionUpgradeOption: 'OnceNewDefaultVersionAvailable'
   }
+  dependsOn: [ project ]
 }
 
 // Embedding deployment (required by scripts/setup_aisearch_index.py).
-// `dependsOn: [deployment]` serializes the two creates — CS accounts return 409
-// when multiple `accounts/deployments` are submitted in parallel against the
-// same parent account.
 //
-// This stays unconditional on purpose. Writing `deployAgentModel ? [deployment] : []`
-// changes nothing: Bicep resolves dependsOn to symbolic resourceIds and emits the
-// same static array either way (verified in the compiled main.json). ARM ignores a
-// dependency on a resource whose condition is false, so in model mode the embedding
-// simply deploys without waiting.
+// Both dependencies are load-bearing, for different modes:
+//
+//   `deployment` covers agent mode, where two `accounts/deployments` would
+//   otherwise be submitted together.
+//
+//   `project` covers MODEL mode, and is why this list is not just [deployment].
+//   `deployment` is conditional, and ARM drops a dependency on a resource whose
+//   condition is false — so in model mode `dependsOn: [deployment]` alone
+//   degrades to no dependency at all and this deploys concurrently with the
+//   project. That is not theoretical: it is exactly how the first model-mode
+//   `azd up` failed, with the embedding taking the account lock for 39s and the
+//   project losing the race after 7s.
+//
+// Listing both is still correct in agent mode: the ignored-when-false rule means
+// the array is evaluated per-deployment, not per-template, so nothing is
+// double-counted and the chain simply collapses to project -> embedding.
 resource embeddingDeployment 'Microsoft.CognitiveServices/accounts/deployments@2025-04-01-preview' = {
   parent: account
   name: embeddingDeploymentName
@@ -125,7 +142,7 @@ resource embeddingDeployment 'Microsoft.CognitiveServices/accounts/deployments@2
     raiPolicyName: 'Microsoft.DefaultV2'
     versionUpgradeOption: 'OnceNewDefaultVersionAvailable'
   }
-  dependsOn: [ deployment ]
+  dependsOn: [ deployment, project ]
 }
 
 // Role IDs
