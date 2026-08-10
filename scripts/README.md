@@ -44,7 +44,7 @@ command), or individually as `uv run python scripts/<name>.py`.
 | script | when you want it |
 | --- | --- |
 | [`set_profile.py`](set_profile.py) | **Step 0.** Pick a delivery channel; records `DEPLOY_PROFILE` and prints the numbered plan. |
-| [`rename_avatar.py`](rename_avatar.py) | Rename the persona (`Simone` → `Nuru`) across the azd environment, container app and Foundry agent. `--model <character>` also changes `AVATAR_MODEL`; `--check-only` verifies without changing anything. |
+| [`rename_avatar.py`](rename_avatar.py) | Rename the persona (`Simone` → `Nuru`) across the azd environment, container app and Foundry agent. `--model <character>` also changes `AVATAR_MODEL`; `--type <type>` also changes `AVATAR_TYPE`, which is what a switch to a custom avatar needs — omit it and an unrecognised `--model` is queried interactively rather than rejected. `--check-only` verifies without changing anything. Skips the agent step under `VOICE_BINDING=model`, which has no agent. |
 | [`smoke_aisearch_query.py`](smoke_aisearch_query.py) | "Did the index actually ingest?" Queries it directly. |
 | [`smoke_foundry_agent.py`](smoke_foundry_agent.py) | "Can the deployed agent answer?" One end-to-end question. |
 | [`smoke_audit_conversation.py`](smoke_audit_conversation.py) | "Can agent-mode tool detail actually be recovered?" Replays one Foundry conversation through the **production reconciler** ([`backend/audit/foundry.py`](../backend/audit/foundry.py)) and prints the query and passages the agent used server-side. Reads only. See [audit.md](../docs/audit.md). |
@@ -100,9 +100,21 @@ holds the routing question set and `classify()` shared by both benchmarks.
   `AVATAR_DISPLAY_NAME` is a legitimate configuration when the name derives from the
   active avatar model, so asserting on the raw variable would report a correct
   deployment as broken. It calls the same `resolve_avatar_display_name()` the app does.
-- **Persona and character are separate knobs.** `AVATAR_DISPLAY_NAME` controls
-  branding; `AVATAR_MODEL` selects the Speech character. `--model` changes the
-  character and validates standard catalogue names locally.
+- **Persona, character and modality are three knobs, not one.** `AVATAR_DISPLAY_NAME`
+  controls branding; `AVATAR_MODEL` selects the Speech character; `AVATAR_TYPE`
+  decides whether that character is resolved against the prebuilt catalogue or your
+  own Speech resource. `--model` changes the character and validates standard
+  catalogue names locally. Moving to a custom avatar means changing the last two
+  **together** — `--type` does that, and is offered interactively when `--model`
+  names something the catalogue does not have.
+- **`AVATAR_TYPE` set by hand is the classic half-move.** `azd env set AVATAR_TYPE
+  custom-photo` updates what the *next* deploy will impose, not what is running now,
+  so the avatar keeps rendering as the old character with no error anywhere. The
+  script writes it to both surfaces and its VERIFY step fails on any disagreement.
+- **Model mode has no agent, so there is no third surface.** `azure.yaml` already
+  skips `setup_foundry_agent.py` when `VOICE_BINDING=model`; `rename_avatar.py`
+  mirrors that. Running it anyway used to fail and then report a "HALF APPLIED"
+  rename that had in fact fully landed.
 
 See [`../docs/development.md`](../docs/development.md) for the full local-development
 walkthrough.

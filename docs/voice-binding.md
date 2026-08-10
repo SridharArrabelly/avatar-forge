@@ -330,8 +330,8 @@ constraint is purely which binding the deployment was built with.
 | --- | --- | --- |
 | `VOICE_BINDING` | `agent` | `agent` or `model`. Anything else falls back to `agent`. |
 | `VOICELIVE_MODEL` | `gpt-realtime-2` | Realtime model bound in model mode. Managed by Voice Live — no deployment, no quota. Ignored in agent mode. |
-| `WEBIQ_API_KEY` | *(unset)* | Enables `search_web` outright. Stored as a **container-app secret**, never a plain env var. |
-| *(no flag)* | — | With no key the app asks for a Web IQ token at startup and enables `search_web` only if one comes back. Nothing to set. |
+| `WEBIQ_API_KEY` | *(unset)* | Enables `search_web` outright. Stored as a **container-app secret**, never a plain env var. Required when the managed identity cannot be bound with Web IQ. |
+| *(no flag)* | — | With no key the app asks for a Web IQ token at startup and enables `search_web` only if one comes back. Nothing to set — but the identity's client id must be **bound in the Web IQ portal**, or the calls 401 even though the token succeeded. See [auth.md](auth.md#the-keyless-web-iq-route-needs-one-thing-azure-cannot-give-you). |
 | `WEBIQ_BASE_URL` | code default | Web IQ endpoint. Optional. |
 | `WEBIQ_ALLOWED_DOMAINS` | *derived from `bingAllowedDomains`* | Comma-separated host allow-list applied to results. |
 
@@ -345,7 +345,7 @@ To switch a deployment over:
 
 ```powershell
 azd env set VOICE_BINDING model
-azd env set WEBIQ_API_KEY <key>   # optional; without it the app tries its identity
+azd env set WEBIQ_API_KEY <key>   # optional only if the identity is bound with Web IQ
 azd env set WEBIQ_ALLOWED_DOMAINS "mtn.com,sashares.co.za"   # optional; defaults to bingAllowedDomains
 azd up
 ```

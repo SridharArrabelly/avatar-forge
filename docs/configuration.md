@@ -180,7 +180,7 @@ startup can obtain a Web IQ token.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `WEBIQ_API_KEY` | — | Enables the `search_web` tool in model mode without a startup check. Passed to the container app as a **secret**, never as a plain environment variable. Leave it unset and the app authenticates with its managed identity instead, enabling the tool only if that works — see the note under the table. If neither route works the web tool stays off and the assistant answers from the internal minutes-and-policies corpus alone. |
+| `WEBIQ_API_KEY` | — | Enables the `search_web` tool in model mode without a startup check. Passed to the container app as a **secret**, never as a plain environment variable. Leave it unset and the app authenticates with its managed identity instead, enabling the tool only if a token comes back — but a token is not the same as being authorised, see the notes under the table. Required, in Azure as well as locally, when the identity cannot be bound with Web IQ. If neither route works the web tool stays off and the assistant answers from the internal minutes-and-policies corpus alone. |
 | `WEBIQ_BASE_URL` | `https://api.microsoft.ai/v3` | Web IQ endpoint. |
 | `WEBIQ_ALLOWED_DOMAINS` | *derived from `bingAllowedDomains`* | Comma-separated hosts that scope the search, e.g. `jse.co.za,mtn.com`. Web IQ has no server-side allow-list — its request model exposes no `site` field — so [`build_query()`](../backend/voice/tools.py) compiles these into `site:a OR site:b` operators on the query, which is the mechanism the Web IQ API documents. Same intent as `bingAllowedDomains`, and by default the **same sources**: leave this empty and `main.bicep` derives the bare hosts from `bingAllowedDomains`, so the two bindings cannot drift apart. Set it only to make model mode diverge deliberately. **Write bare hosts, not URLs and not `www.`** — see the two notes below. It is emitted **unconditionally**, whether or not a key is set, because the app can enable `search_web` on its own — so an enabled `search_web` is never an unscoped open-web search. |
 | `WEBIQ_LANGUAGE` | `en` | Result language hint. |
@@ -192,13 +192,18 @@ startup can obtain a Web IQ token.
 > never advertised to a deployment that cannot call it. A flag could claim an
 > entitlement your tenant does not have; a token cannot. Note that a token
 > proves *authentication*, not *entitlement* — the service can still refuse an
-> authenticated caller, which surfaces as a 4xx from `search_web`.
+> authenticated caller, which surfaces as a 4xx from `search_web`, in practice
+> `401` with `"errorCode": "AuthUnauthorizedEntryId"`.
 
 > **The keyless route needs a one-off registration in the Web IQ portal.** Web IQ
 > authorises by application, so the managed identity's **client id** must be bound
 > under **Profile Management → Application (Client) IDs** before any token it
-> presents is accepted. Nothing in Azure reports this as missing — the symptom is
-> simply that `search_web` never appears. Steps are in
+> presents is accepted — and some profiles have no such tab, in which case the key
+> is the only route. Nothing in Azure reports this as missing. There are two
+> symptoms, not one: either `search_web` never appears (no token), or it appears
+> and every call returns `401 AuthUnauthorizedEntryId` (token, but the application
+> is unknown to Web IQ). A **new deployment mints a new identity**, so each
+> environment needs its own binding. Steps are in
 > [auth.md](auth.md#the-keyless-web-iq-route-needs-one-thing-azure-cannot-give-you).
 
 > **`site:` matches a domain and every subdomain under it — it is not a hostname
@@ -377,6 +382,28 @@ AVATAR_DISPLAY_NAME=Nuru
 The application derives the UI modality from this pair. You do **not** copy the
 model into several variables.
 
+> **Switching to a custom avatar *after* a deploy needs `AVATAR_TYPE` to move too,
+> and the script does that for you.** `AVATAR_MODEL` names the character;
+> `AVATAR_TYPE` is what decides whether Speech looks that name up in the prebuilt
+> catalogue or in **your** resource. Change only the model and the app asks the
+> catalogue for a character that is not in it, so the avatar silently fails to
+> render.
+>
+> ```powershell
+> uv run python scripts/rename_avatar.py Nuru --model Nuru --type custom-photo
+> ```
+>
+> `--type` is optional. Leave it out and the script notices that `Nuru` is not a
+> prebuilt character, asks whether it is a custom avatar in your Speech resource,
+> and sets `custom-photo` (or `custom-video`, matching your current modality) when
+> you say yes. Answer no and it stops without changing anything, because the other
+> explanation for an unrecognised name is a typo.
+>
+> Both variables then reach **every** surface. Setting `AVATAR_TYPE` by hand with
+> `azd env set` alone is the trap: the azd environment moves, the running container
+> app does not, and the avatar keeps rendering as the old character until someone
+> redeploys. The script's VERIFY step reports exactly that drift.
+
 > **Renaming after a deploy: use the script.** The name lives on three surfaces and
 > all three have to move together, so there is one command for it:
 >
@@ -389,6 +416,8 @@ model into several variables.
 > the **container app** (stage name, tagline, wake phrase), and the **Foundry agent**
 > (what she actually *says*) — then reads each surface back independently and exits
 > non-zero if they disagree. See [`scripts/README.md`](../scripts/README.md).
+> In model mode the third surface does not exist, so the script skips it: there is
+> no agent, and the persona reaches Voice Live from the container app.
 >
 > `AVATAR_DISPLAY_NAME` is branding; `AVATAR_MODEL` selects the Speech character.
 > To change the character explicitly:
