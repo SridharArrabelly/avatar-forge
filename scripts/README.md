@@ -58,13 +58,19 @@ command), or individually as `uv run python scripts/<name>.py`.
 Two files have no prefix because they are **libraries**, imported rather than run:
 [`channels.py`](channels.py) (the single source of truth for profiles, their flags and
 their steps) and [`rbac_propagation.py`](rbac_propagation.py) (the retry that waits out
-data-plane RBAC propagation lag).
+data-plane RBAC propagation lag). A third, [`routing_questions.py`](routing_questions.py),
+holds the routing question set and `classify()` shared by both benchmarks.
 
 ## Notes that have bitten before
 
-- **The two benchmarks share one question set.** `bench_routing_model.py` *imports*
-  `TIERS` and `classify()` from `bench_routing_agent.py` rather than copying them, so
-  the two bindings cannot drift into being scored against different questions.
+- **The two benchmarks share one question set.** Both *import* `TIERS`, `GROUPS` and
+  `classify()` from [`routing_questions.py`](routing_questions.py) rather than copying
+  them, so the two bindings cannot drift into being scored against different questions.
+  That file is a library with no third-party imports, so pulling the questions in
+  costs nothing — it was carved out of `bench_routing_agent.py`, where reading a list
+  of strings meant exec'ing the agent harness and, transitively,
+  `smoke_foundry_agent.py`. The prose rationale for the questions is in
+  [`../docs/testing-routing.md`](../docs/testing-routing.md).
 - **`bench_*` times completion, not first audio.** Longer answers inflate it. It is a
   routing instrument; do not quote it as a time-to-first-token figure.
 - **`bench_audit_latency.py` runs each arm in a subprocess, deliberately.**

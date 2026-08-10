@@ -2,7 +2,7 @@
 
 A quick checklist to verify each turn routes to the correct tool, shared by
 **both** voice bindings. Run it after changing any routing rule in
-`agent/instructions.md` or `realtime/instructions.md`.
+`prompts/agent/instructions.md` or `prompts/realtime/instructions.md`.
 
 - **Internal** questions should hit the **AI Search index** — `azure_ai_search`
   in agent mode, `search_minutes` in model mode. That index holds **two**
@@ -205,17 +205,22 @@ already well covered. If this one *changes*, something unintended moved.
 
 The manual checklist above is for a quick eyeball. For repeatable, multi-run
 scoring use the batch harnesses. **The question set itself lives in
-`scripts/bench_routing_agent.py` and is imported by both** — that module is the single
-source of truth; this file is the prose rationale behind the questions.
+`scripts/routing_questions.py` and is imported by both** — that module is the
+single source of truth for the *data*; this file is the prose rationale behind it.
+Change a question in one place and both bindings pick it up.
 
 | binding | harness | what it drives |
 | --- | --- | --- |
 | `VOICE_BINDING=agent` | `scripts/bench_routing_agent.py` | the live Foundry agent, over its per-endpoint OpenAI-protocol URL |
 | `VOICE_BINDING=model` | `scripts/bench_routing_model.py` | a live Voice Live **model** session over the websocket, registering the app's own in-process tools |
 
-`bench_routing_model.py` imports `TIERS`, `BOUNDARY` and `classify()` from
-`bench_routing_agent.py`, so both bindings are scored against **identical questions** and
-the two cannot drift apart.
+Both import `TIERS`, `GROUPS` and `classify()` from `routing_questions.py`, so
+they are scored against **identical questions** and cannot drift apart. That
+module has no prefix because it is a library, not something you run, and it
+imports nothing outside the standard library — reading the questions costs
+nothing. (It used to live inside `bench_routing_agent.py`, which forced the
+model-mode harness to exec the *agent* harness, and transitively
+`smoke_foundry_agent.py`, just to read a list of strings.)
 
 > This file used to embed a copy of the harness source. It went stale — the copy
 > still had 10 questions after the real script had grown to 16 — so the source now
@@ -277,7 +282,7 @@ Notes:
   **not** bump the version, and the runtime resolves the agent by **name**, so it
   always uses the latest. After experiments, re-provision the CHOSEN config so the
   live agent is not left on an experimental one.
-- `AGENT_MODEL` no longer swaps the prompt: `agent/instructions.md` is the only
+- `AGENT_MODEL` no longer swaps the prompt: `prompts/agent/instructions.md` is the only
   agent prompt and is loaded unconditionally.
 - Both harnesses locate the repo root by walking up from the working directory.
 - When Web IQ is not configured, the model harness retains `search_web` as a

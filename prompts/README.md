@@ -9,13 +9,17 @@ chasing string literals across the codebase.
 ```
 prompts/
 ├── README.md                          # this file
-├── routing-test-questions.md          # shared checklist: does each question hit the right tool?
 ├── agent/                             # used when VOICE_BINDING=agent
 │   ├── description.md                 # one-line agent description (UI / catalog)
 │   └── instructions.md                # system instructions — the only agent prompt
 └── realtime/                          # used when VOICE_BINDING=model
     └── instructions.md                # system instructions, gpt-realtime family
 ```
+
+Everything here is sent somewhere. The whole folder is copied into the container
+image (`Dockerfile`), so anything that is *not* a prompt does not belong — the
+routing regression checklist that used to sit here now lives in
+[`../docs/testing-routing.md`](../docs/testing-routing.md).
 
 ## Which prompt is used, and when
 
@@ -150,12 +154,6 @@ has no such separator — every line in it is sent.
 description in the Foundry catalog, not a document. It looks empty in an editor
 preview. It is not.
 
-`routing-test-questions.md` is the only file here that is **never** sent
-anywhere. It is the regression checklist, shared by both bindings, to run
-*after* editing either `agent/instructions.md` or `realtime/instructions.md`,
-confirming internal questions still route to the minutes tool and external ones
-to the web tool.
-
 Future prompts (per-tool routing rules, clarification templates, UI captions)
 belong in subfolders here, e.g. `prompts/tools/<tool>.md`.
 
@@ -177,4 +175,5 @@ uv run python scripts/setup_foundry_agent.py
 > creates a new agent *version*, which is the supported update path.
 
 Commit the prompt change in the same PR as any code that depends on it (tool
-wiring, routing rules), and run `routing-test-questions.md` afterwards.
+wiring, routing rules), and run the routing checklist in
+[`../docs/testing-routing.md`](../docs/testing-routing.md) afterwards.
