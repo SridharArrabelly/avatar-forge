@@ -138,6 +138,46 @@ param bingAllowedDomains array = [
   { domain: 'https://techcentral.co.za', includeSubPages: true, boostLevel: 'Boosted' }
   { domain: 'https://www.moneyweb.co.za/tools-and-data', includeSubPages: true, boostLevel: 'SuperBoost' }
   { domain: 'https://sashares.co.za/mtn-shares', includeSubPages: true, boostLevel: 'SuperBoost' }
+  // --- Added after the entries above, which are the verbatim import ----------
+  // Appended rather than merged in so the block above stays diffable line by
+  // line against the live Bing configuration.
+  //
+  // Chosen from a 30-call A/B benchmark of the same 10 questions run against the
+  // 13-host list and against the open web. The narrow list was measurably worse,
+  // not merely narrower: it collapsed onto a single publisher for 3 of 10
+  // questions (62% mean single-source concentration) and returned results a mean
+  // 414 days old. Asked how MTN is addressing its Nigerian FX losses it returned
+  // four 2024 articles about the naira devaluation, while the open web led with
+  // MTN Nigeria having *cleared* the FX debt — the restricted answer was not
+  // just staler, it was backwards.
+  //
+  // These are the sources that carried the material the 13-host list missed.
+  // The open web also surfaced LinkedIn posts and SEO blogs on the strategy
+  // questions, which is why the boundary is widened here rather than removed.
+  //
+  // Every host added here also spends characters from the 1000-character Web IQ
+  // query budget — see WEBIQ_MAX_QUERY_CHARS in backend/voice/tools.py. 21 hosts
+  // cost 471 of 1000, leaving 529 for the question. Keep that in view before
+  // adding more, and prefer removing a source that has stopped earning its place
+  // to letting the list grow.
+  //
+  // MTN's own investor-relations site. Distinct from mtn.com, and the single
+  // biggest gap: it carries the FY2025 summary income statement, which is why
+  // the restricted arm could not produce a revenue figure and this one could.
+  { domain: 'https://www.mtn-investor.com', includeSubPages: true, boostLevel: 'SuperBoost' }
+  // Nigeria is MTN's largest market by subscribers and the source of its FX
+  // exposure, and the 13-host list had no Nigerian publication in it at all.
+  { domain: 'https://punchng.com', includeSubPages: true, boostLevel: 'Boosted' }
+  { domain: 'https://businessday.ng', includeSubPages: true, boostLevel: 'Boosted' }
+  { domain: 'https://africa.businessinsider.com', includeSubPages: true, boostLevel: 'Boosted' }
+  // Scoped to the Africa subdomain deliberately: `site:` matches subdomains
+  // downward, so this admits Business Insider Africa without admitting all of
+  // businessinsider.com.
+  { domain: 'https://techcabal.com', includeSubPages: true, boostLevel: 'Boosted' }
+  { domain: 'https://www.sbmintel.com', includeSubPages: true, boostLevel: 'Boosted' }
+  // Earnings-call and capital-markets-day summaries.
+  { domain: 'https://quartr.com', includeSubPages: true, boostLevel: 'Boosted' }
+  { domain: 'https://www.investing.com', includeSubPages: true, boostLevel: 'Boosted' }
 ]
 
 // Same sources, two renderings — because the two bindings enforce them differently.
@@ -156,7 +196,12 @@ param bingAllowedDomains array = [
 // assistant look", and webIqAllowedDomains an explicit opt-out rather than a duty.
 //
 // Verified against a real ARM evaluation (bicep does not fold lambdas at compile
-// time): 17 URLs -> 13 hosts, www. stripped, first-occurrence order preserved.
+// time): 25 URLs -> 21 hosts, www. stripped, first-occurrence order preserved.
+//
+// The joined string is spent from a 1000-character budget shared with the
+// question itself, because backend/voice/tools.py compiles it into `site:`
+// operators on the query text. 21 hosts render to 471 characters. See
+// WEBIQ_MAX_QUERY_CHARS there for what happens when the two stop fitting.
 var bingHostsRaw = map(
   bingAllowedDomains,
   d => split(replace(replace(d.domain, 'https://', ''), 'http://', ''), '/')[0]

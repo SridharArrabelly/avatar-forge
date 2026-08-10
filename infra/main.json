@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.43.8.12551",
-      "templateHash": "12544062769859907099"
+      "templateHash": "8518898772278201547"
     }
   },
   "parameters": {
@@ -269,6 +269,46 @@
           "domain": "https://sashares.co.za/mtn-shares",
           "includeSubPages": true,
           "boostLevel": "SuperBoost"
+        },
+        {
+          "domain": "https://www.mtn-investor.com",
+          "includeSubPages": true,
+          "boostLevel": "SuperBoost"
+        },
+        {
+          "domain": "https://punchng.com",
+          "includeSubPages": true,
+          "boostLevel": "Boosted"
+        },
+        {
+          "domain": "https://businessday.ng",
+          "includeSubPages": true,
+          "boostLevel": "Boosted"
+        },
+        {
+          "domain": "https://africa.businessinsider.com",
+          "includeSubPages": true,
+          "boostLevel": "Boosted"
+        },
+        {
+          "domain": "https://techcabal.com",
+          "includeSubPages": true,
+          "boostLevel": "Boosted"
+        },
+        {
+          "domain": "https://www.sbmintel.com",
+          "includeSubPages": true,
+          "boostLevel": "Boosted"
+        },
+        {
+          "domain": "https://quartr.com",
+          "includeSubPages": true,
+          "boostLevel": "Boosted"
+        },
+        {
+          "domain": "https://www.investing.com",
+          "includeSubPages": true,
+          "boostLevel": "Boosted"
         }
       ],
       "metadata": {
