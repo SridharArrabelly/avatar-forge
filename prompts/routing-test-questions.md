@@ -62,6 +62,10 @@ partial pass still tells you something.
 14. What is Vodacom doing in fintech?
 15. What is MTN's Ambition 2025?
 
+These check *routing only*. For whether the web tool came back with usable
+**sources**, see [Web retrieval quality](#web-retrieval-quality-manual--not-scored-by-the-harnesses)
+below — Q12 appears in both, scored differently in each.
+
 ## Why these matter
 
 - **Q3** — "who attended" must trigger a search, not a deferral ("I need to
@@ -125,6 +129,75 @@ whether the agent refuses a policy-shaped question with no matching document
 (e.g. "what is our work-from-home policy?"). Retrieval always returns
 *something*, so absence has to be handled by the prompt and verified at the
 agent level — routing scores cannot see it.
+
+## Web retrieval quality (manual — not scored by the harnesses)
+
+The same blind spot, on the **web** side. These three questions check *which
+sources come back*, not which tool fires. All three route to the web tool
+unambiguously — no surface-form ambiguity, nothing to get wrong — so the
+harnesses would award them a free pass and inflate the score. They are
+deliberately **kept out of `bench_routing_agent.py`**; the routing set stays at
+15 core + 6 boundary.
+
+They are the three cases the widened allow-list (13 → 21 hosts, PR #124) was
+chosen on, so they double as the **allow-list regression set**: if these
+degrade, a domain has been dropped or the non-prod filter has over-matched.
+
+Read the **sources**, not just the answer. A fluent answer built on a 2024
+article is the failure being tested for.
+
+**R1. How is MTN addressing foreign exchange losses in Nigeria?**
+
+The sharpest case — the old list was not merely staler, it was *backwards*.
+All four results came from one publication and a median of 829 days old,
+led by 2024 naira-devaluation pieces ("5-point plan to solve MTN's Nigeria
+woes", "MTN's tale of woe in Nigeria"). Those describe the losses being
+*incurred*; the question asks how they are being *addressed*, and by then MTN
+Nigeria had cleared the FX debt. Expect now: the debt clearance and naira
+recovery (`punchng.com`, `techcabal.com`, `businessday.ng`), across three or
+more hosts.
+
+**R2. What was MTN's FY2025 revenue?** (= core Q12, judged on sources here)
+
+Not a case of *no* sources — the old list returned the FY-25 results
+**PDFs** (`mtn.com` presentation deck, JSE SENS announcements). The figure was
+in them, but as slide/PDF layout, which is why runs disagreed
+(160bn / 177.8bn / 210.8bn / 218bn — see the known-issue note at the end of
+this file). `mtn-investor.com` — MTN's own IR site, and the host that was
+missing — serves the same numbers as **HTML tables**
+(`key-financial-tables.php`, `summary-group-income-statement.php`).
+Expect now: those pages in the result set, and *the same figure across
+repeated runs*. Consistency is the test; a single plausible answer proves
+nothing.
+
+**R3. How does MTN's return on equity compare with Vodacom and Airtel Africa?**
+
+A comparative-metric question the old list had no source for. It returned
+retail-investor content at a 840-day median — "battle of the
+telecommunications giants", "if you invested R1,000 in MTN, Vodacom…" — which
+is adjacent to the question but does not contain an ROE comparison. Expect
+now: `investing.com` ROE and peer-comparison pages carrying the actual ratios.
+Worth noting the open-web arm did *worse* here, not better: a LinkedIn post, a
+Blogspot page and an AI-generated analyst site.
+
+### Negative control
+
+**"What is MTN's biggest competitive threat in South Africa right now?"**
+should be **unchanged** — the widened and restricted lists returned identical
+results for it. The additions earn their place on Nigeria/Ghana coverage,
+primary IR financials and comparative metrics; South African telecom news was
+already well covered. If this one *changes*, something unintended moved.
+
+### Caveats
+
+- Retrieval was benched (n=10 questions, single run, Web IQ only) but **Bing
+  has never been benched with the widened list** — it ranks differently (path
+  scoping, boost levels), so agent mode is plausible-but-unproven here.
+- The benched "expanded" arm included a staging mirror,
+  `stg18326.businessday.ng`. The non-prod filter shipped in the same PR now
+  blocks it, so expect `businessday.ng` proper instead. Seeing any `stg*` /
+  `dev*` / `preprod*` host in a result set is a bug, not a curiosity.
+
 
 ---
 
@@ -270,3 +343,11 @@ slips into the deferral failure mode.
 > (service vs total revenue, page formatting), same category as the
 > board-of-directors-as-an-image gap on mtn.com/leadership. Routing is
 > correct; the fix is Azure-side source coverage, not the prompt.
+>
+> **Update — allow-list widened (PR #124).** That diagnosis held. The old list
+> could reach the figure only through FY-25 **PDFs**; `mtn-investor.com`, which
+> publishes the same numbers as HTML tables, was blocked by the allow-list. It
+> is now included. This is **expected to** resolve the inconsistency and has
+> **not yet been re-measured** — the bench proved the source is now retrievable,
+> not that the spoken figure is stable. Re-run R2 above several times and
+> compare; leave this note open until it is.
