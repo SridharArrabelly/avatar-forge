@@ -269,8 +269,11 @@ audit.finish_turn(h, status="completed")
 
 check("audit is off unless enabled", audit.is_enabled(), False)
 check("no record created when disabled", getattr(h, "_audit_record", None), None)
+# ``lossy`` is present even here. /health reads it unconditionally, so a shape
+# that only sometimes carries the key would make every consumer handle a None
+# that means "no idea" the same as a False that means "nothing was lost".
 check("stats report disabled", audit.stats(),
-      {"enabled": False, "sink": None, "degraded": None})
+      {"enabled": False, "sink": None, "degraded": None, "lossy": False})
 
 
 print()

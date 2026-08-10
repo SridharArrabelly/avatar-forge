@@ -281,8 +281,19 @@ Notes:
   exchange across two Voice Live responses — the function call ends the first,
   the spoken answer arrives in the second. Filing those separately would put the
   question and the answer in different records with the tools attached to
-  neither, so a tool-call-only response is carried forward and merged into the
-  response that answers it.
+  neither, so a response that dispatched a tool is carried forward and merged
+  into the response that answers it. **Having dispatched a tool is the whole
+  test.** It was once also required that the first response stayed silent, on
+  the reasoning that anything which spoke must already be a finished answer. The
+  model does not work that way: it frequently speaks a short preamble — "let me
+  check the records for you" — and *then* calls the tool, within the one
+  response. Those turns failed the silence test, so the carried record was
+  overwritten by the one behind it and the exchange was lost outright. A live
+  session read back `turnIndex` `0,1,2,3,5`, and the record that did survive
+  reported `tools: []` for an exchange that had demonstrably searched — the
+  worse half of the failure, because nothing about that document looks wrong.
+  Merging **appends** assistant text rather than replacing it, so the preamble
+  and the answer both survive in the record.
 - `ttl` is a Cosmos-native per-item field, so retention expires itself with no
   cleanup job. Derived from `AUDIT_RETENTION_DAYS`; `0` or less means keep
   forever.
@@ -575,10 +586,22 @@ flowchart TB
 | `AUDIT_SINK=cosmos` but no endpoint configured | **Startup fails** with `AuditSinkUnavailable`, unless `AUDIT_SINK_FALLBACK` opts into one. |
 | Cosmos unreachable at startup — missing data-plane role, firewall, private-only account, `azure-cosmos` not installed (`uv sync --extra cosmos`) | **Startup fails** by default. All of these surface in `warm()`, and none of them are transient. |
 | Unrecognised `AUDIT_SINK` value | **Startup fails** by default, so a typo cannot quietly become a different sink. |
-| Sink fails on write | Logged and counted in `failed`; the writer backs off briefly and continues with the next batch. |
+| Sink fails on write | Logged and counted in `failed`; the writer backs off briefly and continues with the next batch. Partial rejections count too — a batch of ten of which five are refused adds five, not one. |
+| A record cannot be rendered | Logged and counted in `failed`. The rest of the batch is still written. |
 | Queue full | Record dropped, `dropped` incremented, warning throttled. Never blocks. |
 | Foundry reconciliation fails or times out | Record is written without tool detail and `toolsPending` stays `true`. |
-| Shutdown | The queue is drained and in-flight batches are flushed before the process exits. |
+| Shutdown | The queue is drained and in-flight batches are flushed before the process exits. Anything still queued when the drain times out is counted in `failed`, and the shutdown line logs at **warning** rather than info. |
+
+`degraded` and `lossy` answer different questions, and an alert wants both.
+`degraded` is *"this is not the sink you configured"*, decided once at startup.
+`lossy` is *"records were accepted and then lost"*, which only write time can
+know: any `failed` or `dropped` sets it, and `/health` exposes it beside
+`degraded`. The distinction is not academic. A nightly policy sweep flipped the
+Cosmos account to deny public network access while the app was already running
+— the sink had been built successfully hours earlier, so nothing was degraded,
+and a shutdown reported `submitted=10 written=5 dropped=0 failed=0`. Five
+records had been refused one by one and thrown away, and every counter said the
+run was clean. `lossy` is what that looks like from the outside.
 
 > [!IMPORTANT]
 > **If you opt into a fallback, understand what you are opting into.** Both

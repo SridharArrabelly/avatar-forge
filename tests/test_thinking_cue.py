@@ -314,6 +314,39 @@ async def _tool_turn():
     check("a new question retires a cue stranded by a cancelled response",
           barge and barge.get("activeTool"), None)
 
+    # The model often SPEAKS before it calls the tool -- "let me check the
+    # records for you" -- and the preamble lands in the same response as the
+    # call. The first version of this fix asked "did the response that just
+    # ended produce any output", which reads those turns as finished answers,
+    # so the caption was torn back down to dots. Live trace 10 Aug 2026:
+    #
+    #   06:27:00  first audio_transcript delta      <- it spoke
+    #   06:27:00  output item added: function_call search_minutes
+    #   06:27:01  response B created                <- still the same question
+    #
+    # Speaking says nothing about whether a turn is finished. Only "did this
+    # response dispatch a tool" does.
+    h4 = _FakeHandler()
+    await _ask(h4, "what did the board decide?")
+    await _response_created(h4, "resp-F")
+    h4._first_audio_logged = True          # the preamble is spoken
+    await _send_retrieval_cue(h4, "search_minutes")   # ...then the tool is called
+    pre = await _response_created(h4, "resp-G")
+    check("a response that spoke before calling the tool still continues - "
+          "this is the dots-flash that survived the first fix",
+          pre and pre.get("activeTool"), "search_minutes")
+
+    # Agent binding runs its tools inside ONE response, so it has no
+    # continuation to carry and must be left exactly as it was.
+    h5 = _FakeHandler()
+    h5.model_binding = False
+    await _ask(h5, "what did the board decide?")
+    await _response_created(h5, "resp-H")
+    await _send_retrieval_cue(h5, "search_minutes")
+    agent = await _response_created(h5, "resp-I")
+    check("agent binding never treats a response as a continuation",
+          agent and agent.get("activeTool"), None)
+
 
 asyncio.run(_tool_turn())
 
@@ -326,6 +359,18 @@ check("app.js upgrades in place rather than re-arming",
       "upgradeThinking(msg.activeTool)" in app_js, True)
 check("the meeting bridge forwards activeTool",
       'msg.get("activeTool")' in bridge_py, True)
+
+# The same signal fixes the transcript. Every response_created used to append a
+# fresh assistant bubble, so a model-mode tool turn -- which is two responses --
+# left a stray empty one when the tool call said nothing, and split the reply in
+# two when it spoke a preamble first. A continuation must reuse the bubble it
+# already has.
+_case = app_js[app_js.index("case 'response_created':"):
+               app_js.index("case 'function_call_started':")]
+check("a new assistant bubble is created only when the turn is new",
+      _case.index("addMessage('assistant', '')") > _case.index("} else {"), True)
+check("the continuation keeps the text already on screen",
+      "pendingAssistantText = ''" in _case.split("} else {")[1], True)
 
 print()
 if FAILED:

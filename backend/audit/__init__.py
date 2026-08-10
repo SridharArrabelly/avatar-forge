@@ -115,14 +115,19 @@ def is_enabled() -> bool:
 
 
 def stats() -> dict:
-    """Counters plus the two facts that say whether they can be trusted.
+    """Counters plus the facts that say whether they can be trusted.
 
     ``sink`` is the resolved sink, not the configured one, and ``degraded``
     names the reason they differ. A caller reading ``written`` needs both to
     know whether those records went anywhere durable.
+
+    ``lossy`` is a different question: not "is this the sink you asked for" but
+    "were records accepted and then lost". It is the one field an alert should
+    watch, because the counters behind it used to report a clean zero while a
+    firewall was rejecting every write.
     """
     if _queue is None:
-        return {"enabled": False, "sink": None, "degraded": _degraded}
+        return {"enabled": False, "sink": None, "degraded": _degraded, "lossy": False}
     return {**_queue.stats(), "enabled": True, "sink": _sink_name,
             "degraded": _degraded}
 
@@ -285,8 +290,22 @@ def start_turn(handler) -> None:
             # left the handler, so an in-flight agent record never has any.
             # The guard is explicit anyway, so the isolation is a stated
             # property rather than a coincidence of ordering.
+            #
+            # The test is "this record holds tools", NOT "this record said
+            # nothing". The model frequently speaks a short preamble — "let me
+            # check the records for you" — and *then* calls the tool, all within
+            # the same response. Requiring silence here meant those turns failed
+            # the test, so the record holding the tool call was overwritten by
+            # the next one and vanished: a gap in turnIndex, and a surviving
+            # record that reports tools=[] for a turn that demonstrably
+            # retrieved. Misattributed retrieval is worse than missing
+            # retrieval, because nothing about the surviving record looks wrong.
+            #
+            # Only a response whose RESPONSE_DONE was never dispatched can still
+            # be in flight here, and in model binding that is exactly the
+            # tool-call case, so keying on tools alone stays tight.
             inflight = getattr(handler, "_audit_record", None)
-            if inflight is not None and inflight.tools and not inflight.assistant_text:
+            if inflight is not None and inflight.tools:
                 carried = inflight
         if carried is not None:
             handler._audit_carry = None
@@ -384,13 +403,24 @@ def record_assistant_text(handler, text: str) -> None:
 
     Attached to the ``*_DONE`` events, which already carry the complete text,
     so deltas are never accumulated and the streaming path is never touched.
+
+    Appends rather than overwrites, because one carried record can span two
+    responses: the model speaks a preamble, calls a tool, then speaks the answer
+    in a second response. Both were said out loud, so an assistant transcript
+    that keeps only the second is not what the user heard. Identical text is not
+    duplicated, so a response emitting both an audio transcript and a text body
+    is still recorded once.
     """
     if _queue is None:
         return
     try:
         record = getattr(handler, "_audit_record", None)
         if record is not None and text:
-            record.assistant_text = text
+            existing = record.assistant_text
+            if existing and text != existing:
+                record.assistant_text = f"{existing}\n{text}"
+            else:
+                record.assistant_text = text
     except Exception as e:
         logger.debug(f"[AUDIT] record_assistant_text failed: {e}")
 
