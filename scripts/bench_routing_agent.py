@@ -3,10 +3,10 @@
 Drives the live Foundry agent over its OpenAI-protocol endpoint and reports which
 hosted tool each turn fires (``azure_ai_search`` vs ``bing_custom_search``).
 
-This module also owns the **shared** question set (``CORE``, ``BOUNDARY``,
-``TIERS``) and ``classify()``, which the model-mode benchmark imports rather than
-copies — so both bindings are scored against identical questions and cannot
-silently diverge.
+The **shared** question set and ``classify()`` live in ``routing_questions.py``,
+which this module and the model-mode benchmark both import rather than copy — so
+both bindings are scored against identical questions and cannot silently diverge.
+They are re-exported here for callers that still reach for them via this module.
 
 Run from the repo root:  uv run python scripts/bench_routing_agent.py
 """
@@ -38,98 +38,25 @@ spec = importlib.util.spec_from_file_location(
 tfa = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(tfa)
 
-# (question, expected) where expected in {"internal", "external"}
-#
-# The core set is three groups of five. Note what the groups do and do NOT test:
-#
-#   minutes  + policies  -> BOTH expect "internal", because both corpora sit
-#                           behind the SAME hosted tool (azure_ai_search) in the
-#                           SAME index. So these five policy questions do NOT
-#                           test corpus separation - that is retrieval-level and
-#                           is measured separately. What they DO test is that a
-#                           policy question does not LEAK TO THE WEB TOOL, which
-#                           is a real and previously-shipped failure: a prompt
-#                           that says "only meeting minutes are internal" sends
-#                           "what is our gift policy" straight to Bing, which
-#                           does not hold MTN's internal policies.
-#   web                  -> expects "external".
-MINUTES = [
-    ("What did we decide about dividends in the last board meeting?", "internal"),
-    ("What were the action items from the February 2026 board meeting?", "internal"),
-    ("Who attended the October 2025 board meeting?", "internal"),
-    ("Summarise the customer experience discussion from the October 2025 board meeting.", "internal"),
-    ("What strategy did the board agree in the 15 September 2023 meeting?", "internal"),
-]
+# The question set and classifier live in routing_questions.py, imported by BOTH
+# benchmarks so the two bindings cannot be scored against different questions.
+# Loaded by path because scripts/ is not a package; it imports nothing beyond the
+# standard library, so this costs nothing.
+_qspec = importlib.util.spec_from_file_location(
+    "routing_questions", str(ROOT / "scripts" / "routing_questions.py")
+)
+routing_questions = importlib.util.module_from_spec(_qspec)
+_qspec.loader.exec_module(routing_questions)
 
-# Ordered by how strongly the surface form pulls towards the web tool, so a
-# partial pass still says something: Q1 is the canonical phrasing, Q3 sounds
-# like a question about general law rather than an MTN rule.
-POLICIES = [
-    ("What is our gift policy?", "internal"),
-    ("What is the maximum value of a gift I can accept from a supplier?", "internal"),
-    ("Who owns a patent created by one of our employees?", "internal"),
-    ("Am I eligible for a study bursary?", "internal"),
-    ("What does our responsible betting policy say about data breaches?", "internal"),
-]
-
-WEB = [
-    ("Who is MTN's Group CFO?", "external"),
-    ("What was MTN's FY2025 revenue?", "external"),
-    ("What is MTN's share price today?", "external"),
-    ("What is Vodacom doing in fintech?", "external"),
-    ("What is MTN's Ambition 2025?", "external"),
-]
-
-CORE = MINUTES + POLICIES + WEB
-
-# The discriminating set. Every one of these is a case where the *surface form*
-# of the question pulls the wrong way, so they separate a prompt that states a
-# rule from one that merely lists examples. The core set above is saturated at
-# 30/30, so it can only catch a regression - improvement has to show up here.
-#
-# Sourced from "Boundary / edge cases" in prompts/routing-test-questions.md,
-# where they were recorded as manual-only.
-BOUNDARY = [
-    # Public governance facts, despite the word "board".
-    ("Who is on MTN's board?", "external"),
-    ("Who chairs the board?", "external"),
-    # "our / we / MTN's" must not force an internal lookup.
-    ("What's our revenue?", "external"),
-    # A date alone must not force internal; only meeting/minutes framing does.
-    ("What is MTN's share price on 31 March?", "external"),
-    # Genuinely both - internal first, then public. Scored on the FIRST tool.
-    ("Compare what the board discussed on fintech with Airtel's public strategy.",
-     "internal"),
-    # Purely public: superficially parallel to the one above, but no internal side.
-    ("Compare MTN and Airtel fintech.", "external"),
-]
-
-TIERS = {"core": CORE, "boundary": BOUNDARY, "all": CORE + BOUNDARY}
-
-# Reporting only. The question tuples stay 2-wide on purpose: bench_routing_model.py
-# unpacks them as ``for idx, (q, expected) in enumerate(questions)``, so widening
-# the tuple would break the model-mode harness. Grouping therefore lives beside the
-# data, not inside it.
-GROUPS = {"minutes": MINUTES, "policies": POLICIES, "web": WEB}
-_GROUP_OF = {q: name for name, qs in GROUPS.items() for q, _ in qs}
-
-
-def group_of(question: str) -> str:
-    """Which core group a question belongs to; BOUNDARY questions fall through."""
-    return _GROUP_OF.get(question, "boundary")
-
-
-def classify(itype: str) -> str:
-    t = itype.lower()
-    # Agent mode fires hosted tools (azure_ai_search_call, bing_custom_search_
-    # preview_call); model mode fires our in-process FunctionTools registered in
-    # backend/voice/tools.py as search_minutes / search_web. Recognise both so
-    # this harness can score either binding.
-    if "azure" in t or "ai_search" in t or "minutes" in t:
-        return "internal"
-    if "bing" in t or "web" in t:
-        return "external"
-    return f"other:{itype}"
+MINUTES = routing_questions.MINUTES
+POLICIES = routing_questions.POLICIES
+WEB = routing_questions.WEB
+CORE = routing_questions.CORE
+BOUNDARY = routing_questions.BOUNDARY
+TIERS = routing_questions.TIERS
+GROUPS = routing_questions.GROUPS
+group_of = routing_questions.group_of
+classify = routing_questions.classify
 
 
 def ask(

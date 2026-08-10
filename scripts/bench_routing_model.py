@@ -13,7 +13,7 @@ Method, mirroring the agent-mode A/B:
   choice, catalogue injection, model, region — is identical.
 * Arms are **interleaved per round** (``--runs`` rounds, A then B each round) so
   service-side drift lands on both arms rather than on whichever ran second.
-* The questions and the classifier are imported from ``bench_routing_agent.py``
+* The questions and the classifier are imported from ``routing_questions.py``
   rather than copied, so the two harnesses cannot silently diverge. ``classify()``
   already recognises the model-mode tool names.
 
@@ -43,12 +43,12 @@ ROOT = next(
     (
         p
         for p in (Path.cwd(), *Path.cwd().parents)
-        if (p / "scripts" / "bench_routing_agent.py").is_file()
+        if (p / "scripts" / "routing_questions.py").is_file()
     ),
     None,
 )
 if ROOT is None:
-    raise SystemExit("Run this from inside the repo — scripts/bench_routing_agent.py not found.")
+    raise SystemExit("Run this from inside the repo — scripts/routing_questions.py not found.")
 
 
 def hydrate_azd_env() -> str:
@@ -109,15 +109,19 @@ from backend.voice.tools import (  # noqa: E402
 )
 
 _spec = importlib.util.spec_from_file_location(
-    "bench_routing_agent", str(ROOT / "scripts" / "bench_routing_agent.py")
+    "routing_questions", str(ROOT / "scripts" / "routing_questions.py")
 )
-bench_routing_agent = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(bench_routing_agent)
+routing_questions = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(routing_questions)
 
-# Imported, never copied: the agent benchmark owns the shared question set, so the
+# Imported, never copied: routing_questions.py owns the shared question set, so the
 # two bindings cannot silently drift apart and be scored against different questions.
-TIERS = bench_routing_agent.TIERS
-classify = bench_routing_agent.classify
+# It is imported directly rather than through bench_routing_agent.py — going via the
+# agent harness would exec that module and, transitively, smoke_foundry_agent.py,
+# pulling azure.identity / azure.search.documents / openai into a model-mode run
+# that needs none of them.
+TIERS = routing_questions.TIERS
+classify = routing_questions.classify
 
 SEPARATOR = "\n---\n"
 TURN_TIMEOUT = 90.0
@@ -347,9 +351,9 @@ async def main() -> int:
 
     questions = TIERS[args.tier]
     if args.groups:
-        group_of = bench_routing_agent.group_of
+        group_of = routing_questions.group_of
         requested = {g.strip() for g in args.groups.split(",") if g.strip()}
-        unknown = requested - set(bench_routing_agent.GROUPS)
+        unknown = requested - set(routing_questions.GROUPS)
         if unknown:
             raise SystemExit(f"Unknown --groups values: {sorted(unknown)}")
         questions = [(q, expected) for q, expected in questions if group_of(q) in requested]

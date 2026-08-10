@@ -36,7 +36,7 @@ audit-log*.jsonl
 # azd local state (per-developer env, deployment plan)
 .azure/
 
-# Routing harness transcripts (prompts/agent/routing-test-questions.md)
+# Routing harness transcripts (docs/testing-routing.md)
 answers_*.txt
 
 # Internal policy corpus. This repo is PUBLIC and these are real corporate
