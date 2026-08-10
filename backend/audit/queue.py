@@ -195,20 +195,36 @@ class AuditQueue:
 
     async def _run(self) -> None:
         while True:
+            batch: list[TurnRecord] = []
+            rendered: Optional[list[dict]] = None
             try:
                 batch = await self._collect_batch()
                 if not batch:
                     # Draining and nothing left — the writer is done.
                     return
                 await self._reconcile(batch)
-                documents = await asyncio.to_thread(self._render, batch)
-                if documents:
-                    written = await self._sink.write(documents)
+                rendered = await asyncio.to_thread(self._render, batch)
+                # Records that could not be rendered never reach the sink, so
+                # count them here or they vanish with every counter still green.
+                self.failed += len(batch) - len(rendered)
+                if rendered:
+                    written = await self._sink.write(rendered)
                     self.written += written
+                    # A sink reports how many documents it stored. Anything it
+                    # did not store failed, whether or not it raised: CosmosSink
+                    # catches per-document errors and returns a count, so a batch
+                    # rejected by a firewall came back as a quiet zero. That is
+                    # not hypothetical — a production shutdown logged
+                    # `submitted=10 written=5 dropped=0 failed=0` while five
+                    # `Forbidden` upserts sat in the container logs.
+                    self.failed += len(rendered) - written
             except asyncio.CancelledError:
                 raise
             except Exception as e:
-                self.failed += 1
+                # Count only what this iteration had not already accounted for:
+                # the whole batch if it never got as far as rendering, otherwise
+                # the documents the sink never confirmed.
+                self.failed += len(batch) if rendered is None else len(rendered)
                 # Back off briefly so a persistently failing sink does not spin.
                 logger.warning(f"[AUDIT] write failed: {e}")
                 await asyncio.sleep(1.0)
@@ -230,6 +246,11 @@ class AuditQueue:
                 await asyncio.wait_for(asyncio.shield(self._task), timeout=timeout)
             except (asyncio.TimeoutError, asyncio.CancelledError):
                 self._task.cancel()
+                # Whatever is still queued when the writer is cut off is gone.
+                # Losing it under a shutdown deadline is deliberate; not
+                # counting it is not, because the trail would then end on a
+                # clean line that implies everything was written.
+                self.failed += self._queue.qsize()
             except Exception as e:
                 logger.debug(f"[AUDIT] writer stopped with error: {e}")
             self._task = None
@@ -239,10 +260,16 @@ class AuditQueue:
         except Exception as e:
             logger.debug(f"[AUDIT] sink close failed: {e}")
 
-        logger.info(
+        summary = (
             f"[AUDIT] writer stopped — submitted={self.submitted} "
             f"written={self.written} dropped={self.dropped} failed={self.failed}"
         )
+        # The one line an operator reads on shutdown. If records were lost it
+        # must not look like a healthy exit.
+        if self.failed or self.dropped:
+            logger.warning(summary + " — RECORDS WERE LOST")
+        else:
+            logger.info(summary)
 
     def stats(self) -> dict:
         return {
@@ -251,4 +278,7 @@ class AuditQueue:
             "dropped": self.dropped,
             "failed": self.failed,
             "queued": self._queue.qsize(),
+            # Anything an alert should fire on, reduced to one field so callers
+            # do not have to know which counter means what.
+            "lossy": bool(self.failed or self.dropped),
         }

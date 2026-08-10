@@ -157,7 +157,103 @@ async def main() -> int:
 
     await audit.shutdown_audit()
 
-    # --- agent binding must be untouched by the fix above -------------------
+    # --- the same sequence, but the model speaks before it calls the tool ---
+    #
+    # Live trace, 10 August 2026, session sess_EBDjUZy...:
+    #
+    #   06:26:58  response A created
+    #   06:27:00  first audio_transcript delta   <- A SPOKE first
+    #   06:27:00  output item added: function_call search_minutes
+    #   06:27:01  response B created
+    #   06:27:05  one document upserted, tools=[]
+    #
+    # Cosmos held turnIndex [0, 1, 2, 3, 5]. Turn 4 was allocated and never
+    # written: the carry test also demanded silence, A had spoken a preamble,
+    # so A was replaced instead of resumed. The surviving record reported no
+    # tools for a turn that had just searched the minutes.
+    #
+    # Nothing counts this. The record is dropped *before* submit(), so
+    # submitted/written/dropped/failed are all still in agreement.
+
+    print("\na spoken preamble before the tool call must not lose the turn")
+    print("-" * 70)
+
+    sink4 = CollectingSink()
+    queue4 = AuditQueue(sink4, max_size=100, retention_days=1, redact=True)
+    queue4.start()
+    audit._queue = queue4
+
+    speaker = FakeHandler()
+    speaker.voice_session_id = "sess_preamble_test"
+
+    audit.start_turn(speaker)
+    audit.record_user_text(speaker, "What did the board decide about the dividend?", "item_p")
+    first_index = getattr(speaker, "_audit_record", None).turn_index
+
+    # A speaks, then calls the tool -- both inside response A.
+    audit.record_assistant_text(speaker, "Let me check the records for you.")
+    audit.record_tool(
+        speaker,
+        name="search_minutes",
+        args={"query": "dividend"},
+        results={"passages": [{"t": "a"}, {"t": "b"}, {"t": "c"}, {"t": "d"}]},
+        elapsed_ms=312.0,
+    )
+
+    spoken_inflight = getattr(speaker, "_audit_record", None)
+
+    # A's RESPONSE_DONE is swallowed by _wait_for_event, exactly as in arm 1.
+    audit.start_turn(speaker)
+
+    check(
+        "a record that spoke before calling the tool is still resumed",
+        getattr(speaker, "_audit_record", None) is spoken_inflight,
+        "replacing it drops the tool call and leaves a hole in turnIndex",
+    )
+    check(
+        "no turn index is burned by the second response",
+        getattr(speaker, "_audit_turn_index", None) == first_index + 1,
+        f"got {getattr(speaker, '_audit_turn_index', None)!r}, expected {first_index + 1}",
+    )
+
+    audit.record_assistant_text(speaker, "The board approved a final dividend of 330 cents.")
+    audit.finish_turn(speaker, status="completed", output_types=["message"])
+    await queue4.drain()
+
+    check("exactly one record was written", len(sink4.documents) == 1, f"got {len(sink4.documents)}")
+    if sink4.documents:
+        doc = sink4.documents[0]
+        tools = doc.get("tools") or []
+        check(
+            "the written record carries the tool call",
+            len(tools) == 1 and tools[0].get("name") == "search_minutes",
+            f"got {[t.get('name') for t in tools]}",
+        )
+        check(
+            "hitCount survived the carry",
+            bool(tools) and tools[0].get("hitCount") == 4,
+            f"got {tools[0].get('hitCount') if tools else 'no tool'}",
+        )
+        check(
+            "turnIndex is contiguous — the turn was not skipped",
+            doc.get("turnIndex") == first_index,
+            f"got {doc.get('turnIndex')!r}, expected {first_index}",
+        )
+        said = (doc.get("assistant") or {}).get("text") or ""
+        check(
+            "the preamble the user heard is kept, not overwritten",
+            "check the records" in said,
+            f"got {said[:60]!r}",
+        )
+        check(
+            "the answer is kept too",
+            "330 cents" in said,
+            f"got {said[:60]!r}",
+        )
+
+    await audit.shutdown_audit()
+
+
     #
     # The resume branch is guarded on model_binding. Agent binding fills tools
     # in from foundry.reconcile() inside the writer, after the record has left
@@ -179,8 +275,8 @@ async def main() -> int:
     audit.record_user_text(agent, "What did the board decide?", "item_a")
     first = getattr(agent, "_audit_record", None)
 
-    # Force the exact shape the model-mode branch keys on: tools present, no
-    # assistant text, record still in flight. Agent mode must still not resume.
+    # Force the exact shape the model-mode branch keys on: tools present and a
+    # record still in flight. Agent mode must still not resume.
     audit.record_tool(agent, name="search_minutes", args={"query": "board"}, results={})
 
     audit.start_turn(agent)

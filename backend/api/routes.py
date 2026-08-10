@@ -35,6 +35,10 @@ async def health_check():
         body["audit"] = {
             "sink": state.get("sink"),
             "degraded": bool(state.get("degraded")),
+            # Distinct from `degraded`, which is about the sink we ended up
+            # with. This is about records that were accepted and then lost —
+            # the failure the counters used to report as a clean zero.
+            "lossy": bool(state.get("lossy")),
         }
     return body
 

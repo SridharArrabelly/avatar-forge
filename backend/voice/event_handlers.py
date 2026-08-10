@@ -91,6 +91,10 @@ async def _send_retrieval_cue(handler, raw) -> None:
     if not name or getattr(handler, "_retrieval_cue_sent", None) == name:
         return
     handler._retrieval_cue_sent = name
+    # The response that just dispatched a tool is the one RESPONSE_CREATED needs
+    # to recognise as unfinished. Recorded as a fact here rather than inferred
+    # later from whether the response spoke.
+    handler._tool_call_this_response = True
     # The truth has arrived, so retire the guess. In model binding a tool turn
     # produces TWO responses — the tool call, then the answer — and a surviving
     # prediction would re-announce a search on the second one, after it finished.
@@ -246,16 +250,26 @@ async def handle_event(handler, event, connection):
             # response, so there is no second RESPONSE_CREATED to reset.
             #
             # A continuation is identifiable without tracking response ids: the
-            # response that just ended named a retrieval and produced no
-            # assistant output. Anything that spoke or wrote was a finished
-            # answer, so whatever follows it is genuinely new. Read BEFORE the
-            # per-response flags below are reset -- until then they still
-            # describe the response that ended.
-            answered = getattr(handler, "_first_audio_logged", False) or getattr(
-                handler, "_first_text_logged", False
-            )
+            # response that just ended DISPATCHED A TOOL. That is the fact, and
+            # it is the only one that holds.
+            #
+            # This was first written as "the response that just ended produced
+            # no assistant output", on the reasoning that anything which spoke
+            # was a finished answer. It is not: the model often speaks a short
+            # preamble -- "let me check the records for you" -- and then calls
+            # the tool, inside the same response. Those turns looked answered,
+            # so the cue was torn down and the dots came back, which is exactly
+            # the case that kept showing on minutes questions after the first
+            # fix. Speaking says nothing about whether a turn is finished.
+            #
+            # Gated on model binding because the split is a model-binding
+            # phenomenon: the Foundry agent runs its tools inside a single
+            # response, so agent binding has no continuation to carry and must
+            # keep its existing behaviour.
+            dispatched = getattr(handler, "_tool_call_this_response", False)
+            continuing = dispatched and getattr(handler, "model_binding", False)
             active_tool = (
-                None if answered else getattr(handler, "_retrieval_cue_sent", None)
+                getattr(handler, "_retrieval_cue_sent", None) if continuing else None
             )
 
             handler._response_active = True
@@ -263,6 +277,9 @@ async def handle_event(handler, event, connection):
             handler._first_audio_logged = False
             handler._first_video_logged = False
             handler._first_text_logged = False
+            # Per-response, so it describes the response that just ended and
+            # nothing earlier.
+            handler._tool_call_this_response = False
             # Carry a still-running retrieval across the continuation; a
             # genuinely new turn clears it so the cue can fire fresh. The new
             # question also clears it on arrival, which covers the case where a
@@ -390,6 +407,7 @@ async def handle_event(handler, event, connection):
                 # there -- and a cue surviving into an unrelated question is the
                 # false retrieval claim this whole mechanism exists to prevent.
                 handler._retrieval_cue_sent = None
+                handler._tool_call_this_response = False
                 await handler.send_message({
                     "type": "transcript_done",
                     "role": "user",
