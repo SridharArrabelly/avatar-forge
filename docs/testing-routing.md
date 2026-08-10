@@ -162,13 +162,13 @@ more hosts.
 Not a case of *no* sources — the old list returned the FY-25 results
 **PDFs** (`mtn.com` presentation deck, JSE SENS announcements). The figure was
 in them, but as slide/PDF layout, which is why runs disagreed
-(160bn / 177.8bn / 210.8bn / 218bn — see the known-issue note at the end of
-this file). `mtn-investor.com` — MTN's own IR site, and the host that was
-missing — serves the same numbers as **HTML tables**
+(160bn / 177.8bn / 210.8bn / 218bn). `mtn-investor.com` — MTN's own IR site, and
+the host that was missing — serves the same numbers as **HTML tables**
 (`key-financial-tables.php`, `summary-group-income-statement.php`).
-Expect now: those pages in the result set, and *the same figure across
-repeated runs*. Consistency is the test; a single plausible answer proves
-nothing.
+Expect now: those pages in the result set, and **R226.7bn** consistently.
+**Measured 10 Aug 2026: 3/3 runs returned R226.7bn**, which reconciles to MTN's
+published statement (188 001 Rm restated FY2024, +20.6%). Consistency *and*
+accuracy — see the model-mode baseline for the full reconciliation.
 
 **R3. How does MTN's return on equity compare with Vodacom and Airtel Africa?**
 
@@ -292,7 +292,93 @@ Notes:
 
 ---
 
+# Model-mode baseline (`gpt-realtime-2`)
+
+Recorded 10 Aug 2026. **A standalone baseline, not a comparison** with the agent
+numbers below — those were taken on a 10-question set that no longer exists, and
+the two bindings differ by more than the model (see the caveat at the end).
+
+```
+uv run python scripts/bench_routing_model.py --runs 3 --tier core
+```
+
+| | |
+| --- | --- |
+| model | `gpt-realtime-2` (`VOICELIVE_MODEL` default; **not** 2.1) |
+| questions | core 15 × 3 rounds = **45 turns**, catalogue injected |
+| web tool | **LIVE** Web IQ, 21-host allow-list (post-#124) |
+| **routing** | **45/45** (15/15 every round, all three groups) |
+| **first token** | **2.97s** avg (n=45, 0 missing) — the perceived-latency figure |
+| completion | 3.40s avg |
+
+Round-to-round variance was negligible: first token 2.9 / 3.0 / 3.0s,
+completion 3.4s in all three.
+
+## Answer quality
+
+Scanned all 45 answers for the failure modes this file tracks:
+
+| failure mode | occurrences |
+| --- | --- |
+| deferral without firing a tool (*"I need to check…"*) | **0** |
+| rand/cents confusion on share price | **0** |
+| empty or non-answer | **0** (shortest 34 chars, mean 250) |
+| literal `Headline:` prefix | 1 of 45 |
+
+Notable answers, each stable across all three rounds:
+
+- **Group CFO** — "Tsholofelo Molefe" every time.
+- **Attendees (Q3)** — full named list (Board Chair Mcebisi Jonas, Group CEO
+  Ralph Mupita, CCXO, CMO, CTO, Regional VPs, Heads of Customer Service from the
+  top five OpCos, Company Secretary). This is the question whose deferral bug
+  started the routing rewrite; it is answered, not deferred.
+- **Share price** — R205.50, and *volunteered* that the quote was from 7 August
+  and may be delayed rather than presenting it as live. Honest about staleness
+  without being asked.
+
+## FY2025 revenue — the open issue is closed
+
+All three rounds returned **R226.7 billion**, and the figure is not merely
+consistent, it is **correct**. From MTN's own income statement
+(`mtn-investor.com`, now allow-listed): restated FY2024 revenue **188 001 Rm** at
+**+20.6%** reported → **226 729 Rm**.
+
+The previously recorded spread (160 / 177.8 / 210.8 / **218**bn) turns out not to
+have been hallucination at all — it was the **wrong line of the right table**:
+
+| figure | what it actually is |
+| --- | --- |
+| 177.8bn | FY2024 **service** revenue (177 756 Rm) — wrong year *and* wrong line |
+| 218bn | FY2025 **service** revenue (177 756 × 1.229 = 218 462 Rm) — right year, wrong line |
+| **226.7bn** | FY2025 **total** revenue — the answer to the question asked |
+
+That is exactly the "service vs total revenue, page formatting" diagnosis
+recorded below, confirmed. The old allow-list could only reach these numbers
+through FY-25 **PDFs** (slide deck, SENS announcements); `mtn-investor.com`
+publishes them as an **HTML table**, and the model picks the right row from it.
+
+## Caveats
+
+- **Latency here is not a model-vs-model result.** Agent mode calls **hosted**
+  tools server-side; model mode calls **in-process** tools over the Web IQ REST
+  API. A delta measures the whole path, not the model.
+- `first token` is the perceived-latency proxy. Never quote `completion`
+  (3.40s) as time-to-first-word.
+- Single run of `n=3`, one region, one time of day.
+- Routing is **saturated** at 45/45 on the core tier — it can now only detect a
+  regression, not an improvement. Use `--tier boundary` to discriminate.
+- `.env` overrides everything (`load_dotenv(override=True)`). This run needed
+  `WEBIQ_ALLOWED_DOMAINS` refreshed to the 21-host list first — a stale local
+  `.env` silently benches the *old* allow-list.
+
+---
+
 # Model shootout results (agent mode, for the record)
+
+> **These predate the current question set.** They were run on **10** questions;
+> the core tier is now 15 (plus 6 boundary). Treat them as a record of the
+> agent-mode model choice, **not** as a baseline comparable with the model-mode
+> numbers above.
 
 All runs: same 10 questions, `n=3` (30 turns total), catalogue injected,
 `reasoning.effort=none` unless noted. Routing score = turns that fired the
@@ -342,17 +428,15 @@ count=8.** It eliminates the "I need to check" deferrals that motivated this wor
 is a strong perfectly-routing fallback; `gpt-5.4-mini` is fastest but still
 slips into the deferral failure mode.
 
-> **Known open issue (not model/prompt):** FY2025 revenue is inconsistent
-> across runs/models (160bn / 177.8bn / 210.8bn / 218bn). This is a
-> web-grounding / source-parsing gap on the allow-listed financial pages
-> (service vs total revenue, page formatting), same category as the
-> board-of-directors-as-an-image gap on mtn.com/leadership. Routing is
-> correct; the fix is Azure-side source coverage, not the prompt.
+> **Known open issue (not model/prompt) — RESOLVED 10 Aug 2026.** FY2025 revenue
+> was inconsistent across runs/models (160bn / 177.8bn / 210.8bn / 218bn). The
+> diagnosis recorded here — a web-grounding / source-parsing gap on the
+> allow-listed financial pages (service vs total revenue, page formatting),
+> routing being correct and the fix being Azure-side source coverage — held
+> exactly. Adding `mtn-investor.com` (PR #124) gave the model an HTML income
+> statement instead of only PDFs, and model mode now returns **R226.7bn** on all
+> three runs, matching MTN's published figure. The old numbers were the wrong
+> *line* of the right table, not invention. See the model-mode baseline above.
 >
-> **Update — allow-list widened (PR #124).** That diagnosis held. The old list
-> could reach the figure only through FY-25 **PDFs**; `mtn-investor.com`, which
-> publishes the same numbers as HTML tables, was blocked by the allow-list. It
-> is now included. This is **expected to** resolve the inconsistency and has
-> **not yet been re-measured** — the bench proved the source is now retrievable,
-> not that the spoken figure is stable. Re-run R2 above several times and
-> compare; leave this note open until it is.
+> Still open in the same family: the board-of-directors-as-an-image gap on
+> mtn.com/leadership.
