@@ -10,6 +10,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from backend.voice.tools import (  # noqa: E402
+    WEBIQ_MAX_QUERY_CHARS,
+    _truncate_words,
     build_query,
     is_nonprod_host,
     strip_scope_operators,
@@ -138,6 +140,77 @@ check("an allowed domain whose own name is a nonprod word is kept",
 
 check("a full URL is accepted as input",
       is_nonprod_host("https://dev.sashares.co.za/mtn", ALLOWED), True)
+
+# --- numbered environments --------------------------------------------------
+# The exact-match label test admitted every one of these. `stg18326.businessday.ng`
+# is not hypothetical: it came back in a live search result while benchmarking
+# the widened allow-list, serving a real article from a staging mirror.
+print("\nis_nonprod_host: numbered and abbreviated environments")
+
+NG = ["businessday.ng", "mtn.com"]
+
+check("the numbered staging host observed live is rejected",
+      is_nonprod_host("stg18326.businessday.ng", NG), True)
+
+check("an abbreviated staging label is rejected",
+      is_nonprod_host("stg.mtn.com", NG), True)
+
+check("a numbered dev host is rejected",
+      is_nonprod_host("dev2.mtn.com", NG), True)
+
+check("a hyphen-numbered staging host is rejected",
+      is_nonprod_host("staging-01.mtn.com", NG), True)
+
+check("an underscore-numbered uat host is rejected",
+      is_nonprod_host("uat_3.mtn.com", NG), True)
+
+check("preprod is rejected",
+      is_nonprod_host("preprod.mtn.com", NG), True)
+
+# The stem is matched exactly, never by prefix — these all *start with* a marker
+# and are ordinary hosts. Prefix matching would silently drop them.
+check("'localnews' is a newspaper, not a local environment",
+      is_nonprod_host("localnews.mtn.com", NG), False)
+
+check("'testimonials' is a page, not a test environment",
+      is_nonprod_host("testimonials.mtn.com", NG), False)
+
+check("'demographics' is not a demo environment",
+      is_nonprod_host("demographics.mtn.com", NG), False)
+
+check("a purely numeric label is not an environment marker",
+      is_nonprod_host("2.mtn.com", NG), False)
+
+# --- the 1000-character Web IQ query cap ------------------------------------
+# Web IQ rejects a query over 1000 characters with HTTP 400 rather than
+# truncating it, and the allow-list shares that budget with the question.
+print("\nbuild_query: the 1000-character cap")
+
+MANY = [f"host{i:02d}.example.com" for i in range(21)]
+LONG = "MTN " * 400  # 1600 chars
+
+check("an over-long query with no domains is clamped",
+      len(build_query(LONG, [])) <= WEBIQ_MAX_QUERY_CHARS, True)
+
+built = build_query(LONG, MANY)
+check("an over-long query with domains is clamped",
+      len(built) <= WEBIQ_MAX_QUERY_CHARS, True)
+
+# The point of the trim: scope is a security boundary, so it is the question
+# that gives way. Every host must survive.
+check("every allowed host survives the trim",
+      all(f"site:{h}" in built for h in MANY), True)
+
+check("a query that already fits is untouched",
+      build_query("MTN CFO", ["mtn.com"]), "MTN CFO (site:mtn.com)")
+
+check("truncation prefers a word boundary",
+      _truncate_words("alpha beta gamma delta", 14), "alpha beta")
+
+# Falling back to a hard cut matters: if the only space sits near the start,
+# honouring it would throw away almost the whole question.
+check("truncation falls back to a hard cut rather than losing most of the text",
+      _truncate_words("a " + "b" * 24, 20), "a " + "b" * 18)
 
 print()
 if FAILED:

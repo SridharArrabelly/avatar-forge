@@ -211,12 +211,24 @@ startup can obtain a Web IQ token.
 >   `dev.sashares.co.za`, and Web IQ once ranked that mirror *first* for a share-price
 >   question, quoting a two-month-old figure. `search_web` drops results whose host is
 >   a strict subdomain of an allowed domain when the extra labels are all
->   non-production markers (`dev`, `staging`, `uat`, …).
+>   non-production markers (`dev`, `staging`, `uat`, …). Markers are matched on a
+>   normalised stem, so numbered environments (`stg18326`, `dev2`, `staging-01`)
+>   are caught too — a live search returned `stg18326.businessday.ng` before that
+>   was the case. Note this check is anchored to the allow-list, so **emptying the
+>   allow-list disables it entirely** rather than merely loosening it.
+> - **The allow-list and the question share one 1000-character budget.** The
+>   operators are part of the query text, and Web IQ rejects anything longer with
+>   `HTTP 400` — it does not truncate. The 21 hosts render to 471 characters,
+>   leaving 529 for the question. `build_query()` enforces the cap by trimming the
+>   **question**, never the scope: a shorter question searches worse, but a dropped
+>   domain searches somewhere it was told not to. Adding hosts spends this budget,
+>   and the API documentation notes that `site:` operators "inherently reduce
+>   result relevance" — so keep the list as short as the boundary allows.
 >
 > This is also where model mode is structurally weaker than agent mode — though not
 > in *which* sources it may cite. Both bindings work from the same list: `main.bicep`
 > derives this allow-list from `bingAllowedDomains` by stripping each entry to its
-> bare host and de-duplicating (17 URLs → 13 hosts), so a source added for one
+> bare host and de-duplicating (25 URLs → 21 hosts), so a source added for one
 > binding is available to both. What does not survive the trip is **precision**:
 > entries in `bingAllowedDomains` are **path-scoped and boosted** (`/investors`,
 > `/mtn-shares`), and `site:` can express neither. Model mode reads whole hosts where

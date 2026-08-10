@@ -145,6 +145,29 @@ def _allowed_domains() -> list[str]:
 WEB_MAX_RESULTS = 4
 WEB_MAX_LENGTH = 800
 
+# Web IQ documents `query` as "maximum length is 1000 characters", and enforces
+# it: measured against the live endpoint this module calls, 1000 returns results
+# and 1024 returns HTTP 400 HandlerInvalidInput. There is no truncation and no
+# partial success.
+#
+# The limit is documented on the REST API, which is precisely the path taken
+# here — `search_web` POSTs to /search/web with httpx and there is no Web IQ SDK
+# in the dependency set. An SDK could only add client-side validation in front
+# of the same server-side rejection, so this is the binding constraint either
+# way.
+#
+# This is a shared budget, not a question budget. The allow-list is compiled
+# into the query text (build_query), so every allowed domain spends characters
+# the question can no longer use: the 13-host list costs 284 of the 1000, the
+# 21-host list costs 471. Without a guard an over-long query is a hard 400 that
+# reaches the user as "Web search failed" — a search that silently stops working
+# once the list or the model's phrasing grows a little.
+#
+# The same documentation adds that `site:` operators "inherently reduce result
+# relevance", which is the reason to keep the list as short as the security
+# boundary allows rather than as long as it will fit.
+WEBIQ_MAX_QUERY_CHARS = 1000
+
 WEBIQ_TIMEOUT = httpx.Timeout(connect=3.0, read=8.0, write=3.0, pool=3.0)
 
 # Cap on the startup capability probe. Generous next to WEBIQ_TIMEOUT because a
@@ -288,9 +311,32 @@ _LEFTOVERS = (
 # matches a domain *and all its subdomains*, so an allow-list of bare hosts
 # silently admits these.
 NONPROD_LABELS = frozenset(
-    {"dev", "development", "staging", "stage", "test", "testing", "uat", "qa",
-     "preview", "beta", "sandbox", "demo", "local"}
+    {"dev", "development", "staging", "stage", "stg", "test", "testing", "uat",
+     "qa", "preview", "preprod", "nonprod", "beta", "sandbox", "demo", "local"}
 )
+
+
+def _is_nonprod_label(label: str) -> bool:
+    """True when a single host label marks a non-production environment.
+
+    Matched on a normalised *stem* rather than the literal label, because real
+    deployments number their environments. The miss that prompted this was
+    ``stg18326.businessday.ng``, observed live in a search result; ``dev2``,
+    ``staging-01`` and ``uat_3`` are the same shape, and an exact-match test
+    admitted every one of them.
+
+    Separators split the label, trailing digits are dropped, and each remaining
+    stem must match a marker **exactly**. Exactly rather than by prefix, because
+    prefix matching quietly rejects real sites: ``local`` is a marker but
+    ``localnews`` is a newspaper, ``test`` is a marker but ``testimonials`` is a
+    page, and ``demo`` is a marker but ``democracy`` is a subject.
+
+    A purely numeric part contributes nothing either way, so ``staging-01`` is
+    judged on ``staging`` alone, while a bare ``2.example.com`` is left alone.
+    """
+    stems = [re.sub(r"\d+$", "", part) for part in re.split(r"[-_]", label)]
+    stems = [s for s in stems if s]
+    return bool(stems) and all(s in NONPROD_LABELS for s in stems)
 
 
 def strip_scope_operators(query: str) -> str:
@@ -350,6 +396,13 @@ def is_nonprod_host(host: str, domains: list[str]) -> bool:
     hypothetical allowed ``test.co.za`` is its own site, not a staging copy —
     and would reject legitimate subdomains such as ``senspdf.jse.co.za``, which
     carries the JSE's SENS filings.
+
+    A consequence of that anchoring: with **no** allow-list this returns False
+    for everything, including the ``dev.`` host it was written for, because there
+    is no allowed domain left to be a staging copy *of*. Opening the search to
+    the whole web therefore disables this protection outright rather than
+    weakening it — which is a reason to widen the allow-list rather than to
+    empty it.
     """
     host = host_of(host)
     if not host:
@@ -361,9 +414,19 @@ def is_nonprod_host(host: str, domains: list[str]) -> bool:
         prefix = host[: -len(allowed) - 1].split(".")
         # `www` is a production host; ignore it when judging the rest.
         extra = [p for p in prefix if p and p != "www"]
-        if extra and all(p in NONPROD_LABELS for p in extra):
+        if extra and all(_is_nonprod_label(p) for p in extra):
             return True
     return False
+
+
+def _truncate_words(text: str, limit: int) -> str:
+    """Cut `text` to `limit` characters, preferring a word boundary."""
+    if len(text) <= limit:
+        return text
+    cut = text[:limit].rstrip()
+    head, sep, _ = cut.rpartition(" ")
+    # Only honour the boundary if it does not throw away most of the query.
+    return head if sep and len(head) >= limit // 2 else cut
 
 
 def build_query(query: str, domains: list[str]) -> str:
@@ -383,10 +446,16 @@ def build_query(query: str, domains: list[str]) -> str:
 
     Any scoping the model wrote itself is stripped first, so the operators here
     are the only ones on the wire.
+
+    The result is held under ``WEBIQ_MAX_QUERY_CHARS``, because the operators and
+    the question share one budget and exceeding it is a hard HTTP 400. When the
+    two do not both fit, **the question is trimmed and the scope is kept whole**:
+    the allow-list is a security boundary, so dropping hosts from it to make room
+    would silently widen where the assistant may look — the one failure this
+    scoping exists to prevent. A shorter question searches worse; a dropped
+    domain searches somewhere it was told not to.
     """
     query = strip_scope_operators(query)
-    if not domains:
-        return query
 
     include: list[str] = []
     exclude: list[str] = []
@@ -405,7 +474,31 @@ def build_query(query: str, domains: list[str]) -> str:
     if include:
         parts.append(f"({' OR '.join(include)})")
     parts.extend(exclude)
-    return f"{query} {' '.join(parts)}" if parts else query
+    if not parts:
+        return _truncate_words(query, WEBIQ_MAX_QUERY_CHARS)
+
+    suffix = " ".join(parts)
+    budget = WEBIQ_MAX_QUERY_CHARS - len(suffix) - 1  # -1 for the joining space
+    if budget <= 0:
+        # The scope alone will not fit. Unreachable with any sane allow-list —
+        # 21 hosts cost 471 of 1000 — so this means the list has been grown far
+        # past what the API can carry, and every search is about to be scope with
+        # no question. Loud, because the symptom otherwise is uniformly useless
+        # results rather than an error.
+        logger.error(
+            "Web IQ allow-list is %d chars, at or over the %d-char query cap: "
+            "no room is left for the question. Shorten WEBIQ_ALLOWED_DOMAINS.",
+            len(suffix), WEBIQ_MAX_QUERY_CHARS,
+        )
+        return suffix[:WEBIQ_MAX_QUERY_CHARS]
+    if len(query) > budget:
+        logger.warning(
+            "search query trimmed %d->%d chars to fit the %d-char Web IQ cap "
+            "(%d scoped hosts cost %d chars)",
+            len(query), budget, WEBIQ_MAX_QUERY_CHARS,
+            len(include) + len(exclude), len(suffix),
+        )
+    return f"{_truncate_words(query, budget)} {suffix}"
 
 
 async def _get_web_client() -> httpx.AsyncClient:
