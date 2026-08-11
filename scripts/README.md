@@ -107,6 +107,12 @@ holds the routing question set and `classify()` shared by both benchmarks.
   catalogue names locally. Moving to a custom avatar means changing the last two
   **together** — `--type` does that, and is offered interactively when `--model`
   names something the catalogue does not have.
+- **There are two catalogues, and the modality picks one.** Photo avatars
+  (`Simone`, `Anika`) and video avatars (`Lisa-casual-sitting`, `Max-business`) are
+  disjoint lists, both read from the pickers in `frontend/index.html` so they cannot
+  drift from what the app offers. Validation follows the type **in effect** —
+  `--type` when given, otherwise the deployed one — so a video character is never
+  measured against the photo list.
 - **`AVATAR_TYPE` set by hand is the classic half-move.** `azd env set AVATAR_TYPE
   custom-photo` updates what the *next* deploy will impose, not what is running now,
   so the avatar keeps rendering as the old character with no error anywhere. The

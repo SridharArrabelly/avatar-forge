@@ -356,7 +356,7 @@ avatar is called "Simone" everywhere without configuring anything.
 | `AVATAR_ENABLED` | `true` | Show the avatar at all. |
 | `AVATAR_OUTPUT_MODE` | `webrtc` | `webrtc` \| `websocket`. |
 | `AVATAR_TYPE` | `standard-photo` | **Canonical selector:** `standard-video`, `standard-photo`, `custom-video`, or `custom-photo`. |
-| `AVATAR_MODEL` | `Simone` | **Canonical model id:** a standard catalogue name or the custom model provisioned in your Speech resource. |
+| `AVATAR_MODEL` | `Simone` | **Canonical model id:** a standard catalogue name or the custom model provisioned in your Speech resource. Photo and video have **separate** catalogues that do not overlap — `Simone` is a photo avatar, `Lisa-casual-sitting` is a video one — so this has to agree with `AVATAR_TYPE`. |
 | `AVATAR_BACKGROUND_IMAGE_URL` | — | Optional background image behind the avatar. |
 | `ENABLE_AVATAR_SPEAKING_STYLE` | `false` | Opt into the grayscale idle / full-color speaking treatment with a yellow speaking tint. Disabled preserves the avatar's original appearance. |
 | **`AVATAR_DISPLAY_NAME`** | *(the avatar model's name)* | **The branding knob.** Sets the bold name on the avatar stage, the name the assistant calls itself, the Teams bot name, the wake phrase and the Teams package name. Purely cosmetic — does **not** select the avatar model. **Unset it falls back to the friendly name of the *active* avatar model** (`Simone`, or `Lisa-casual-sitting` → `Lisa`), so every surface agrees without setting anything; `Avatar` only if that is empty too. Set it to override, e.g. run the `Lisa` avatar but call her `Nuru`. |
@@ -398,6 +398,16 @@ model into several variables.
 > and sets `custom-photo` (or `custom-video`, matching your current modality) when
 > you say yes. Answer no and it stops without changing anything, because the other
 > explanation for an unrecognised name is a typo.
+>
+> **Video avatars work the same way,** against their own catalogue. Photo and video
+> are two separate character lists with no overlap — `Simone` is photo-only,
+> `Lisa-casual-sitting` is video-only — so the modality in effect decides which
+> list a name is checked against. `--type` is honoured before the check, which is
+> what lets you change modality and character in one command:
+>
+> ```powershell
+> uv run python scripts/rename_avatar.py Nuru --model Lisa-casual-sitting --type standard-video
+> ```
 >
 > Both variables then reach **every** surface. Setting `AVATAR_TYPE` by hand with
 > `azd env set` alone is the trap: the azd environment moves, the running container

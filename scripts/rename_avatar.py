@@ -151,14 +151,21 @@ def project_endpoint(env: dict[str, str]) -> str:
     raise SystemExit("No Foundry project endpoint in the azd environment (PROJECT_ENDPOINT).")
 
 
-def valid_photo_characters() -> set[str]:
-    """The photo avatars Speech actually offers, read from the UI's own picker.
+def valid_characters(kind: str) -> set[str]:
+    """The characters Speech offers for a modality, read from the UI's own pickers.
 
     Parsed out of frontend/index.html rather than duplicated here, so this check
-    cannot drift from the list a user can pick in the app.
+    cannot drift from the list a user can actually pick in the app.
+
+    There are **two** lists and they do not overlap: photo avatars are stills
+    driven by vasa-1 (Anika, Simone, ...), video avatars are full-body captures
+    (Lisa-casual-sitting, Max-business, ...). Checking a video character against
+    the photo picker rejects every legitimate name, so the modality has to pick
+    the list.
     """
+    select_id = "photoAvatarName" if kind.endswith("-photo") else "avatarName"
     html = (REPO / "frontend" / "index.html").read_text(encoding="utf-8", errors="replace")
-    block = re.search(r'<select id="photoAvatarName">(.*?)</select>', html, re.S)
+    block = re.search(rf'<select id="{select_id}">(.*?)</select>', html, re.S)
     return set(re.findall(r'value="([^"]+)"', block.group(1))) if block else set()
 
 
@@ -218,8 +225,11 @@ def push_agent(env_name: str | None, overrides: dict[str, str]) -> int:
     return proc.returncode
 
 
-def resolve_custom_type(model: str, display: str, valid: set[str], current_type: str) -> str:
+def resolve_custom_type(model: str, display: str, valid: set[str], kind: str) -> str:
     """Decide what an unrecognised ``--model`` means: custom avatar, or a typo?
+
+    ``kind`` is the avatar type **in effect** -- ``--type`` when given, otherwise
+    the deployed one -- so the modality the caller declared is the modality kept.
 
     Only the prebuilt catalogue can be checked locally, so a name outside it is
     either a model trained in the caller's own Speech resource or a mistake.
@@ -231,12 +241,14 @@ def resolve_custom_type(model: str, display: str, valid: set[str], current_type:
     So ask, and on a yes return the custom type to write. Non-interactive callers
     get the old hard failure, with the flag that resolves it.
     """
-    chosen = "custom-video" if current_type.endswith("-video") else "custom-photo"
-    lead = (f"\n{model!r} is not one of the avatars Speech offers out of the box, and "
-            f"AVATAR_TYPE is {current_type!r}.\nThat combination renders nothing -- but it "
-            f"is exactly what you would expect if you\ntrained {model!r} yourself in your "
-            f"Speech resource.\n")
-    hint = (f"\nIf it was a typo, the prebuilt characters are:\n\n  {', '.join(sorted(valid))}\n\n"
+    modality = "video" if kind.endswith("-video") else "photo"
+    chosen = f"custom-{modality}"
+    lead = (f"\n{model!r} is not one of the {modality} avatars Speech offers out of the box, "
+            f"and\nAVATAR_TYPE is {kind!r}. That combination renders nothing -- but it is "
+            f"exactly\nwhat you would expect if you trained {model!r} yourself in your Speech "
+            f"resource.\n")
+    hint = (f"\nIf it was a typo, the prebuilt {modality} avatars are:\n\n  "
+            f"{', '.join(sorted(valid))}\n\n"
             f"To brand her {display!r} while keeping the current character, omit --model.\n")
 
     print(lead)
@@ -305,14 +317,14 @@ def main() -> int:
     new_type = a.type or current_type
     if a.model:
         model = a.model.strip()
-        valid = valid_photo_characters()
+        valid = valid_characters(new_type)
         unknown = bool(valid) and model not in valid
         if unknown and not new_type.startswith("custom-"):
             if a.check_only:
                 warn(f"{model!r} is not a prebuilt character and AVATAR_TYPE is "
                      f"{new_type!r}, so the avatar would not render.")
             else:
-                new_type = resolve_custom_type(model, display, valid, current_type)
+                new_type = resolve_custom_type(model, display, valid, new_type)
         if unknown and new_type.startswith("custom-"):
             warn(f"{model!r} is not a prebuilt character. This is only valid if a model\n"
                  "        of that name exists in your Speech resource.")
@@ -424,18 +436,22 @@ def main() -> int:
         ok("azd env and container app agree on every identity variable")
 
     # Standard Speech characters are catalogued; custom models are checked by Voice Live.
-    catalogue = valid_photo_characters()
+    # Photo and video have separate catalogues, so read the one matching what is
+    # deployed -- a video character measured against the photo list is a false alarm.
+    live_type = avatar_type(live_env)
+    modality = "video" if live_type.endswith("-video") else "photo"
+    catalogue = valid_characters(live_type)
     live_var = character_var(live_env)
     character = (live_env.get(live_var) or "").strip()
     if not character:
         ok("no speech character set (nothing to validate)")
     elif character in catalogue:
-        ok(f"speech character {character!r} ({live_var}) is a real prebuilt avatar")
-    elif avatar_type(live_env).startswith("custom-"):
+        ok(f"speech character {character!r} ({live_var}) is a real prebuilt {modality} avatar")
+    elif live_type.startswith("custom-"):
         ok(f"speech character {character!r} ({live_var}) is a custom model")
     else:
-        bad(f"speech character {character!r} ({live_var}) is not a prebuilt avatar and "
-            "AVATAR_TYPE is not custom -- the avatar will not render")
+        bad(f"speech character {character!r} ({live_var}) is not a prebuilt {modality} avatar "
+            f"and AVATAR_TYPE is {live_type!r} -- the avatar will not render")
         failures += 1
 
     if not uses_agent(env):
