@@ -19,13 +19,13 @@ revert the deployed image, which a bare ``azd provision`` can.
 
 Usage (from anywhere -- the repo is located from this file)::
 
-    uv run python scripts/rename_avatar.py Nuru
-    uv run python scripts/rename_avatar.py --display-name Nuru       # same thing, spelled out
-    uv run python scripts/rename_avatar.py Nuru --model Sakura       # also switch character
-    uv run python scripts/rename_avatar.py Nuru --model Nuru --type custom-photo
+    uv run python scripts/rename_avatar.py --display-name Nuru
+    uv run python scripts/rename_avatar.py --display-name Nuru --model Sakura
+    uv run python scripts/rename_avatar.py --display-name Nuru --model Nuru --type custom-photo
     uv run python scripts/rename_avatar.py --model Lisa-casual-sitting --type standard-video
     uv run python scripts/rename_avatar.py --check-only              # verify only
-    uv run python scripts/rename_avatar.py Nuru -e staging           # non-default azd env
+    uv run python scripts/rename_avatar.py --display-name Nuru -e staging   # non-default env
+    uv run python scripts/rename_avatar.py Nuru                      # shorthand for the first
 
 The persona name, the Speech character and the modality are separate knobs, one
 flag each: ``--display-name`` brands the assistant, ``--model`` selects the Speech
@@ -297,14 +297,14 @@ def resolve_custom_type(model: str, display: str | None, valid: set[str], kind: 
 def main() -> int:
     ap = argparse.ArgumentParser(description="Rename the avatar persona everywhere, then verify.")
     ap.add_argument("name", nargs="?",
-                    help='New persona name, e.g. "Nuru". The same knob as --display-name; '
-                         "omit both to leave the branding alone and move only the character "
-                         "or modality.")
+                    help="Shorthand for --display-name, kept because it is what earlier "
+                         "versions took. Prefer the flag: three knobs read far more "
+                         "clearly with a name on each.")
     ap.add_argument("--display-name", dest="display_name", metavar="NAME",
-                    help="The persona name, spelled out. Identical to the positional "
-                         "argument, and easier to read next to --model and --type: "
-                         "this brands the assistant, --model picks the Speech character, "
-                         "--type picks the modality.")
+                    help='The persona name, e.g. "Nuru" -- what the assistant is called. '
+                         "One of three independent knobs: this brands her, --model picks "
+                         "the Speech character, --type picks the modality. All optional; "
+                         "omit this to leave branding exactly as deployed.")
     ap.add_argument("--model", help="Also switch the Speech character (validated against "
                                     "the catalogue for the modality in effect); omit to "
                                     "keep the current one")

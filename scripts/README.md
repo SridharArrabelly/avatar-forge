@@ -112,9 +112,11 @@ holds the routing question set and `classify()` shared by both benchmarks.
   quietly unpin branding someone set earlier. With nothing pinned, the persona name
   falls back to the model with its suffixes stripped (`Lisa-casual-sitting` →
   `Lisa`), which is the resolver the app itself uses — so the name the script
-  verifies is the name the app will show. The positional form (`rename_avatar.py
-  Nuru`) is the same knob as `--display-name`; passing both with different values is
-  refused, and a run that would change nothing at all points you at `--check-only`.
+  verifies is the name the app will show. The bare positional form
+  (`rename_avatar.py Nuru`) is shorthand for `--display-name` and still works, but
+  the flag is worth preferring: `Nuru --model Nuru --type custom-photo` gives no
+  clue which `Nuru` is which. Passing both with different values is refused, and a
+  run that would change nothing at all points you at `--check-only`.
 - **There are two catalogues, and the modality picks one.** Photo avatars
   (`Simone`, `Anika`) and video avatars (`Lisa-casual-sitting`, `Max-business`) are
   disjoint lists, both read from the pickers in `frontend/index.html` so they cannot
