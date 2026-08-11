@@ -468,6 +468,13 @@ def check_audit(cfg: dict[str, str]) -> list[CheckResult]:
     sink = cfg.get("AUDIT_SINK", "").strip().lower() or "cosmos"
     fallback = cfg.get("AUDIT_SINK_FALLBACK", "").strip().lower() or "error"
     results = [CheckResult("Audit trail", True, f"on — sink={sink}, fallback={fallback}")]
+
+    # Checked before the sink short-circuit below on purpose: the template gates
+    # the VNet on enableAudit alone, not on the sink, so a non-Cosmos sink still
+    # gets the environment replaced. Skipping this here would let that happen
+    # with no warning and no address-space validation.
+    results.extend(check_private_networking(cfg))
+
     if sink != "cosmos":
         return results
 
@@ -498,8 +505,16 @@ def check_audit(cfg: dict[str, str]) -> list[CheckResult]:
             )
         )
 
-    results.extend(check_private_networking(cfg))
     return results
+
+
+# Deliberately narrower than the truthy set used elsewhere in this file: the
+# template gates on toLower(x) == 'true', and a script that disagreed with the
+# template about whether the flag is on would report a private deployment while
+# ARM built a public one — and then postprovision would fail a deploy that is
+# perfectly healthy. The two must mean the same thing.
+def _is_true(value: str) -> bool:
+    return value.strip().lower() == "true"
 
 
 def check_private_networking(cfg: dict[str, str]) -> list[CheckResult]:
@@ -517,11 +532,39 @@ def check_private_networking(cfg: dict[str, str]) -> list[CheckResult]:
     deployment should hear that before the deploy fails, not after.
     """
     raw = cfg.get("ENABLE_PRIVATE_NETWORKING", "").strip()
-    if raw.lower() not in ("1", "true", "yes", "on"):
+    if not raw or raw.lower() == "false":
         return []
 
-    prefix = cfg.get("VNET_ADDRESS_PREFIX", "").strip() or "10.100.0.0/16"
+    if not _is_true(raw):
+        # 'yes', '1' and 'on' read as on to a human and as off to the template.
+        # Saying so here is the difference between a one-line fix and a deploy
+        # that provisions the wrong shape and fails a check downstream.
+        return [
+            CheckResult(
+                "Private networking",
+                False,
+                f"ENABLE_PRIVATE_NETWORKING={raw!r} is neither 'true' nor 'false', so the "
+                "template will treat it as off",
+                fix="        azd env set ENABLE_PRIVATE_NETWORKING true",
+            )
+        ]
+
     results: list[CheckResult] = []
+
+    if not _is_true(cfg.get("ENABLE_AUDIT", "")):
+        results.append(
+            CheckResult(
+                "Private networking",
+                False,
+                "ENABLE_PRIVATE_NETWORKING is on but ENABLE_AUDIT is not 'true'. There is no "
+                "Cosmos account to reach privately, so the VNet would be created for nothing",
+                fix="        azd env set ENABLE_AUDIT true\n"
+                    "        (or turn private networking back off)",
+            )
+        )
+        return results
+
+    prefix = cfg.get("VNET_ADDRESS_PREFIX", "").strip() or "10.100.0.0/16"
 
     try:
         network = ipaddress.ip_network(prefix, strict=True)

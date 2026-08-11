@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.43.8.12551",
-      "templateHash": "13867479404912732804"
+      "templateHash": "445266705228614939"
     }
   },
   "parameters": {
@@ -417,6 +417,10 @@
     "enablePrivateNetworking": {
       "type": "string",
       "defaultValue": "false",
+      "allowedValues": [
+        "true",
+        "false"
+      ],
       "metadata": {
         "description": "Route the app to the audit store over a private endpoint (\"true\"/\"false\"). Requires enableAudit=\"true\". Creates a VNet and injects the Container Apps environment into it, so an existing environment is replaced and its default FQDN changes."
       }

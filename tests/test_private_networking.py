@@ -203,7 +203,11 @@ import preflight  # noqa: E402
 
 def _pn(prefix: str) -> list:
     return preflight.check_private_networking(
-        {"ENABLE_PRIVATE_NETWORKING": "true", "VNET_ADDRESS_PREFIX": prefix}
+        {
+            "ENABLE_PRIVATE_NETWORKING": "true",
+            "ENABLE_AUDIT": "true",
+            "VNET_ADDRESS_PREFIX": prefix,
+        }
     )
 
 check("the flag off means nothing to validate", preflight.check_private_networking({}) == [])
@@ -220,6 +224,52 @@ check(
 check(
     "an operator is warned that the environment cannot be converted in place",
     any("in place" in r.detail for r in _pn("10.100.0.0/16")),
+)
+
+print("\npreflight agrees with the template about what 'on' means")
+# The template gates on toLower(x) == 'true'. A script that read '1'/'yes'/'on'
+# as enabled would announce a private deployment while ARM built a public one,
+# and postprovision would then fail a deploy that is perfectly healthy.
+GATE = nested(TEMPLATE, "resources")["variables"]["privateNetworkingEnabled"]
+gate_expr = json.dumps(GATE)
+check(
+    "the template's gate is an exact 'true' comparison",
+    "toLower(parameters('enablePrivateNetworking')), 'true'" in gate_expr,
+)
+check(
+    "the flag is constrained to true/false so a bad spelling fails loudly",
+    TEMPLATE["parameters"]["enablePrivateNetworking"]["allowedValues"] == ["true", "false"],
+)
+for spelling in ("1", "yes", "on", "TRUE "):
+    results = preflight.check_private_networking(
+        {"ENABLE_PRIVATE_NETWORKING": spelling, "ENABLE_AUDIT": "true"}
+    )
+    treated_on = bool(results) and all(r.ok for r in results)
+    template_on = spelling.strip().lower() == "true"
+    check(
+        f"preflight and the template agree on ENABLE_PRIVATE_NETWORKING={spelling!r}",
+        treated_on == template_on,
+    )
+check(
+    "an ambiguous spelling is reported rather than silently ignored",
+    not preflight.check_private_networking(
+        {"ENABLE_PRIVATE_NETWORKING": "1", "ENABLE_AUDIT": "true"}
+    )[0].ok,
+)
+check(
+    "private networking without the audit trail is caught before ARM",
+    not preflight.check_private_networking(
+        {"ENABLE_PRIVATE_NETWORKING": "true", "ENABLE_AUDIT": "false"}
+    )[0].ok,
+)
+check(
+    "a non-Cosmos sink still gets the VNet warning, because the template ignores the sink",
+    any(
+        "in place" in r.detail
+        for r in preflight.check_audit(
+            {"ENABLE_AUDIT": "true", "AUDIT_SINK": "file", "ENABLE_PRIVATE_NETWORKING": "true"}
+        )
+    ),
 )
 
 print()

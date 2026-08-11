@@ -499,8 +499,16 @@ azd provision
 
 The side-by-side route costs a second environment for as long as both are up
 (see the cost note below) and is worth it: it is the only version where a
-mistake is not also an outage. Whichever you pick, the audit data itself is
-unaffected — the Cosmos account is a separate resource and is not recreated.
+mistake is not also an outage.
+
+> [!CAUTION]
+> **The side-by-side route starts a new, empty audit store.** The Cosmos account
+> name is derived from the azd environment name, so `azd env new` produces a
+> different account in a different resource group — the new deployment's trail
+> begins at zero and every existing transcript stays behind in the old one.
+> Deleting the old environment deletes that history with it. Export or retain
+> what you need **before** tearing the old environment down, or accept the split
+> deliberately. The in-place route keeps the same account and is unaffected.
 
 Three things are worth being explicit about:
 

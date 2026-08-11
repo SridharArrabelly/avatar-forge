@@ -144,8 +144,13 @@ def main() -> int:
     problems: list[str] = []
     warnings: list[str] = []
     network = out.strip()
+    # Must mirror the template's gate exactly (toLower(x) == 'true'), not the
+    # looser truthy set above. If this said "on" while ARM built the public
+    # shape, the missing-endpoint branch below would fail a deployment that is
+    # entirely healthy — and tell the operator to re-run a provision that can
+    # never satisfy it.
     private_networking = (
-        os.getenv("ENABLE_PRIVATE_NETWORKING", "").strip().lower() in TRUTHY
+        os.getenv("ENABLE_PRIVATE_NETWORKING", "").strip().lower() == "true"
     )
 
     if private_networking:

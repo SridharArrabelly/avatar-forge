@@ -248,6 +248,7 @@ param enableAudit string = 'false'
 @description('Days each audit record is retained, written as a per-item Cosmos TTL.')
 param auditRetentionDays string = '365'
 @description('Route the app to the audit store over a private endpoint ("true"/"false"). Requires enableAudit="true". Creates a VNet and injects the Container Apps environment into it, so an existing environment is replaced and its default FQDN changes.')
+@allowed([ 'true', 'false' ])
 param enablePrivateNetworking string = 'false'
 @description('Address space of the virtual network created for private networking. Must be a /22 or larger: the template carves out a /23 for the app subnet and a /24 for private endpoints.')
 param vnetAddressPrefix string = '10.100.0.0/16'
