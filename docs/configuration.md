@@ -390,7 +390,7 @@ model into several variables.
 > render.
 >
 > ```powershell
-> uv run python scripts/rename_avatar.py Nuru --model Nuru --type custom-photo
+> uv run python scripts/rename_avatar.py --display-name Nuru --model Nuru --type custom-photo
 > ```
 >
 > `--type` is optional. Leave it out and the script notices that `Nuru` is not a
@@ -406,7 +406,7 @@ model into several variables.
 > what lets you change modality and character in one command:
 >
 > ```powershell
-> uv run python scripts/rename_avatar.py Nuru --model Lisa-casual-sitting --type standard-video
+> uv run python scripts/rename_avatar.py --display-name Nuru --model Lisa-casual-sitting --type standard-video
 > ```
 >
 > Both variables then reach **every** surface. Setting `AVATAR_TYPE` by hand with
@@ -418,8 +418,7 @@ model into several variables.
 > all three have to move together, so there is one command for it:
 >
 > ```powershell
-> uv run python scripts/rename_avatar.py Nuru
-> uv run python scripts/rename_avatar.py --display-name Nuru   # same thing, spelled out
+> uv run python scripts/rename_avatar.py --display-name Nuru
 > uv run python scripts/rename_avatar.py --check-only          # verify, change nothing
 > ```
 >
@@ -442,9 +441,11 @@ model into several variables.
 > Omit the name and `AVATAR_DISPLAY_NAME` is not written at all. If it was never set,
 > the persona name is derived from the model with its suffixes stripped
 > (`Lisa-casual-sitting` → `Lisa`) — the same rule the running app applies, so the
-> name the script verifies is the name the app will show. The positional form
-> (`rename_avatar.py Nuru`) still works and means the same thing as `--display-name`;
-> passing both with different values is refused rather than silently resolved.
+> name the script verifies is the name the app will show. The bare positional form
+> (`rename_avatar.py Nuru`) is shorthand for `--display-name` and still works, but
+> prefer the flag: `Nuru --model Nuru --type custom-photo` gives no clue which
+> `Nuru` is which, while `--display-name Nuru --model Nuru` says it outright.
+> Passing both with different values is refused rather than silently resolved.
 >
 > The script validates standard catalogue models locally. Custom models are checked
 > by Voice Live against your Speech resource.
