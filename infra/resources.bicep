@@ -120,6 +120,16 @@ param auditRetentionDays string = '365'
 
 var auditEnabled = toLower(enableAudit) == 'true'
 
+// ───────── private networking (#122) ─────────
+@description('Route the app to the audit store over a private endpoint ("true"/"false"). Lets the Cosmos account run with public network access disabled, which an org policy sweep enforces anyway. Adds a VNet, so it is a create-time decision for the Container Apps environment.')
+param enablePrivateNetworking string = 'false'
+@description('Address space of the virtual network created for private networking. Must be a /22 or larger, because the template carves out a /23 for the app subnet and a /24 for private endpoints. Must not overlap anything it will ever be peered with.')
+param vnetAddressPrefix string = '10.100.0.0/16'
+
+// Gated on auditEnabled as well: with no audit there is no Cosmos account, so a
+// VNet would buy nothing while still forcing the environment to be recreated.
+var privateNetworkingEnabled = auditEnabled && toLower(enablePrivateNetworking) == 'true'
+
 var abbrs = loadJsonContent('abbreviations.json')
 
 // ───────── Identity ─────────
@@ -162,6 +172,23 @@ resource existingAppInsights 'Microsoft.Insights/components@2020-02-02' existing
 
 var appInsightsConnectionStringEffective = empty(existingAppInsightsName) ? appInsights.outputs.connectionString : existingAppInsights.properties.ConnectionString
 
+// ───────── Private networking (#122, conditional) ─────────
+// Deployed only when private networking is on. The Container Apps environment
+// is injected into the apps subnet and the audit store is reached through a
+// private endpoint in the other, which is what allows Cosmos to run with public
+// network access disabled instead of falling over when policy disables it.
+module network 'modules/network.bicep' = if (privateNetworkingEnabled) {
+  name: 'network'
+  params: {
+    name: '${abbrs.virtualNetwork}-${environmentName}-${resourceToken}'
+    location: location
+    tags: tags
+    addressPrefix: vnetAddressPrefix
+    appsSubnetPrefix: cidrSubnet(vnetAddressPrefix, 23, 0)
+    privateEndpointSubnetPrefix: cidrSubnet(vnetAddressPrefix, 24, 2)
+  }
+}
+
 // ───────── Container infrastructure ─────────
 module acr 'modules/containerRegistry.bicep' = {
   name: 'acr'
@@ -181,6 +208,7 @@ module containerAppsEnv 'modules/containerAppsEnvironment.bicep' = {
     location: location
     tags: tags
     logAnalyticsWorkspaceName: logAnalytics.outputs.name
+    infrastructureSubnetId: privateNetworkingEnabled ? network!.outputs.appsSubnetId : ''
   }
 }
 
@@ -315,6 +343,22 @@ module cosmosAudit 'modules/cosmosAudit.bicep' = if (auditEnabled) {
     name: toLower('${abbrs.cosmosDb}-${environmentName}-${resourceToken}')
     location: location
     tags: tags
+    // Disabled only once a private endpoint exists to carry the traffic. This
+    // matches what the org policy sweep enforces overnight, so the deployed
+    // state stops fighting the platform.
+    publicNetworkAccess: privateNetworkingEnabled ? 'Disabled' : 'Enabled'
+  }
+}
+
+module cosmosPrivateEndpoint 'modules/privateEndpointCosmos.bicep' = if (privateNetworkingEnabled) {
+  name: 'cosmos-audit-pe'
+  params: {
+    name: '${abbrs.privateEndpoint}-${abbrs.cosmosDb}-${environmentName}-${resourceToken}'
+    location: location
+    tags: tags
+    subnetId: network!.outputs.privateEndpointSubnetId
+    virtualNetworkId: network!.outputs.id
+    cosmosAccountName: cosmosAudit!.outputs.accountName
   }
 }
 
@@ -348,6 +392,7 @@ module app 'modules/containerApp.bicep' = {
     location: location
     tags: union(tags, { 'azd-service-name': 'web' })
     containerAppsEnvironmentId: containerAppsEnv.outputs.id
+    workloadProfileName: privateNetworkingEnabled ? 'Consumption' : ''
     acrLoginServer: acr.outputs.loginServer
     uamiId: uami.outputs.id
     uamiClientId: uami.outputs.clientId
@@ -390,6 +435,12 @@ module app 'modules/containerApp.bicep' = {
     auditCosmosContainer: auditEnabled ? cosmosAudit!.outputs.containerName : ''
     auditRetentionDays: auditRetentionDays
   }
+  // The container calls warm() against Cosmos on startup and the audit sink is
+  // fail-closed, so a revision that boots before the private endpoint resolves
+  // does not start. Nothing in the parameters implies that ordering, so it is
+  // stated outright. ARM drops the dependency when the endpoint's condition is
+  // false, which is how the existing conditional modules here already behave.
+  dependsOn: [cosmosPrivateEndpoint]
 }
 
 // ───────── Outputs ─────────

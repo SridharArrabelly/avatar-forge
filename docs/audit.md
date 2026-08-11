@@ -436,6 +436,101 @@ azd up
 identity the data-plane role, and injects `AUDIT_COSMOS_ENDPOINT` into the
 container app. Nothing is created while `ENABLE_AUDIT` is `false`.
 
+### Private networking
+
+The account this creates is reachable over the public internet, guarded by Entra
+alone. That is a defensible position and it is the default, but it is not one
+every subscription will tolerate — and the way you find out is unpleasant.
+
+A management-group policy sweep set `publicNetworkAccess: Disabled` on the audit
+account overnight. The account was right to be closed; a store of full
+conversation transcripts is exactly what such a policy exists to protect. What
+was wrong was the application: it had no private route in, so the closure was
+indistinguishable from an outage. `warm()` failed, the fail-closed sink raised,
+and the container would not start — while Container Apps went on reporting the
+deployment as successful, because the revision that failed was never the one
+serving traffic ([#122](https://github.com/SridharArrabelly/avatar-forge/issues/122)).
+
+A policy exemption is not the fix. It treats the symptom, it has to be renewed,
+and it argues that this particular transcript store deserves to stay public. The
+fix is to stop needing public access:
+
+```powershell
+azd env set ENABLE_PRIVATE_NETWORKING true
+azd provision
+```
+
+That creates a VNet, injects the Container Apps environment into it, and puts a
+private endpoint on the Cosmos account with `publicNetworkAccess: Disabled` —
+the state the sweep was trying to reach anyway. `AUDIT_COSMOS_ENDPOINT` does not
+change: the account's normal hostname is CNAMEd into
+`privatelink.documents.azure.com` and simply resolves to a private address from
+inside the network, so no application code or setting moves.
+
+> [!WARNING]
+> **The environment is replaced, so the app's FQDN changes.** A Container Apps
+> environment cannot switch network type in place. Repoint anything pinned to
+> the old hostname — ACS callback URLs, the Teams app manifest, bookmarks —
+> before you rely on the new deployment. The same applies in reverse if you turn
+> it off.
+
+Because that switch is not an in-place update, do not expect `azd provision` to
+migrate a running deployment for you: Azure rejects the change rather than
+quietly recreating the environment, so provisioning fails and leaves what you
+already had intact. There are two honest ways through it:
+
+```powershell
+# Preferred: stand the private deployment up beside the current one, verify it,
+# then cut traffic over and delete the old environment.
+azd env new avatar-private
+azd env set ENABLE_AUDIT true
+azd env set ENABLE_PRIVATE_NETWORKING true
+azd up
+```
+
+```powershell
+# In place, and only where an outage is acceptable: the app and environment must
+# go before the new one can take their name.
+az containerapp delete -g <rg> -n <container-app> --yes
+az containerapp env delete -g <rg> -n <cae-name> --yes
+azd env set ENABLE_PRIVATE_NETWORKING true
+azd provision
+```
+
+The side-by-side route costs a second environment for as long as both are up
+(see the cost note below) and is worth it: it is the only version where a
+mistake is not also an outage. Whichever you pick, the audit data itself is
+unaffected — the Cosmos account is a separate resource and is not recreated.
+
+Three things are worth being explicit about:
+
+- **It is not "make everything private".** Only Cosmos gets an endpoint.
+  Outbound internet access stays open on purpose, because Web IQ
+  (`api.microsoft.ai`), Grounding with Bing and ACS have no private-link
+  offering at all — closing egress would break the agent rather than harden it.
+- **It costs about $33/month**, and the shape of that is counter-intuitive.
+  Roughly $25 is the load balancer and public IPs that Azure bills the moment an
+  environment sits in a VNet you own; the private endpoint and its DNS zone are
+  only about $8. There is no cheaper version — a VNet service endpoint filters
+  traffic *arriving at* the public endpoint, so `Disabled` takes it down too.
+- **It requires `ENABLE_AUDIT=true`.** Without the audit trail there is no Cosmos
+  account, so the flag would buy nothing while still forcing the environment to
+  be recreated. It is gated on both — which also means turning *audit* off later
+  while this stays on asks the template to pull the VNet back out of the
+  environment, the same in-place change Azure refuses to make. Turn the pair off
+  together, or delete the environment.
+
+Verification moves inside the network along with the data. Before provisioning,
+`preflight.py` rejects an address space the template cannot carve up — it needs
+a `/22` or larger for the `/23` app subnet and `/24` endpoint subnet — and warns
+that the environment cannot be converted in place. `check_audit_sink.py` still
+runs from your laptop at postprovision — it reads the control plane, which stays
+reachable, and when private networking is on it checks that an **approved
+private endpoint** exists rather than complaining that public access is off. The
+data path is proven by the app itself: `warm()` is a real round trip on every
+start, so a healthy revision *is* the test — see
+[Verifying it end to end](#verifying-it-end-to-end).
+
 ---
 
 ## Redaction
@@ -584,7 +679,7 @@ flowchart TB
 | Failure | Behaviour |
 |---|---|
 | `AUDIT_SINK=cosmos` but no endpoint configured | **Startup fails** with `AuditSinkUnavailable`, unless `AUDIT_SINK_FALLBACK` opts into one. |
-| Cosmos unreachable at startup — missing data-plane role, firewall, private-only account, `azure-cosmos` not installed (`uv sync --extra cosmos`) | **Startup fails** by default. All of these surface in `warm()`, and none of them are transient. |
+| Cosmos unreachable at startup — missing data-plane role, firewall, an account closed to the internet with no private endpoint, `azure-cosmos` not installed (`uv sync --extra cosmos`) | **Startup fails** by default. All of these surface in `warm()`, and none of them are transient. For the closed-account case the fix is [private networking](#private-networking), not an exemption. |
 | Unrecognised `AUDIT_SINK` value | **Startup fails** by default, so a typo cannot quietly become a different sink. |
 | Sink fails on write | Logged and counted in `failed`; the writer backs off briefly and continues with the next batch. Partial rejections count too — a batch of ten of which five are refused adds five, not one. |
 | A record cannot be rendered | Logged and counted in `failed`. The rest of the batch is still written. |
@@ -601,7 +696,10 @@ Cosmos account to deny public network access while the app was already running
 — the sink had been built successfully hours earlier, so nothing was degraded,
 and a shutdown reported `submitted=10 written=5 dropped=0 failed=0`. Five
 records had been refused one by one and thrown away, and every counter said the
-run was clean. `lossy` is what that looks like from the outside.
+run was clean. `lossy` is what that looks like from the outside. (That sweep is
+the one [private networking](#private-networking) exists to answer — but note
+that `lossy` is what *revealed* it, and it would reveal any other mid-flight
+loss just the same.)
 
 > [!IMPORTANT]
 > **If you opt into a fallback, understand what you are opting into.** Both
@@ -642,6 +740,33 @@ silent fallback. It writes to a throwaway `sessionId` and carries a one-hour
 
 Run it *before* setting `ENABLE_AUDIT=true`. Verifying the store first means the
 first real conversation is not also the first test of the write path.
+
+> [!NOTE]
+> **With `ENABLE_PRIVATE_NETWORKING=true` this cannot run from your laptop.** The
+> account has no public endpoint, so the script hangs and then times out — which
+> is the feature working, not a fault. (`scripts/` is not in the container image
+> either, so running it as a job is not a shortcut around that.)
+>
+> You do not need it there, because the app performs the same test on every
+> start. `warm()` is a real data-plane round trip, and the sink is fail-closed,
+> so **a revision that reaches `Running` has already proven the private path**.
+> Confirm it deliberately:
+>
+> ```powershell
+> curl https://<app-fqdn>/health
+> # {"status":"healthy", ..., "audit":{"sink":"cosmos","degraded":false,"lossy":false}}
+> ```
+>
+> `degraded: false` with `sink: cosmos` is the proof: the endpoint resolved, the
+> identity authenticated, and the container did not fall back. If the revision
+> instead fails to activate, the reason is in its logs — and note that Container
+> Apps will still report the deployment as successful, because the revision that
+> failed never took traffic.
+>
+> This does mean you lose the "verify before enabling" order on a private
+> deployment. For a first cut-over, set `AUDIT_SINK_FALLBACK=file` so a mistake
+> degrades instead of refusing to start, confirm `/health`, then set it back to
+> `error`.
 
 ### 2. Can agent tool detail be recovered?
 

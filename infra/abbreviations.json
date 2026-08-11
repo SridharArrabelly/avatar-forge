@@ -10,5 +10,7 @@
   "botService": "bot",
   "communicationServices": "acs",
   "cosmosDb": "cosmos",
+  "virtualNetwork": "vnet",
+  "privateEndpoint": "pe",
   "resourceGroup": "rg"
 }

@@ -2,6 +2,9 @@ param name string
 param location string
 param tags object
 param containerAppsEnvironmentId string
+
+@description('Workload profile to place the app on. Empty (default) omits the property entirely, which is required for environments that have no workload profiles. Set to "Consumption" when the environment is VNet-injected.')
+param workloadProfileName string = ''
 param acrLoginServer string
 param uamiId string
 param uamiClientId string
@@ -184,6 +187,13 @@ var meetingBotEnv = concat(
   !empty(browserJoinVideoEnabled) ? [ { name: 'BROWSER_JOIN_VIDEO_ENABLED', value: browserJoinVideoEnabled } ] : []
 )
 
+// Named only when the environment actually has workload profiles, which is the
+// case exclusively on the private-networking path. Omitted otherwise, so the
+// existing environment -- which has no profiles to name -- is untouched.
+var workloadProfileProperty = empty(workloadProfileName) ? {} : {
+  workloadProfileName: workloadProfileName
+}
+
 resource app 'Microsoft.App/containerApps@2024-10-02-preview' = {
   name: name
   location: location
@@ -192,7 +202,7 @@ resource app 'Microsoft.App/containerApps@2024-10-02-preview' = {
     type: 'UserAssigned'
     userAssignedIdentities: { '${uamiId}': {} }
   }
-  properties: {
+  properties: union({
     managedEnvironmentId: containerAppsEnvironmentId
     configuration: {
       activeRevisionsMode: 'Single'
@@ -279,7 +289,7 @@ resource app 'Microsoft.App/containerApps@2024-10-02-preview' = {
         ]
       }
     }
-  }
+  }, workloadProfileProperty)
 }
 
 output id string = app.id

@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.43.8.12551",
-      "templateHash": "13782540376781436422"
+      "templateHash": "13867479404912732804"
     }
   },
   "parameters": {
@@ -414,6 +414,20 @@
         "description": "Days each audit record is retained, written as a per-item Cosmos TTL."
       }
     },
+    "enablePrivateNetworking": {
+      "type": "string",
+      "defaultValue": "false",
+      "metadata": {
+        "description": "Route the app to the audit store over a private endpoint (\"true\"/\"false\"). Requires enableAudit=\"true\". Creates a VNet and injects the Container Apps environment into it, so an existing environment is replaced and its default FQDN changes."
+      }
+    },
+    "vnetAddressPrefix": {
+      "type": "string",
+      "defaultValue": "10.100.0.0/16",
+      "metadata": {
+        "description": "Address space of the virtual network created for private networking. Must be a /22 or larger: the template carves out a /23 for the app subnet and a /24 for private endpoints."
+      }
+    },
     "meetingBotEnabled": {
       "type": "string",
       "defaultValue": "false",
@@ -724,6 +738,12 @@
           },
           "auditRetentionDays": {
             "value": "[parameters('auditRetentionDays')]"
+          },
+          "enablePrivateNetworking": {
+            "value": "[parameters('enablePrivateNetworking')]"
+          },
+          "vnetAddressPrefix": {
+            "value": "[parameters('vnetAddressPrefix')]"
           }
         },
         "template": {
@@ -733,7 +753,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.43.8.12551",
-              "templateHash": "18064381251811609644"
+              "templateHash": "12342378658972628381"
             }
           },
           "parameters": {
@@ -995,6 +1015,20 @@
               "metadata": {
                 "description": "Days each audit record is retained, written as a per-item Cosmos TTL."
               }
+            },
+            "enablePrivateNetworking": {
+              "type": "string",
+              "defaultValue": "false",
+              "metadata": {
+                "description": "Route the app to the audit store over a private endpoint (\"true\"/\"false\"). Lets the Cosmos account run with public network access disabled, which an org policy sweep enforces anyway. Adds a VNet, so it is a create-time decision for the Container Apps environment."
+              }
+            },
+            "vnetAddressPrefix": {
+              "type": "string",
+              "defaultValue": "10.100.0.0/16",
+              "metadata": {
+                "description": "Address space of the virtual network created for private networking. Must be a /22 or larger, because the template carves out a /23 for the app subnet and a /24 for private endpoints. Must not overlap anything it will ever be peered with."
+              }
             }
           },
           "variables": {
@@ -1010,6 +1044,8 @@
               "botService": "bot",
               "communicationServices": "acs",
               "cosmosDb": "cosmos",
+              "virtualNetwork": "vnet",
+              "privateEndpoint": "pe",
               "resourceGroup": "rg"
             },
             "agentBinding": "[not(equals(toLower(parameters('voiceBinding')), 'model'))]",
@@ -1021,6 +1057,7 @@
             "bingAccountName": "[toLower(format('bing-{0}-{1}', variables('bingEnvSegmentClean'), parameters('resourceToken')))]",
             "acsEnabled": "[equals(toLower(parameters('enableAcs')), 'true')]",
             "auditEnabled": "[equals(toLower(parameters('enableAudit')), 'true')]",
+            "privateNetworkingEnabled": "[and(variables('auditEnabled'), equals(toLower(parameters('enablePrivateNetworking')), 'true'))]",
             "abbrs": "[variables('$fxv#0')]",
             "caEnvBudget": "[sub(sub(32, length(format('{0}-', variables('abbrs').containerApp))), length(format('-{0}', parameters('resourceToken'))))]",
             "caEnvSegment": "[take(parameters('environmentName'), variables('caEnvBudget'))]",
@@ -1260,6 +1297,153 @@
               ]
             },
             {
+              "condition": "[variables('privateNetworkingEnabled')]",
+              "type": "Microsoft.Resources/deployments",
+              "apiVersion": "2025-04-01",
+              "name": "network",
+              "properties": {
+                "expressionEvaluationOptions": {
+                  "scope": "inner"
+                },
+                "mode": "Incremental",
+                "parameters": {
+                  "name": {
+                    "value": "[format('{0}-{1}-{2}', variables('abbrs').virtualNetwork, parameters('environmentName'), parameters('resourceToken'))]"
+                  },
+                  "location": {
+                    "value": "[parameters('location')]"
+                  },
+                  "tags": {
+                    "value": "[parameters('tags')]"
+                  },
+                  "addressPrefix": {
+                    "value": "[parameters('vnetAddressPrefix')]"
+                  },
+                  "appsSubnetPrefix": {
+                    "value": "[cidrSubnet(parameters('vnetAddressPrefix'), 23, 0)]"
+                  },
+                  "privateEndpointSubnetPrefix": {
+                    "value": "[cidrSubnet(parameters('vnetAddressPrefix'), 24, 2)]"
+                  }
+                },
+                "template": {
+                  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+                  "contentVersion": "1.0.0.0",
+                  "metadata": {
+                    "_generator": {
+                      "name": "bicep",
+                      "version": "0.43.8.12551",
+                      "templateHash": "10914838922989346618"
+                    }
+                  },
+                  "parameters": {
+                    "name": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "Name of the virtual network."
+                      }
+                    },
+                    "location": {
+                      "type": "string",
+                      "defaultValue": "[resourceGroup().location]",
+                      "metadata": {
+                        "description": "Azure region for the network."
+                      }
+                    },
+                    "tags": {
+                      "type": "object",
+                      "defaultValue": {},
+                      "metadata": {
+                        "description": "Tags applied to the network."
+                      }
+                    },
+                    "addressPrefix": {
+                      "type": "string",
+                      "defaultValue": "10.100.0.0/16",
+                      "metadata": {
+                        "description": "Address space of the virtual network."
+                      }
+                    },
+                    "appsSubnetPrefix": {
+                      "type": "string",
+                      "defaultValue": "10.100.0.0/23",
+                      "metadata": {
+                        "description": "Subnet for the Container Apps environment. Workload-profile environments require /27 or larger and the subnet must be delegated to Microsoft.App/environments."
+                      }
+                    },
+                    "privateEndpointSubnetPrefix": {
+                      "type": "string",
+                      "defaultValue": "10.100.2.0/24",
+                      "metadata": {
+                        "description": "Subnet holding private endpoints."
+                      }
+                    }
+                  },
+                  "variables": {
+                    "appsSubnetName": "snet-apps",
+                    "privateEndpointSubnetName": "snet-private-endpoints"
+                  },
+                  "resources": [
+                    {
+                      "type": "Microsoft.Network/virtualNetworks",
+                      "apiVersion": "2023-11-01",
+                      "name": "[parameters('name')]",
+                      "location": "[parameters('location')]",
+                      "tags": "[parameters('tags')]",
+                      "properties": {
+                        "addressSpace": {
+                          "addressPrefixes": [
+                            "[parameters('addressPrefix')]"
+                          ]
+                        },
+                        "subnets": [
+                          {
+                            "name": "[variables('appsSubnetName')]",
+                            "properties": {
+                              "addressPrefix": "[parameters('appsSubnetPrefix')]",
+                              "delegations": [
+                                {
+                                  "name": "Microsoft.App.environments",
+                                  "properties": {
+                                    "serviceName": "Microsoft.App/environments"
+                                  }
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "name": "[variables('privateEndpointSubnetName')]",
+                            "properties": {
+                              "addressPrefix": "[parameters('privateEndpointSubnetPrefix')]",
+                              "privateEndpointNetworkPolicies": "Disabled"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ],
+                  "outputs": {
+                    "id": {
+                      "type": "string",
+                      "value": "[resourceId('Microsoft.Network/virtualNetworks', parameters('name'))]"
+                    },
+                    "name": {
+                      "type": "string",
+                      "value": "[parameters('name')]"
+                    },
+                    "appsSubnetId": {
+                      "type": "string",
+                      "value": "[reference(resourceId('Microsoft.Network/virtualNetworks', parameters('name')), '2023-11-01').subnets[0].id]"
+                    },
+                    "privateEndpointSubnetId": {
+                      "type": "string",
+                      "value": "[reference(resourceId('Microsoft.Network/virtualNetworks', parameters('name')), '2023-11-01').subnets[1].id]"
+                    }
+                  }
+                }
+              }
+            },
+            {
               "type": "Microsoft.Resources/deployments",
               "apiVersion": "2025-04-01",
               "name": "acr",
@@ -1386,7 +1570,8 @@
                   },
                   "logAnalyticsWorkspaceName": {
                     "value": "[reference(resourceId('Microsoft.Resources/deployments', 'log'), '2025-04-01').outputs.name.value]"
-                  }
+                  },
+                  "infrastructureSubnetId": "[if(variables('privateNetworkingEnabled'), createObject('value', reference(resourceId('Microsoft.Resources/deployments', 'network'), '2025-04-01').outputs.appsSubnetId.value), createObject('value', ''))]"
                 },
                 "template": {
                   "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
@@ -1395,7 +1580,7 @@
                     "_generator": {
                       "name": "bicep",
                       "version": "0.43.8.12551",
-                      "templateHash": "10715489624467055999"
+                      "templateHash": "1084080106054369484"
                     }
                   },
                   "parameters": {
@@ -1410,7 +1595,17 @@
                     },
                     "logAnalyticsWorkspaceName": {
                       "type": "string"
+                    },
+                    "infrastructureSubnetId": {
+                      "type": "string",
+                      "defaultValue": "",
+                      "metadata": {
+                        "description": "Subnet the environment is injected into. Empty (default) leaves the environment on the Azure-managed network, exactly as before. Supplying a subnet is a create-time decision: the network type of an existing environment cannot be changed in place."
+                      }
                     }
+                  },
+                  "variables": {
+                    "networkProperties": "[if(empty(parameters('infrastructureSubnetId')), createObject(), createObject('vnetConfiguration', createObject('infrastructureSubnetId', parameters('infrastructureSubnetId'), 'internal', false()), 'workloadProfiles', createArray(createObject('name', 'Consumption', 'workloadProfileType', 'Consumption'))))]"
                   },
                   "resources": [
                     {
@@ -1419,16 +1614,7 @@
                       "name": "[parameters('name')]",
                       "location": "[parameters('location')]",
                       "tags": "[parameters('tags')]",
-                      "properties": {
-                        "appLogsConfiguration": {
-                          "destination": "log-analytics",
-                          "logAnalyticsConfiguration": {
-                            "customerId": "[reference(resourceId('Microsoft.OperationalInsights/workspaces', parameters('logAnalyticsWorkspaceName')), '2023-09-01').customerId]",
-                            "sharedKey": "[listKeys(resourceId('Microsoft.OperationalInsights/workspaces', parameters('logAnalyticsWorkspaceName')), '2023-09-01').primarySharedKey]"
-                          }
-                        },
-                        "zoneRedundant": false
-                      }
+                      "properties": "[union(createObject('appLogsConfiguration', createObject('destination', 'log-analytics', 'logAnalyticsConfiguration', createObject('customerId', reference(resourceId('Microsoft.OperationalInsights/workspaces', parameters('logAnalyticsWorkspaceName')), '2023-09-01').customerId, 'sharedKey', listKeys(resourceId('Microsoft.OperationalInsights/workspaces', parameters('logAnalyticsWorkspaceName')), '2023-09-01').primarySharedKey)), 'zoneRedundant', false()), variables('networkProperties'))]"
                     }
                   ],
                   "outputs": {
@@ -1448,7 +1634,8 @@
                 }
               },
               "dependsOn": [
-                "[resourceId('Microsoft.Resources/deployments', 'log')]"
+                "[resourceId('Microsoft.Resources/deployments', 'log')]",
+                "[resourceId('Microsoft.Resources/deployments', 'network')]"
               ]
             },
             {
@@ -2549,7 +2736,8 @@
                   },
                   "tags": {
                     "value": "[parameters('tags')]"
-                  }
+                  },
+                  "publicNetworkAccess": "[if(variables('privateNetworkingEnabled'), createObject('value', 'Disabled'), createObject('value', 'Enabled'))]"
                 },
                 "template": {
                   "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
@@ -2558,7 +2746,7 @@
                     "_generator": {
                       "name": "bicep",
                       "version": "0.43.8.12551",
-                      "templateHash": "15487942644673129716"
+                      "templateHash": "12527922127032131248"
                     }
                   },
                   "parameters": {
@@ -2595,6 +2783,17 @@
                       "metadata": {
                         "description": "Container holding one document per conversation turn."
                       }
+                    },
+                    "publicNetworkAccess": {
+                      "type": "string",
+                      "defaultValue": "Enabled",
+                      "allowedValues": [
+                        "Enabled",
+                        "Disabled"
+                      ],
+                      "metadata": {
+                        "description": "\"Enabled\" (default) or \"Disabled\". Set to \"Disabled\" only when a private endpoint reaches the account, otherwise the app cannot start: warm() fails, the fail-closed audit sink raises, and the revision never becomes healthy."
+                      }
                     }
                   },
                   "resources": [
@@ -2623,7 +2822,7 @@
                             "isZoneRedundant": false
                           }
                         ],
-                        "publicNetworkAccess": "Enabled",
+                        "publicNetworkAccess": "[parameters('publicNetworkAccess')]",
                         "minimalTlsVersion": "Tls12"
                       }
                     },
@@ -2704,6 +2903,177 @@
                   }
                 }
               }
+            },
+            {
+              "condition": "[variables('privateNetworkingEnabled')]",
+              "type": "Microsoft.Resources/deployments",
+              "apiVersion": "2025-04-01",
+              "name": "cosmos-audit-pe",
+              "properties": {
+                "expressionEvaluationOptions": {
+                  "scope": "inner"
+                },
+                "mode": "Incremental",
+                "parameters": {
+                  "name": {
+                    "value": "[format('{0}-{1}-{2}-{3}', variables('abbrs').privateEndpoint, variables('abbrs').cosmosDb, parameters('environmentName'), parameters('resourceToken'))]"
+                  },
+                  "location": {
+                    "value": "[parameters('location')]"
+                  },
+                  "tags": {
+                    "value": "[parameters('tags')]"
+                  },
+                  "subnetId": {
+                    "value": "[reference(resourceId('Microsoft.Resources/deployments', 'network'), '2025-04-01').outputs.privateEndpointSubnetId.value]"
+                  },
+                  "virtualNetworkId": {
+                    "value": "[reference(resourceId('Microsoft.Resources/deployments', 'network'), '2025-04-01').outputs.id.value]"
+                  },
+                  "cosmosAccountName": {
+                    "value": "[reference(resourceId('Microsoft.Resources/deployments', 'cosmos-audit'), '2025-04-01').outputs.accountName.value]"
+                  }
+                },
+                "template": {
+                  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+                  "contentVersion": "1.0.0.0",
+                  "metadata": {
+                    "_generator": {
+                      "name": "bicep",
+                      "version": "0.43.8.12551",
+                      "templateHash": "13551355493722095493"
+                    }
+                  },
+                  "parameters": {
+                    "name": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "Name of the private endpoint."
+                      }
+                    },
+                    "location": {
+                      "type": "string",
+                      "defaultValue": "[resourceGroup().location]",
+                      "metadata": {
+                        "description": "Azure region for the endpoint."
+                      }
+                    },
+                    "tags": {
+                      "type": "object",
+                      "defaultValue": {},
+                      "metadata": {
+                        "description": "Tags applied to the endpoint."
+                      }
+                    },
+                    "subnetId": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "Subnet the endpoint is placed in. Must have private endpoint network policies disabled."
+                      }
+                    },
+                    "virtualNetworkId": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "Virtual network the private DNS zone is linked to."
+                      }
+                    },
+                    "cosmosAccountName": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "Name of the Cosmos DB account to expose privately."
+                      }
+                    }
+                  },
+                  "variables": {
+                    "privateDnsZoneName": "privatelink.documents.azure.com"
+                  },
+                  "resources": [
+                    {
+                      "type": "Microsoft.Network/privateEndpoints",
+                      "apiVersion": "2023-11-01",
+                      "name": "[parameters('name')]",
+                      "location": "[parameters('location')]",
+                      "tags": "[parameters('tags')]",
+                      "properties": {
+                        "subnet": {
+                          "id": "[parameters('subnetId')]"
+                        },
+                        "privateLinkServiceConnections": [
+                          {
+                            "name": "[format('{0}-connection', parameters('name'))]",
+                            "properties": {
+                              "privateLinkServiceId": "[resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('cosmosAccountName'))]",
+                              "groupIds": [
+                                "Sql"
+                              ]
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "type": "Microsoft.Network/privateDnsZones",
+                      "apiVersion": "2020-06-01",
+                      "name": "[variables('privateDnsZoneName')]",
+                      "location": "global",
+                      "tags": "[parameters('tags')]"
+                    },
+                    {
+                      "type": "Microsoft.Network/privateDnsZones/virtualNetworkLinks",
+                      "apiVersion": "2020-06-01",
+                      "name": "[format('{0}/{1}', variables('privateDnsZoneName'), format('{0}-link', parameters('name')))]",
+                      "location": "global",
+                      "tags": "[parameters('tags')]",
+                      "properties": {
+                        "registrationEnabled": false,
+                        "virtualNetwork": {
+                          "id": "[parameters('virtualNetworkId')]"
+                        }
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.Network/privateDnsZones', variables('privateDnsZoneName'))]"
+                      ]
+                    },
+                    {
+                      "type": "Microsoft.Network/privateEndpoints/privateDnsZoneGroups",
+                      "apiVersion": "2023-11-01",
+                      "name": "[format('{0}/{1}', parameters('name'), 'default')]",
+                      "properties": {
+                        "privateDnsZoneConfigs": [
+                          {
+                            "name": "documents",
+                            "properties": {
+                              "privateDnsZoneId": "[resourceId('Microsoft.Network/privateDnsZones', variables('privateDnsZoneName'))]"
+                            }
+                          }
+                        ]
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.Network/privateDnsZones', variables('privateDnsZoneName'))]",
+                        "[resourceId('Microsoft.Network/privateEndpoints', parameters('name'))]"
+                      ]
+                    }
+                  ],
+                  "outputs": {
+                    "id": {
+                      "type": "string",
+                      "value": "[resourceId('Microsoft.Network/privateEndpoints', parameters('name'))]"
+                    },
+                    "name": {
+                      "type": "string",
+                      "value": "[parameters('name')]"
+                    },
+                    "privateDnsZoneName": {
+                      "type": "string",
+                      "value": "[variables('privateDnsZoneName')]"
+                    }
+                  }
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Resources/deployments', 'cosmos-audit')]",
+                "[resourceId('Microsoft.Resources/deployments', 'network')]"
+              ]
             },
             {
               "condition": "[variables('auditEnabled')]",
@@ -2791,6 +3161,7 @@
                   "containerAppsEnvironmentId": {
                     "value": "[reference(resourceId('Microsoft.Resources/deployments', 'cae'), '2025-04-01').outputs.id.value]"
                   },
+                  "workloadProfileName": "[if(variables('privateNetworkingEnabled'), createObject('value', 'Consumption'), createObject('value', ''))]",
                   "acrLoginServer": {
                     "value": "[reference(resourceId('Microsoft.Resources/deployments', 'acr'), '2025-04-01').outputs.loginServer.value]"
                   },
@@ -2900,7 +3271,7 @@
                     "_generator": {
                       "name": "bicep",
                       "version": "0.43.8.12551",
-                      "templateHash": "9753749465486170982"
+                      "templateHash": "12329373112672055612"
                     }
                   },
                   "parameters": {
@@ -2915,6 +3286,13 @@
                     },
                     "containerAppsEnvironmentId": {
                       "type": "string"
+                    },
+                    "workloadProfileName": {
+                      "type": "string",
+                      "defaultValue": "",
+                      "metadata": {
+                        "description": "Workload profile to place the app on. Empty (default) omits the property entirely, which is required for environments that have no workload profiles. Set to \"Consumption\" when the environment is VNet-injected."
+                      }
                     },
                     "acrLoginServer": {
                       "type": "string"
@@ -3151,7 +3529,8 @@
                     "webIqSecrets": "[if(variables('webIqKeyed'), createArray(createObject('name', 'webiq-api-key', 'value', parameters('webIqApiKey'))), createArray())]",
                     "webIqEnv": "[concat(if(variables('webIqKeyed'), createArray(createObject('name', 'WEBIQ_API_KEY', 'secretRef', 'webiq-api-key')), createArray()), if(empty(parameters('webIqBaseUrl')), createArray(), createArray(createObject('name', 'WEBIQ_BASE_URL', 'value', parameters('webIqBaseUrl')))), if(empty(parameters('webIqAllowedDomains')), createArray(), createArray(createObject('name', 'WEBIQ_ALLOWED_DOMAINS', 'value', parameters('webIqAllowedDomains')))))]",
                     "meetingBotOn": "[equals(toLower(parameters('meetingBotEnabled')), 'true')]",
-                    "meetingBotEnv": "[concat(if(variables('meetingBotOn'), createArray(createObject('name', 'MEETING_BOT_ENABLED', 'value', 'true')), createArray()), if(not(empty(parameters('acsAudioSampleRate'))), createArray(createObject('name', 'ACS_AUDIO_SAMPLE_RATE', 'value', parameters('acsAudioSampleRate'))), createArray()), if(not(empty(parameters('acsRequireWakePhrase'))), createArray(createObject('name', 'ACS_REQUIRE_WAKE_PHRASE', 'value', parameters('acsRequireWakePhrase'))), createArray()), if(not(empty(parameters('acsAvatarVideoEnabled'))), createArray(createObject('name', 'ACS_AVATAR_VIDEO_ENABLED', 'value', parameters('acsAvatarVideoEnabled'))), createArray()), if(not(empty(parameters('browserJoinVideoEnabled'))), createArray(createObject('name', 'BROWSER_JOIN_VIDEO_ENABLED', 'value', parameters('browserJoinVideoEnabled'))), createArray()))]"
+                    "meetingBotEnv": "[concat(if(variables('meetingBotOn'), createArray(createObject('name', 'MEETING_BOT_ENABLED', 'value', 'true')), createArray()), if(not(empty(parameters('acsAudioSampleRate'))), createArray(createObject('name', 'ACS_AUDIO_SAMPLE_RATE', 'value', parameters('acsAudioSampleRate'))), createArray()), if(not(empty(parameters('acsRequireWakePhrase'))), createArray(createObject('name', 'ACS_REQUIRE_WAKE_PHRASE', 'value', parameters('acsRequireWakePhrase'))), createArray()), if(not(empty(parameters('acsAvatarVideoEnabled'))), createArray(createObject('name', 'ACS_AVATAR_VIDEO_ENABLED', 'value', parameters('acsAvatarVideoEnabled'))), createArray()), if(not(empty(parameters('browserJoinVideoEnabled'))), createArray(createObject('name', 'BROWSER_JOIN_VIDEO_ENABLED', 'value', parameters('browserJoinVideoEnabled'))), createArray()))]",
+                    "workloadProfileProperty": "[if(empty(parameters('workloadProfileName')), createObject(), createObject('workloadProfileName', parameters('workloadProfileName')))]"
                   },
                   "resources": [
                     {
@@ -3166,79 +3545,7 @@
                           "[format('{0}', parameters('uamiId'))]": {}
                         }
                       },
-                      "properties": {
-                        "managedEnvironmentId": "[parameters('containerAppsEnvironmentId')]",
-                        "configuration": {
-                          "activeRevisionsMode": "Single",
-                          "secrets": "[variables('webIqSecrets')]",
-                          "ingress": {
-                            "external": true,
-                            "targetPort": 3000,
-                            "transport": "auto",
-                            "allowInsecure": false,
-                            "corsPolicy": {
-                              "allowedOrigins": [
-                                "*"
-                              ],
-                              "allowedMethods": [
-                                "GET",
-                                "POST",
-                                "PUT",
-                                "DELETE",
-                                "OPTIONS"
-                              ],
-                              "allowedHeaders": [
-                                "*"
-                              ]
-                            }
-                          },
-                          "registries": [
-                            {
-                              "server": "[parameters('acrLoginServer')]",
-                              "identity": "[parameters('uamiId')]"
-                            }
-                          ]
-                        },
-                        "template": {
-                          "containers": [
-                            {
-                              "name": "web",
-                              "image": "[parameters('containerImage')]",
-                              "resources": {
-                                "cpu": "[json('2.0')]",
-                                "memory": "4.0Gi"
-                              },
-                              "env": "[concat(createArray(createObject('name', 'PORT', 'value', '3000'), createObject('name', 'AZURE_CLIENT_ID', 'value', parameters('uamiClientId')), createObject('name', 'DEVELOPER_MODE', 'value', parameters('developerMode')), createObject('name', 'AZURE_VOICELIVE_ENDPOINT', 'value', parameters('voiceliveEndpoint')), createObject('name', 'PROJECT_ENDPOINT', 'value', parameters('projectEndpoint')), createObject('name', 'AGENT_NAME', 'value', parameters('agentName')), createObject('name', 'AGENT_PROJECT_NAME', 'value', parameters('agentProjectName')), createObject('name', 'AGENT_MODEL', 'value', parameters('agentModel')), createObject('name', 'EMBEDDING_DEPLOYMENT', 'value', parameters('embeddingDeployment')), createObject('name', 'AZURE_SEARCH_ENDPOINT', 'value', parameters('searchEndpoint')), createObject('name', 'SEARCH_CONNECTION_NAME', 'value', parameters('searchConnectionName')), createObject('name', 'SEARCH_INDEX_NAME', 'value', parameters('searchIndexName')), createObject('name', 'VOICELIVE_VOICE', 'value', parameters('voiceLiveVoice')), createObject('name', 'BING_CONNECTION_NAME', 'value', parameters('bingConnectionName')), createObject('name', 'BING_CUSTOM_CONFIG_NAME', 'value', parameters('bingCustomConfigName')), createObject('name', 'AVATAR_TYPE', 'value', parameters('avatarType')), createObject('name', 'AVATAR_MODEL', 'value', parameters('avatarModel')), createObject('name', 'AVATAR_DISPLAY_NAME', 'value', parameters('avatarDisplayName')), createObject('name', 'AVATAR_TAGLINE', 'value', parameters('avatarTagline')), createObject('name', 'AVATAR_BACKGROUND_IMAGE_URL', 'value', parameters('avatarBackgroundImageUrl')), createObject('name', 'ENABLE_AVATAR_SPEAKING_STYLE', 'value', parameters('enableAvatarSpeakingStyle')), createObject('name', 'SR_MODEL', 'value', parameters('srModel')), createObject('name', 'RECOGNITION_LANGUAGE', 'value', parameters('recognitionLanguage')), createObject('name', 'APPLICATIONINSIGHTS_CONNECTION_STRING', 'value', parameters('appInsightsConnectionString'))), concat(variables('acsEnv'), variables('meetingBotEnv'), variables('voiceBindingEnv'), variables('webIqEnv'), variables('auditEnv')))]",
-                              "probes": [
-                                {
-                                  "type": "Liveness",
-                                  "httpGet": {
-                                    "path": "/",
-                                    "port": 3000
-                                  },
-                                  "initialDelaySeconds": 10,
-                                  "periodSeconds": 30,
-                                  "failureThreshold": 3
-                                }
-                              ]
-                            }
-                          ],
-                          "scale": {
-                            "minReplicas": 1,
-                            "maxReplicas": 3,
-                            "rules": [
-                              {
-                                "name": "http-scaler",
-                                "http": {
-                                  "metadata": {
-                                    "concurrentRequests": "10"
-                                  }
-                                }
-                              }
-                            ]
-                          }
-                        }
-                      }
+                      "properties": "[union(createObject('managedEnvironmentId', parameters('containerAppsEnvironmentId'), 'configuration', createObject('activeRevisionsMode', 'Single', 'secrets', variables('webIqSecrets'), 'ingress', createObject('external', true(), 'targetPort', 3000, 'transport', 'auto', 'allowInsecure', false(), 'corsPolicy', createObject('allowedOrigins', createArray('*'), 'allowedMethods', createArray('GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'), 'allowedHeaders', createArray('*'))), 'registries', createArray(createObject('server', parameters('acrLoginServer'), 'identity', parameters('uamiId')))), 'template', createObject('containers', createArray(createObject('name', 'web', 'image', parameters('containerImage'), 'resources', createObject('cpu', json('2.0'), 'memory', '4.0Gi'), 'env', concat(createArray(createObject('name', 'PORT', 'value', '3000'), createObject('name', 'AZURE_CLIENT_ID', 'value', parameters('uamiClientId')), createObject('name', 'DEVELOPER_MODE', 'value', parameters('developerMode')), createObject('name', 'AZURE_VOICELIVE_ENDPOINT', 'value', parameters('voiceliveEndpoint')), createObject('name', 'PROJECT_ENDPOINT', 'value', parameters('projectEndpoint')), createObject('name', 'AGENT_NAME', 'value', parameters('agentName')), createObject('name', 'AGENT_PROJECT_NAME', 'value', parameters('agentProjectName')), createObject('name', 'AGENT_MODEL', 'value', parameters('agentModel')), createObject('name', 'EMBEDDING_DEPLOYMENT', 'value', parameters('embeddingDeployment')), createObject('name', 'AZURE_SEARCH_ENDPOINT', 'value', parameters('searchEndpoint')), createObject('name', 'SEARCH_CONNECTION_NAME', 'value', parameters('searchConnectionName')), createObject('name', 'SEARCH_INDEX_NAME', 'value', parameters('searchIndexName')), createObject('name', 'VOICELIVE_VOICE', 'value', parameters('voiceLiveVoice')), createObject('name', 'BING_CONNECTION_NAME', 'value', parameters('bingConnectionName')), createObject('name', 'BING_CUSTOM_CONFIG_NAME', 'value', parameters('bingCustomConfigName')), createObject('name', 'AVATAR_TYPE', 'value', parameters('avatarType')), createObject('name', 'AVATAR_MODEL', 'value', parameters('avatarModel')), createObject('name', 'AVATAR_DISPLAY_NAME', 'value', parameters('avatarDisplayName')), createObject('name', 'AVATAR_TAGLINE', 'value', parameters('avatarTagline')), createObject('name', 'AVATAR_BACKGROUND_IMAGE_URL', 'value', parameters('avatarBackgroundImageUrl')), createObject('name', 'ENABLE_AVATAR_SPEAKING_STYLE', 'value', parameters('enableAvatarSpeakingStyle')), createObject('name', 'SR_MODEL', 'value', parameters('srModel')), createObject('name', 'RECOGNITION_LANGUAGE', 'value', parameters('recognitionLanguage')), createObject('name', 'APPLICATIONINSIGHTS_CONNECTION_STRING', 'value', parameters('appInsightsConnectionString'))), concat(variables('acsEnv'), variables('meetingBotEnv'), variables('voiceBindingEnv'), variables('webIqEnv'), variables('auditEnv'))), 'probes', createArray(createObject('type', 'Liveness', 'httpGet', createObject('path', '/', 'port', 3000), 'initialDelaySeconds', 10, 'periodSeconds', 30, 'failureThreshold', 3)))), 'scale', createObject('minReplicas', 1, 'maxReplicas', 3, 'rules', createArray(createObject('name', 'http-scaler', 'http', createObject('metadata', createObject('concurrentRequests', '10'))))))), variables('workloadProfileProperty'))]"
                     }
                   ],
                   "outputs": {
@@ -3263,6 +3570,7 @@
                 "[resourceId('Microsoft.Resources/deployments', 'appi')]",
                 "[resourceId('Microsoft.Resources/deployments', 'cae')]",
                 "[resourceId('Microsoft.Resources/deployments', 'cosmos-audit')]",
+                "[resourceId('Microsoft.Resources/deployments', 'cosmos-audit-pe')]",
                 "[resourceId('Microsoft.Resources/deployments', 'foundry')]",
                 "[resourceId('Microsoft.Resources/deployments', 'search')]",
                 "[resourceId('Microsoft.Resources/deployments', 'uami')]"

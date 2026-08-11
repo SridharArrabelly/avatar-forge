@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import ipaddress
 import json
 import os
 import re
@@ -497,6 +498,99 @@ def check_audit(cfg: dict[str, str]) -> list[CheckResult]:
             )
         )
 
+    results.extend(check_private_networking(cfg))
+    return results
+
+
+def check_private_networking(cfg: dict[str, str]) -> list[CheckResult]:
+    """Validate ENABLE_PRIVATE_NETWORKING before ARM sees it (#122).
+
+    Two things are worth catching here rather than mid-deploy. The address space
+    is one: the template carves the apps subnet out as the first ``/23`` and the
+    private endpoint subnet as the third ``/24``, so anything narrower than a
+    ``/22`` produces a subnet that does not fit, and ``cidrSubnet`` fails partway
+    through provisioning with an error that does not name the setting that
+    caused it.
+
+    The other is that this flag replaces the Container Apps environment, which
+    Azure will not do in place. An operator turning it on against a live
+    deployment should hear that before the deploy fails, not after.
+    """
+    raw = cfg.get("ENABLE_PRIVATE_NETWORKING", "").strip()
+    if raw.lower() not in ("1", "true", "yes", "on"):
+        return []
+
+    prefix = cfg.get("VNET_ADDRESS_PREFIX", "").strip() or "10.100.0.0/16"
+    results: list[CheckResult] = []
+
+    try:
+        network = ipaddress.ip_network(prefix, strict=True)
+    except ValueError as exc:
+        return [
+            CheckResult(
+                "Private networking: address space",
+                False,
+                f"VNET_ADDRESS_PREFIX={prefix!r} is not a valid CIDR block ({exc})",
+                fix="        azd env set VNET_ADDRESS_PREFIX 10.100.0.0/16",
+            )
+        ]
+
+    if network.version != 4:
+        return [
+            CheckResult(
+                "Private networking: address space",
+                False,
+                f"VNET_ADDRESS_PREFIX={prefix} is IPv6; Container Apps needs an IPv4 range",
+                fix="        azd env set VNET_ADDRESS_PREFIX 10.100.0.0/16",
+            )
+        ]
+
+    if network.prefixlen > 22:
+        return [
+            CheckResult(
+                "Private networking: address space",
+                False,
+                f"VNET_ADDRESS_PREFIX={prefix} is too small — the template needs a /23 for "
+                "the apps subnet and a /24 for private endpoints, so /22 is the minimum",
+                fix="        azd env set VNET_ADDRESS_PREFIX 10.100.0.0/16",
+            )
+        ]
+
+    # Container Apps rejects these outright: they collide with ranges reserved by
+    # the AKS layer underneath the environment, and the workload-profile
+    # environment reserves the 100.100.x blocks on top of that.
+    reserved = [
+        "169.254.0.0/16", "172.30.0.0/16", "172.31.0.0/16", "192.0.2.0/24",
+        "100.100.0.0/17", "100.100.128.0/19", "100.100.160.0/19", "100.100.192.0/19",
+    ]
+    clashes = [r for r in reserved if network.overlaps(ipaddress.ip_network(r))]
+    if clashes:
+        return [
+            CheckResult(
+                "Private networking: address space",
+                False,
+                f"VNET_ADDRESS_PREFIX={prefix} overlaps ranges Container Apps reserves "
+                f"({', '.join(clashes)})",
+                fix="        azd env set VNET_ADDRESS_PREFIX 10.100.0.0/16",
+            )
+        ]
+
+    results.append(
+        CheckResult(
+            "Private networking",
+            True,
+            f"on — Cosmos reached over a private endpoint, VNet {prefix}",
+        )
+    )
+    results.append(
+        CheckResult(
+            "Private networking: environment",
+            True,
+            "the Container Apps environment is VNet-injected, which Azure cannot do in "
+            "place — an existing environment must be deleted first and the app's FQDN "
+            "will change (docs/audit.md#private-networking)",
+        )
+    )
     return results
 
 
