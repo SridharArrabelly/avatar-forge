@@ -20,17 +20,26 @@ revert the deployed image, which a bare ``azd provision`` can.
 Usage (from anywhere -- the repo is located from this file)::
 
     uv run python scripts/rename_avatar.py Nuru
-    uv run python scripts/rename_avatar.py Nuru --model Sakura  # also switch character
+    uv run python scripts/rename_avatar.py --display-name Nuru       # same thing, spelled out
+    uv run python scripts/rename_avatar.py Nuru --model Sakura       # also switch character
     uv run python scripts/rename_avatar.py Nuru --model Nuru --type custom-photo
-    uv run python scripts/rename_avatar.py Simone --check-only  # verify only
-    uv run python scripts/rename_avatar.py Nuru -e staging      # non-default azd env
+    uv run python scripts/rename_avatar.py --model Lisa-casual-sitting --type standard-video
+    uv run python scripts/rename_avatar.py --check-only              # verify only
+    uv run python scripts/rename_avatar.py Nuru -e staging           # non-default azd env
 
-The persona name, the Speech character and the modality are separate knobs:
-``AVATAR_DISPLAY_NAME`` brands the assistant, ``AVATAR_MODEL`` selects the Speech
-character and ``AVATAR_TYPE`` decides whether that character is looked up in the
+The persona name, the Speech character and the modality are separate knobs, one
+flag each: ``--display-name`` brands the assistant, ``--model`` selects the Speech
+character and ``--type`` decides whether that character is looked up in the
 prebuilt catalogue or in your own Speech resource. Switching to an avatar you
 trained yourself means moving the last two together, so ``--model`` asks about
 ``--type`` rather than failing on a name it cannot find in the catalogue.
+
+All three are optional, and anything you do not pass is left alone -- so the
+character and modality can move without disturbing branding you set earlier.
+Omit the name entirely and the persona is whatever ``resolve_avatar_display_name``
+decides: ``AVATAR_DISPLAY_NAME`` when it is set, otherwise the model name with its
+suffixes stripped (``Lisa-casual-sitting`` -> ``Lisa``). That is the same rule the
+running app applies, so the name this script verifies is the name it will show.
 
 Exit 0 = every surface agrees on the new name. The last step cannot be
 automated: open the app and ask "what is your name?".
@@ -50,11 +59,15 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
-from backend.avatar_identity import AVATAR_TYPES, avatar_type  # noqa: E402
+from backend.avatar_identity import (  # noqa: E402
+    AVATAR_TYPES,
+    avatar_type,
+    resolve_avatar_display_name,
+)
 
-# The variables a rename can write. AVATAR_DISPLAY_NAME is the branding knob and
-# it outranks every other input to the resolver; the other two only move when
-# asked for, via --model and --type.
+# The variables a rename can write. Each moves only when asked for, via
+# --display-name (or the positional name), --model and --type respectively;
+# whatever is not passed is left exactly as deployed.
 #
 # Branding, character and modality are separate knobs by design. The character
 # changes only via --model, validated against the catalogue.
@@ -225,7 +238,7 @@ def push_agent(env_name: str | None, overrides: dict[str, str]) -> int:
     return proc.returncode
 
 
-def resolve_custom_type(model: str, display: str, valid: set[str], kind: str) -> str:
+def resolve_custom_type(model: str, display: str | None, valid: set[str], kind: str) -> str:
     """Decide what an unrecognised ``--model`` means: custom avatar, or a typo?
 
     ``kind`` is the avatar type **in effect** -- ``--type`` when given, otherwise
@@ -247,9 +260,14 @@ def resolve_custom_type(model: str, display: str, valid: set[str], kind: str) ->
             f"and\nAVATAR_TYPE is {kind!r}. That combination renders nothing -- but it is "
             f"exactly\nwhat you would expect if you trained {model!r} yourself in your Speech "
             f"resource.\n")
+    # Echo back only the arguments the caller actually gave, so the suggested
+    # command is one they can paste. Inventing a name here would pin branding
+    # they never asked to change.
+    name_arg = f"--display-name {display} " if display else ""
+    keep = (f"To brand her {display!r} while keeping the current character, omit --model.\n"
+            if display else "To keep the current character, omit --model.\n")
     hint = (f"\nIf it was a typo, the prebuilt {modality} avatars are:\n\n  "
-            f"{', '.join(sorted(valid))}\n\n"
-            f"To brand her {display!r} while keeping the current character, omit --model.\n")
+            f"{', '.join(sorted(valid))}\n\n" + keep)
 
     print(lead)
     reply: str | None = None
@@ -266,21 +284,30 @@ def resolve_custom_type(model: str, display: str, valid: set[str], kind: str) ->
     if reply is None:
         raise SystemExit(
             f"\nIf it is a custom avatar, say so explicitly:\n\n"
-            f"  uv run python scripts/rename_avatar.py {display} --model {model} "
+            f"  uv run python scripts/rename_avatar.py {name_arg}--model {model} "
             f"--type {chosen}\n"
             + hint
         )
     if reply.strip().lower() not in ("y", "yes"):
         raise SystemExit(hint)
-    info(f"AVATAR_TYPE {current_type!r} -> {chosen!r} (pass --type to choose the other)")
+    info(f"AVATAR_TYPE {kind!r} -> {chosen!r} (pass --type to choose the other)")
     return chosen
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="Rename the avatar persona everywhere, then verify.")
-    ap.add_argument("name", help='New persona name, e.g. "Nuru"')
-    ap.add_argument("--model", help="Also switch the Speech photo-avatar character "
-                                    "(validated); omit to keep the current one")
+    ap.add_argument("name", nargs="?",
+                    help='New persona name, e.g. "Nuru". The same knob as --display-name; '
+                         "omit both to leave the branding alone and move only the character "
+                         "or modality.")
+    ap.add_argument("--display-name", dest="display_name", metavar="NAME",
+                    help="The persona name, spelled out. Identical to the positional "
+                         "argument, and easier to read next to --model and --type: "
+                         "this brands the assistant, --model picks the Speech character, "
+                         "--type picks the modality.")
+    ap.add_argument("--model", help="Also switch the Speech character (validated against "
+                                    "the catalogue for the modality in effect); omit to "
+                                    "keep the current one")
     ap.add_argument("--type", choices=AVATAR_TYPES,
                     help="Also switch AVATAR_TYPE, e.g. custom-photo when moving to an "
                          "avatar you trained yourself. Asked for interactively when "
@@ -290,11 +317,21 @@ def main() -> int:
     ap.add_argument("--resource-group", help="Override the resource group from the azd env")
     a = ap.parse_args()
 
-    display = a.name.strip()
-    if not display:
-        raise SystemExit("The new name cannot be empty.")
+    if a.name and a.display_name and a.name.strip() != a.display_name.strip():
+        raise SystemExit(
+            f"Two different persona names: {a.name.strip()!r} positionally and "
+            f"{a.display_name.strip()!r} via --display-name. They are one knob, so "
+            "pass whichever reads better -- but only one."
+        )
+    # Absent and empty are not the same thing. Absent means "leave the branding
+    # alone"; an empty string is a typo that would blank AVATAR_DISPLAY_NAME and
+    # silently hand the persona name over to the model, so it is refused.
+    given = a.display_name if a.display_name is not None else a.name
+    if given is not None and not given.strip():
+        raise SystemExit("The new name cannot be empty. Omit it to leave the branding alone.")
+    explicit_name = given.strip() if given else None
 
-    print(f"\n{'=' * 74}\nRENAME AVATAR -> {display!r}\n{'=' * 74}")
+    print(f"\n{'=' * 74}\nRENAME AVATAR\n{'=' * 74}")
     print(f"repo: {REPO}")
 
     env = azd_env(a.env)
@@ -306,7 +343,7 @@ def main() -> int:
     # id, so "Nuru" is not a character Speech can draw unless it was trained.
     print(f"azd env: {env_name}    resource group: {rg}")
 
-    overrides = {"AVATAR_DISPLAY_NAME": display}
+    overrides = {} if explicit_name is None else {"AVATAR_DISPLAY_NAME": explicit_name}
     model = None
     char_var = write_var = character_var(env)
 
@@ -324,7 +361,7 @@ def main() -> int:
                 warn(f"{model!r} is not a prebuilt character and AVATAR_TYPE is "
                      f"{new_type!r}, so the avatar would not render.")
             else:
-                new_type = resolve_custom_type(model, display, valid, new_type)
+                new_type = resolve_custom_type(model, explicit_name, valid, new_type)
         if unknown and new_type.startswith("custom-"):
             warn(f"{model!r} is not a prebuilt character. This is only valid if a model\n"
                  "        of that name exists in your Speech resource.")
@@ -340,11 +377,37 @@ def main() -> int:
         overrides["AVATAR_TYPE"] = new_type
 
     current_model = env.get(char_var) or ""
+
+    # With no name given, the resolver decides -- AVATAR_DISPLAY_NAME when set,
+    # otherwise the model name with its suffixes stripped. Resolving against the
+    # PENDING overrides means a --model switch carries the derived name with it,
+    # so what gets verified below is what the app will actually show.
+    # --check-only writes nothing, so it has to expect the current state instead.
+    display = explicit_name or resolve_avatar_display_name(
+        env if a.check_only else {**env, **overrides})
+
+    if not overrides and not a.check_only:
+        raise SystemExit(
+            "Nothing to change: no name, --model or --type given. Add --check-only "
+            "to verify the current deployment instead."
+        )
+
     print(f"avatar type: AVATAR_TYPE={current_type!r}"
           + (f" -> {new_type!r}" if new_type != current_type else "  (unchanged)"))
     print(f"speech character: {char_var}={current_model!r}"
           + (f" -> {write_var}={model!r}" if model else "  (unchanged)"))
-    print(f"current: AVATAR_DISPLAY_NAME={env.get('AVATAR_DISPLAY_NAME')!r}\n")
+
+    # Branding is the one knob with a fallback, so show which rule produced the
+    # name -- "unchanged" hides a name that is about to move with the model.
+    was = resolve_avatar_display_name(env)
+    if explicit_name:
+        print(f"persona: AVATAR_DISPLAY_NAME={env.get('AVATAR_DISPLAY_NAME')!r} "
+              f"-> {explicit_name!r}\n")
+    elif display != was:
+        print(f"persona: {was!r} -> {display!r}  (AVATAR_DISPLAY_NAME is unset, so the "
+              f"name follows {write_var})\n")
+    else:
+        print(f"persona: {display!r}  (unchanged)\n")
 
     if not a.check_only:
         # --- 1. azd env: keeps infra-as-code truthful so `azd up` cannot revert it
@@ -395,8 +458,6 @@ def main() -> int:
     env = azd_env(a.env)
 
     # Compare the resolved name, not the raw branding variable.
-    from backend.avatar_identity import resolve_avatar_display_name
-
     def check_surface(label: str, surface_env: dict[str, str]) -> int:
         got = resolve_avatar_display_name(surface_env)
         raw = (f"AVATAR_DISPLAY_NAME={surface_env.get('AVATAR_DISPLAY_NAME', '')!r} "

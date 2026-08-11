@@ -419,7 +419,8 @@ model into several variables.
 >
 > ```powershell
 > uv run python scripts/rename_avatar.py Nuru
-> uv run python scripts/rename_avatar.py Nuru --check-only   # verify, change nothing
+> uv run python scripts/rename_avatar.py --display-name Nuru   # same thing, spelled out
+> uv run python scripts/rename_avatar.py --check-only          # verify, change nothing
 > ```
 >
 > It writes the **azd environment** (so a later `azd up` cannot revert the rename),
@@ -429,12 +430,21 @@ model into several variables.
 > In model mode the third surface does not exist, so the script skips it: there is
 > no agent, and the persona reaches Voice Live from the container app.
 >
-> `AVATAR_DISPLAY_NAME` is branding; `AVATAR_MODEL` selects the Speech character.
-> To change the character explicitly:
+> **One knob, one flag, and all of them optional.** `--display-name` brands the
+> assistant, `--model` selects the Speech character, `--type` selects the modality.
+> Whatever you do not pass is left exactly as deployed, so the character can move
+> without disturbing a name you pinned earlier:
 >
 > ```powershell
-> uv run python scripts/rename_avatar.py Nuru --model Elise
+> uv run python scripts/rename_avatar.py --model Elise
 > ```
+>
+> Omit the name and `AVATAR_DISPLAY_NAME` is not written at all. If it was never set,
+> the persona name is derived from the model with its suffixes stripped
+> (`Lisa-casual-sitting` → `Lisa`) — the same rule the running app applies, so the
+> name the script verifies is the name the app will show. The positional form
+> (`rename_avatar.py Nuru`) still works and means the same thing as `--display-name`;
+> passing both with different values is refused rather than silently resolved.
 >
 > The script validates standard catalogue models locally. Custom models are checked
 > by Voice Live against your Speech resource.

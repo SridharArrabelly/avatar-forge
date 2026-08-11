@@ -44,7 +44,7 @@ command), or individually as `uv run python scripts/<name>.py`.
 | script | when you want it |
 | --- | --- |
 | [`set_profile.py`](set_profile.py) | **Step 0.** Pick a delivery channel; records `DEPLOY_PROFILE` and prints the numbered plan. |
-| [`rename_avatar.py`](rename_avatar.py) | Rename the persona (`Simone` → `Nuru`) across the azd environment, container app and Foundry agent. `--model <character>` also changes `AVATAR_MODEL`; `--type <type>` also changes `AVATAR_TYPE`, which is what a switch to a custom avatar needs — omit it and an unrecognised `--model` is queried interactively rather than rejected. `--check-only` verifies without changing anything. Skips the agent step under `VOICE_BINDING=model`, which has no agent. |
+| [`rename_avatar.py`](rename_avatar.py) | Rename the persona (`Simone` → `Nuru`) across the azd environment, container app and Foundry agent. Three independent knobs, all optional: `--display-name` (branding), `--model <character>`, `--type <type>` — the last is what a switch to a custom avatar needs, and omitting it makes an unrecognised `--model` a question rather than a rejection. Anything you do not pass is left as deployed, so the character can move without disturbing branding. `--check-only` verifies without changing anything. Skips the agent step under `VOICE_BINDING=model`, which has no agent. |
 | [`smoke_aisearch_query.py`](smoke_aisearch_query.py) | "Did the index actually ingest?" Queries it directly. |
 | [`smoke_foundry_agent.py`](smoke_foundry_agent.py) | "Can the deployed agent answer?" One end-to-end question. |
 | [`smoke_audit_conversation.py`](smoke_audit_conversation.py) | "Can agent-mode tool detail actually be recovered?" Replays one Foundry conversation through the **production reconciler** ([`backend/audit/foundry.py`](../backend/audit/foundry.py)) and prints the query and passages the agent used server-side. Reads only. See [audit.md](../docs/audit.md). |
@@ -100,13 +100,21 @@ holds the routing question set and `classify()` shared by both benchmarks.
   `AVATAR_DISPLAY_NAME` is a legitimate configuration when the name derives from the
   active avatar model, so asserting on the raw variable would report a correct
   deployment as broken. It calls the same `resolve_avatar_display_name()` the app does.
-- **Persona, character and modality are three knobs, not one.** `AVATAR_DISPLAY_NAME`
-  controls branding; `AVATAR_MODEL` selects the Speech character; `AVATAR_TYPE`
-  decides whether that character is resolved against the prebuilt catalogue or your
-  own Speech resource. `--model` changes the character and validates standard
-  catalogue names locally. Moving to a custom avatar means changing the last two
-  **together** — `--type` does that, and is offered interactively when `--model`
-  names something the catalogue does not have.
+- **Persona, character and modality are three knobs, not one — one flag each, all
+  optional.** `--display-name` controls branding (`AVATAR_DISPLAY_NAME`); `--model`
+  selects the Speech character and validates standard catalogue names locally;
+  `--type` decides whether that character is resolved against the prebuilt
+  catalogue or your own Speech resource. Moving to a custom avatar means changing
+  the last two **together** — `--type` does that, and is offered interactively when
+  `--model` names something the catalogue does not have.
+- **What you do not pass is left as deployed.** Omit the name and
+  `AVATAR_DISPLAY_NAME` is not written, so switching character or modality cannot
+  quietly unpin branding someone set earlier. With nothing pinned, the persona name
+  falls back to the model with its suffixes stripped (`Lisa-casual-sitting` →
+  `Lisa`), which is the resolver the app itself uses — so the name the script
+  verifies is the name the app will show. The positional form (`rename_avatar.py
+  Nuru`) is the same knob as `--display-name`; passing both with different values is
+  refused, and a run that would change nothing at all points you at `--check-only`.
 - **There are two catalogues, and the modality picks one.** Photo avatars
   (`Simone`, `Anika`) and video avatars (`Lisa-casual-sitting`, `Max-business`) are
   disjoint lists, both read from the pickers in `frontend/index.html` so they cannot
