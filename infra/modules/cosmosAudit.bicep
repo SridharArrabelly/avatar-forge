@@ -26,6 +26,13 @@ param databaseName string = 'audit'
 @description('Container holding one document per conversation turn.')
 param containerName string = 'turns'
 
+@description('"Enabled" (default) or "Disabled". Set to "Disabled" only when a private endpoint reaches the account, otherwise the app cannot start: warm() fails, the fail-closed audit sink raises, and the revision never becomes healthy.')
+@allowed([
+  'Enabled'
+  'Disabled'
+])
+param publicNetworkAccess string = 'Enabled'
+
 resource account 'Microsoft.DocumentDB/databaseAccounts@2024-11-15' = {
   name: name
   location: location
@@ -52,7 +59,7 @@ resource account 'Microsoft.DocumentDB/databaseAccounts@2024-11-15' = {
         isZoneRedundant: false
       }
     ]
-    publicNetworkAccess: 'Enabled'
+    publicNetworkAccess: publicNetworkAccess
     minimalTlsVersion: 'Tls12'
   }
 }

@@ -295,6 +295,52 @@ schema, and query examples in **[audit.md](audit.md)**.
 | `AUDIT_TOOL_PAYLOAD_MAX_KB` | `32` | Cap on each captured tool payload. Retrieved passages are by far the largest field. |
 | `AUDIT_RECONCILE_AGENT_TOOLS` | `true` | In **agent** binding, recover tool name/arguments/results from the Foundry conversation after the turn has finished. Never runs on the turn path. Set `false` to skip it — records are still written, with tool detail absent and `meta.toolsPending` left `true`. |
 
+### Private networking *(provisioning only)*
+
+Transcripts are the most sensitive data this system holds, and governed
+subscriptions increasingly refuse to let a store like that sit on a public
+endpoint. These two parameters give the app a private route in, so the account
+can be closed to the internet instead of that closure becoming an outage — see
+[audit.md](audit.md#private-networking) for the full story.
+
+**You do not have to guess whether you need this.** Preflight inspects the Cosmos
+accounts that already exist in the subscription and says so: it fails the run
+outright when this environment's own account is already `Disabled` (the app
+cannot start in that state), and warns when some *other* account is, since that
+means the platform is closing them and this one is next. Run interactively it
+offers to set the flag for you. It deliberately does not scan policy assignments
+— the assignment that causes this typically lives at a management group a
+deployer cannot read, so scanning would report "no policy" on exactly the
+subscriptions that have one.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `ENABLE_PRIVATE_NETWORKING` | `false` | Bicep parameter. Creates a VNet, injects the Container Apps environment into it, and reaches Cosmos through a private endpoint with `publicNetworkAccess` set to `Disabled`. Requires `ENABLE_AUDIT=true`; on its own it does nothing, because with no Cosmos account there is nothing to reach privately. |
+| `VNET_ADDRESS_PREFIX` | `10.100.0.0/16` | Address space of that VNet. Change it if `10.100.x` collides with something you intend to peer with. The apps subnet takes the first `/23` and private endpoints the third `/24`, so this must be a **`/22` or larger**; preflight rejects anything smaller. |
+
+> [!WARNING]
+> **A Container Apps environment cannot change network type in place.** Turning
+> this on replaces the environment, which means **the app's FQDN changes**, and
+> `azd provision` will not perform that swap for you — it fails instead, leaving
+> the running deployment intact. See
+> [audit.md](audit.md#private-networking) for the two supported cut-over routes.
+> Anything pinned to the old hostname — ACS callback URLs, a Teams app manifest,
+> bookmarks — has to be repointed.
+
+It costs roughly **$33/month** on top of the current deployment: about $25 of
+that is the load balancer and public IPs that Azure bills once an environment
+sits in your own VNet, and only ~$8 is the private endpoint and DNS zone
+themselves. Outbound internet access is deliberately left open — Web IQ,
+Grounding with Bing and ACS have no private-link offering, so the app still
+needs a public egress path to work.
+
+Turn the two flags off **together**. `ENABLE_PRIVATE_NETWORKING` only takes
+effect when `ENABLE_AUDIT` is also on, so setting `ENABLE_AUDIT=false` on a
+private deployment asks the template to strip the VNet back out of the
+environment — the same in-place change Azure refuses to make, in the other
+direction. To decommission, unset both and recreate the environment, or delete
+the whole azd environment.
+
 ---
 
 ## Runtime tuning

@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import ipaddress
 import json
 import os
 import re
@@ -71,6 +72,10 @@ AVATAR_REGIONS = {
 
 BASE_PROVIDERS = ["Microsoft.CognitiveServices", "Microsoft.App", "Microsoft.Search", "Microsoft.Bing"]
 DEFAULT_AGENT_NAME = "AvatarAgent"
+
+# ENABLE_AUDIT is read loosely because backend/config.py reads it loosely. Note
+# this is NOT the set used for ENABLE_PRIVATE_NETWORKING -- see _is_true.
+_AUDIT_TRUTHY = ("1", "true", "yes", "on")
 
 
 @dataclass
@@ -454,7 +459,7 @@ def check_audit(cfg: dict[str, str]) -> list[CheckResult]:
     deploy rather than after one.
     """
     raw = cfg.get("ENABLE_AUDIT", "").strip()
-    if raw.lower() not in ("1", "true", "yes", "on"):
+    if raw.lower() not in _AUDIT_TRUTHY:
         return [
             CheckResult(
                 "Audit trail",
@@ -467,6 +472,18 @@ def check_audit(cfg: dict[str, str]) -> list[CheckResult]:
     sink = cfg.get("AUDIT_SINK", "").strip().lower() or "cosmos"
     fallback = cfg.get("AUDIT_SINK_FALLBACK", "").strip().lower() or "error"
     results = [CheckResult("Audit trail", True, f"on — sink={sink}, fallback={fallback}")]
+
+    # Ordered deliberately. The public-access probe can turn private networking ON
+    # for this run, and the address-space validation in check_private_networking
+    # must see the value we end up with, not the one this run started with.
+    results.extend(check_cosmos_public_access(cfg))
+
+    # Checked before the sink short-circuit below on purpose: the template gates
+    # the VNet on enableAudit alone, not on the sink, so a non-Cosmos sink still
+    # gets the environment replaced. Skipping this here would let that happen
+    # with no warning and no address-space validation.
+    results.extend(check_private_networking(cfg))
+
     if sink != "cosmos":
         return results
 
@@ -498,6 +515,458 @@ def check_audit(cfg: dict[str, str]) -> list[CheckResult]:
         )
 
     return results
+
+
+# Deliberately narrower than the truthy set used elsewhere in this file: the
+# template gates on toLower(x) == 'true', and a script that disagreed with the
+# template about whether the flag is on would report a private deployment while
+# ARM built a public one — and then postprovision would fail a deploy that is
+# perfectly healthy. The two must mean the same thing.
+def _is_true(value: str) -> bool:
+    return value.strip().lower() == "true"
+
+
+def check_private_networking(cfg: dict[str, str]) -> list[CheckResult]:
+    """Validate ENABLE_PRIVATE_NETWORKING before ARM sees it (#122).
+
+    Two things are worth catching here rather than mid-deploy. The address space
+    is one: the template carves the apps subnet out as the first ``/23`` and the
+    private endpoint subnet as the third ``/24``, so anything narrower than a
+    ``/22`` produces a subnet that does not fit, and ``cidrSubnet`` fails partway
+    through provisioning with an error that does not name the setting that
+    caused it.
+
+    The other is that this flag replaces the Container Apps environment, which
+    Azure will not do in place. An operator turning it on against a live
+    deployment should hear that before the deploy fails, not after.
+    """
+    raw = cfg.get("ENABLE_PRIVATE_NETWORKING", "").strip()
+    if not raw or raw.lower() == "false":
+        return []
+
+    if not _is_true(raw):
+        # 'yes', '1' and 'on' read as on to a human and as off to the template.
+        # Saying so here is the difference between a one-line fix and a deploy
+        # that provisions the wrong shape and fails a check downstream.
+        return [
+            CheckResult(
+                "Private networking",
+                False,
+                f"ENABLE_PRIVATE_NETWORKING={raw!r} is neither 'true' nor 'false', so the "
+                "template will treat it as off",
+                fix="        azd env set ENABLE_PRIVATE_NETWORKING true",
+            )
+        ]
+
+    results: list[CheckResult] = []
+
+    if not _is_true(cfg.get("ENABLE_AUDIT", "")):
+        results.append(
+            CheckResult(
+                "Private networking",
+                False,
+                "ENABLE_PRIVATE_NETWORKING is on but ENABLE_AUDIT is not 'true'. There is no "
+                "Cosmos account to reach privately, so the VNet would be created for nothing",
+                fix="        azd env set ENABLE_AUDIT true\n"
+                    "        (or turn private networking back off)",
+            )
+        )
+        return results
+
+    prefix = cfg.get("VNET_ADDRESS_PREFIX", "").strip() or "10.100.0.0/16"
+
+    try:
+        network = ipaddress.ip_network(prefix, strict=True)
+    except ValueError as exc:
+        return [
+            CheckResult(
+                "Private networking: address space",
+                False,
+                f"VNET_ADDRESS_PREFIX={prefix!r} is not a valid CIDR block ({exc})",
+                fix="        azd env set VNET_ADDRESS_PREFIX 10.100.0.0/16",
+            )
+        ]
+
+    if network.version != 4:
+        return [
+            CheckResult(
+                "Private networking: address space",
+                False,
+                f"VNET_ADDRESS_PREFIX={prefix} is IPv6; Container Apps needs an IPv4 range",
+                fix="        azd env set VNET_ADDRESS_PREFIX 10.100.0.0/16",
+            )
+        ]
+
+    if network.prefixlen > 22:
+        return [
+            CheckResult(
+                "Private networking: address space",
+                False,
+                f"VNET_ADDRESS_PREFIX={prefix} is too small — the template needs a /23 for "
+                "the apps subnet and a /24 for private endpoints, so /22 is the minimum",
+                fix="        azd env set VNET_ADDRESS_PREFIX 10.100.0.0/16",
+            )
+        ]
+
+    # Container Apps rejects these outright: they collide with ranges reserved by
+    # the AKS layer underneath the environment, and the workload-profile
+    # environment reserves the 100.100.x blocks on top of that.
+    reserved = [
+        "169.254.0.0/16", "172.30.0.0/16", "172.31.0.0/16", "192.0.2.0/24",
+        "100.100.0.0/17", "100.100.128.0/19", "100.100.160.0/19", "100.100.192.0/19",
+    ]
+    clashes = [r for r in reserved if network.overlaps(ipaddress.ip_network(r))]
+    if clashes:
+        return [
+            CheckResult(
+                "Private networking: address space",
+                False,
+                f"VNET_ADDRESS_PREFIX={prefix} overlaps ranges Container Apps reserves "
+                f"({', '.join(clashes)})",
+                fix="        azd env set VNET_ADDRESS_PREFIX 10.100.0.0/16",
+            )
+        ]
+
+    results.append(
+        CheckResult(
+            "Private networking",
+            True,
+            f"on — Cosmos reached over a private endpoint, VNet {prefix}",
+        )
+    )
+    results.extend(check_environment_network(cfg))
+    return results
+
+
+def _cosmos_accounts(subscription: str) -> list[dict] | None:
+    """Every Cosmos account in the subscription, or None if they could not be read.
+
+    None means "unknown" and never means "none exist" — the caller must not read
+    an unreadable subscription as a clean one.
+    """
+    args = [
+        "cosmosdb", "list",
+        "--query", "[].{name:name,rg:resourceGroup,pna:publicNetworkAccess}",
+        "-o", "json",
+    ]
+    if subscription:
+        args += ["--subscription", subscription]
+    code, out, _ = _run(args)
+    if code != 0 or not out.strip():
+        return None
+    try:
+        parsed = json.loads(out)
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, list) else None
+
+
+_PRIVATE_FIX = (
+    "        azd env set ENABLE_PRIVATE_NETWORKING true\n"
+    "        Deploys Cosmos behind a private endpoint the app can reach.\n"
+    "        Replaces the Container Apps environment — docs/audit.md#private-networking"
+)
+
+
+def _require_private_networking(
+    cfg: dict[str, str], reason: str, *, blocking: bool
+) -> list[CheckResult]:
+    """Report a subscription that closes Cosmos to public traffic, and offer the fix.
+
+    Interactive runs can turn the flag on here and persist it. As the preprovision
+    hook there is no TTY, so there this reports and moves on.
+
+    ``blocking`` separates proof from inference. This environment's own account
+    being Disabled is proof the app cannot start, and stopping the deploy is the
+    only useful thing to do with that. Some *other* account being Disabled is a
+    strong hint about the subscription, not proof about this deploy — a shared
+    subscription can hold a private Cosmos for reasons that have nothing to do
+    with policy — so that case warns loudly and lets the deploy through.
+    """
+    if sys.stdin.isatty():
+        print(f"{YELLOW}Cosmos public access:{RESET} {reason}.")
+        print(f"{DIM}  Private networking puts the account behind a private endpoint the app can reach,{RESET}")
+        print(f"{DIM}  so `Disabled` becomes the steady state instead of an outage. About $33/month.{RESET}")
+        print(f"{DIM}  It also replaces the Container Apps environment, which changes the app's FQDN.{RESET}")
+        try:
+            answer = input("Deploy Cosmos with private networking? [Y/n]: ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            answer = "n"
+        if answer in ("", "y", "yes"):
+            if _azd_env_set("ENABLE_PRIVATE_NETWORKING", "true"):
+                # Mutating cfg so check_private_networking, which runs next,
+                # validates the address space for the deploy we just chose.
+                cfg["ENABLE_PRIVATE_NETWORKING"] = "true"
+                print(f"{GREEN}  Saved: azd env set ENABLE_PRIVATE_NETWORKING true{RESET}\n")
+                return [
+                    CheckResult(
+                        "Cosmos public access",
+                        True,
+                        f"{reason} — private networking turned on, so Cosmos will be deployed "
+                        "behind a private endpoint",
+                    )
+                ]
+            print(f"{YELLOW}  Could not save it; set it by hand before deploying.{RESET}\n")
+
+    # A warning's fix block is never printed by main(), so the remedy has to
+    # travel in the detail or nobody sees it.
+    detail = reason if blocking else f"{reason}. Fix: azd env set ENABLE_PRIVATE_NETWORKING true"
+    return [
+        CheckResult("Cosmos public access", False, detail, fix=_PRIVATE_FIX, warn_only=not blocking)
+    ]
+
+
+# Reads deployed Cosmos accounts rather than policy assignments, on evidence: on
+# the subscription this was built against, `az policy assignment list
+# --disable-scope-strict-match` returns only the three ASC defaults and says
+# nothing about Cosmos, because the governing assignment lives at a management
+# group the deploying identity cannot read. Scanning assignments would therefore
+# report "no policy" on precisely the subscription that has one. The accounts
+# themselves are readable, and their publicNetworkAccess is the effect of the
+# policy rather than a guess at it.
+def check_cosmos_public_access(cfg: dict[str, str]) -> list[CheckResult]:
+    """Warn when the subscription is closing Cosmos accounts to public traffic (#122).
+
+    This is the check that would have prevented #122. A management-group policy
+    sweep set publicNetworkAccess=Disabled on the audit account overnight; the
+    audit sink is fail-closed, so warm() failed, the revision never became
+    healthy, and the app went down — while Container Apps still reported the
+    deploy as successful. Nothing in the deploy path mentioned any of it.
+
+    The signal a deployer can actually see is the state of Cosmos accounts that
+    already exist. If this environment's own account is already Disabled the app
+    is broken right now, which is not a prediction. If some other account in the
+    subscription is Disabled, the platform closes Cosmos accounts and this one
+    will be swept too.
+    """
+    if cfg.get("ENABLE_AUDIT", "").strip().lower() not in _AUDIT_TRUTHY:
+        return []
+    if (cfg.get("AUDIT_SINK", "").strip().lower() or "cosmos") != "cosmos":
+        return []
+
+    private_on = _is_true(cfg.get("ENABLE_PRIVATE_NETWORKING", ""))
+    accounts = _cosmos_accounts(cfg.get("AZURE_SUBSCRIPTION_ID", "").strip())
+
+    if accounts is None:
+        return [
+            CheckResult(
+                "Cosmos public access",
+                True,
+                "could not read the subscription's Cosmos accounts, so the policy posture is "
+                "unknown — see docs/audit.md#private-networking",
+                warn_only=True,
+            )
+        ]
+
+    # The account name is cosmos-${environmentName}-${resourceToken}, and
+    # resourceToken is uniqueString(subscription, env, location) — not something
+    # this script can recompute, so match on the part that is knowable.
+    env_name = cfg.get("AZURE_ENV_NAME", "").strip().lower()
+    prefix = f"cosmos-{env_name}-" if env_name else ""
+    mine = {
+        (a.get("name") or "")
+        for a in accounts
+        if prefix and (a.get("name") or "").lower().startswith(prefix)
+    }
+    disabled = [a for a in accounts if (a.get("pna") or "") == "Disabled"]
+    disabled_mine = [a for a in disabled if (a.get("name") or "") in mine]
+    disabled_other = [a for a in disabled if (a.get("name") or "") not in mine]
+
+    if disabled_mine:
+        name = disabled_mine[0].get("name") or "the audit account"
+        if private_on:
+            return [
+                CheckResult(
+                    "Cosmos public access",
+                    True,
+                    f"{name} already has public access Disabled — private networking is on, so "
+                    "this deploy gives it the private endpoint it has been missing",
+                )
+            ]
+        return _require_private_networking(
+            cfg,
+            f"{name} has public network access Disabled. The audit sink is fail-closed, so the "
+            "app cannot start until it can reach that account privately",
+            blocking=True,
+        )
+
+    if disabled_other:
+        sample = ", ".join(sorted((a.get("name") or "") for a in disabled_other)[:3])
+        more = "" if len(disabled_other) <= 3 else f", +{len(disabled_other) - 3} more"
+        observed = (
+            f"{len(disabled_other)} of {len(accounts)} Cosmos accounts in this subscription have "
+            f"public network access Disabled ({sample}{more}), so a platform policy is closing them"
+        )
+        if private_on:
+            return [
+                CheckResult(
+                    "Cosmos public access",
+                    True,
+                    f"{observed}; private networking is on, so this deploy already matches",
+                )
+            ]
+        return _require_private_networking(
+            cfg,
+            f"{observed} — this deploy's account will very likely be closed the same way",
+            blocking=False,
+        )
+
+    if private_on:
+        return [
+            CheckResult(
+                "Cosmos public access",
+                True,
+                "will be Disabled on the audit account, which the app reaches over a private "
+                "endpoint instead",
+            )
+        ]
+
+    if accounts:
+        return [
+            CheckResult(
+                "Cosmos public access",
+                True,
+                f"public on all {len(accounts)} existing Cosmos account(s) here — no sweep observed",
+            )
+        ]
+
+    return [
+        CheckResult(
+            "Cosmos public access",
+            True,
+            "no existing Cosmos accounts to compare against, so a private-link policy cannot be "
+            "ruled out — docs/audit.md#private-networking",
+            warn_only=True,
+        )
+    ]
+
+
+def _container_app_environments(subscription: str) -> list[dict] | None:
+    """Container Apps environments in the subscription, or None if unreadable."""
+    args = [
+        "containerapp", "env", "list",
+        "--query",
+        "[].{name:name,rg:resourceGroup,id:id,"
+        "subnet:properties.vnetConfiguration.infrastructureSubnetId}",
+        "-o", "json",
+    ]
+    if subscription:
+        args += ["--subscription", subscription]
+    code, out, _ = _run(args)
+    if code != 0 or not out.strip():
+        return None
+    try:
+        parsed = json.loads(out)
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, list) else None
+
+
+def _apps_in_environment(resource_group: str, environment_id: str, subscription: str) -> list[str]:
+    """Names of the container apps in one environment, for the delete commands.
+
+    The app name is truncated to fit a 32-character budget, so it cannot be
+    derived from the environment name reliably — it has to be read.
+    """
+    if not resource_group or not environment_id:
+        return []
+    args = [
+        "containerapp", "list", "-g", resource_group,
+        "--query", f"[?properties.environmentId=='{environment_id}'].name", "-o", "json",
+    ]
+    if subscription:
+        args += ["--subscription", subscription]
+    code, out, _ = _run(args)
+    if code != 0 or not out.strip():
+        return []
+    try:
+        names = json.loads(out)
+    except json.JSONDecodeError:
+        return []
+    return [n for n in names if isinstance(n, str)]
+
+
+def check_environment_network(cfg: dict[str, str]) -> list[CheckResult]:
+    """Can this deploy actually get the VNet-injected environment it is asking for?
+
+    Both halves of the private path are create-time-only: Azure cannot add a VNet
+    to an existing Container Apps environment, and the private path also moves the
+    environment from Consumption-only to workload profiles. On a deployment that
+    already exists, ``azd provision`` therefore does not migrate anything — it
+    fails and leaves what you had intact.
+
+    Preflight can see that coming. Saying so here is the difference between one
+    instruction the operator can follow and an ARM error that names none of this.
+    """
+    generic = CheckResult(
+        "Private networking: environment",
+        True,
+        "the Container Apps environment is VNet-injected, which Azure cannot do in "
+        "place — an existing environment must be deleted first and the app's FQDN "
+        "will change (docs/audit.md#private-networking)",
+    )
+
+    env_name = cfg.get("AZURE_ENV_NAME", "").strip().lower()
+    if not env_name:
+        return [generic]
+
+    subscription = cfg.get("AZURE_SUBSCRIPTION_ID", "").strip()
+    envs = _container_app_environments(subscription)
+    if envs is None:
+        # Unreadable is not the same as absent, so fall back to the warning that
+        # states the constraint rather than claiming this deploy is clear.
+        return [generic]
+
+    prefix = f"cae-{env_name}-"
+    mine = [e for e in envs if (e.get("name") or "").lower().startswith(prefix)]
+    if not mine:
+        return [
+            CheckResult(
+                "Private networking: environment",
+                True,
+                "no Container Apps environment exists yet, so it is created VNet-injected — "
+                "nothing to replace and no FQDN to move",
+            )
+        ]
+
+    existing = mine[0]
+    name = existing.get("name") or ""
+    rg = existing.get("rg") or "<rg>"
+    if existing.get("subnet"):
+        return [
+            CheckResult(
+                "Private networking: environment",
+                True,
+                f"{name} is already VNet-injected",
+            )
+        ]
+
+    apps = _apps_in_environment(rg, existing.get("id") or "", subscription)
+    app_lines = "\n".join(
+        f"        az containerapp delete -g {rg} -n {a} --yes" for a in apps
+    ) or f"        az containerapp delete -g {rg} -n <container-app> --yes"
+
+    return [
+        CheckResult(
+            "Private networking: environment",
+            False,
+            f"{name} already exists on the Azure-managed network. Azure cannot add a VNet to "
+            "an environment in place, so `azd provision` fails rather than replacing it",
+            fix=(
+                "        The environment has to go before the private one can take its name.\n"
+                "        This is downtime, and the app's FQDN changes — repoint ACS callback\n"
+                "        URLs, the Teams app manifest and any bookmarks afterwards.\n"
+                "\n"
+                f"{app_lines}\n"
+                f"        az containerapp env delete -g {rg} -n {name} --yes\n"
+                "        azd provision\n"
+                "\n"
+                "        The audit history survives this: Cosmos is a separate resource and\n"
+                "        none of these commands touch it. docs/audit.md#private-networking"
+            ),
+        )
+    ]
 
 
 def check_dns_label(cfg: dict[str, str], location: str) -> CheckResult | None:

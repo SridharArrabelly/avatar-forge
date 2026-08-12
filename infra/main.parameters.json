@@ -62,6 +62,8 @@
 
     "enableAudit":         { "value": "${ENABLE_AUDIT=false}" },
     "auditRetentionDays":  { "value": "${AUDIT_RETENTION_DAYS=365}" },
+    "enablePrivateNetworking": { "value": "${ENABLE_PRIVATE_NETWORKING=false}" },
+    "vnetAddressPrefix":       { "value": "${VNET_ADDRESS_PREFIX=10.100.0.0/16}" },
 
     "deployProfile":            { "value": "${DEPLOY_PROFILE=}" },
     "deployMeetingBotHost":     { "value": "${DEPLOY_MEETING_BOT_HOST=false}" },

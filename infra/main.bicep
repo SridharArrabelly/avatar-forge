@@ -247,6 +247,11 @@ param acsDataLocation string = 'United States'
 param enableAudit string = 'false'
 @description('Days each audit record is retained, written as a per-item Cosmos TTL.')
 param auditRetentionDays string = '365'
+@description('Route the app to the audit store over a private endpoint ("true"/"false"). Requires enableAudit="true". Creates a VNet and injects the Container Apps environment into it, so an existing environment is replaced and its default FQDN changes.')
+@allowed([ 'true', 'false' ])
+param enablePrivateNetworking string = 'false'
+@description('Address space of the virtual network created for private networking. Must be a /22 or larger: the template carves out a /23 for the app subnet and a /24 for private endpoints.')
+param vnetAddressPrefix string = '10.100.0.0/16'
 @description('"true"/"false". Serve the .NET Teams media-bot bridge without an ACS resource (sets MEETING_BOT_ENABLED). Implied by deployProfile="in-call" exactly; "in-call-browser" is channel C and does not imply it.')
 param meetingBotEnabled string = 'false'
 @description('PCM sample rate (Hz) the Teams media bot streams (16000).')
@@ -391,6 +396,8 @@ module resources 'resources.bicep' = {
     browserJoinVideoEnabled: browserJoinVideoEnabled
     enableAudit: enableAudit
     auditRetentionDays: auditRetentionDays
+    enablePrivateNetworking: enablePrivateNetworking
+    vnetAddressPrefix: vnetAddressPrefix
   }
 }
 
