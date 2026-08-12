@@ -18,6 +18,7 @@ Two things matter here, and the second matters more than the first:
 """
 from __future__ import annotations
 
+import builtins
 import ipaddress
 import json
 import sys
@@ -270,6 +271,183 @@ check(
             {"ENABLE_AUDIT": "true", "AUDIT_SINK": "file", "ENABLE_PRIVATE_NETWORKING": "true"}
         )
     ),
+)
+
+print("\npreflight warns when the subscription closes Cosmos to public traffic")
+# The failure this guards against is #122 itself: a management-group policy set
+# publicNetworkAccess=Disabled on the audit account overnight, the fail-closed
+# sink could not warm(), and the app went down while Container Apps still called
+# the deploy successful.
+
+
+class _FakeStdin:
+    def __init__(self, tty: bool) -> None:
+        self._tty = tty
+
+    def isatty(self) -> bool:
+        return self._tty
+
+
+_real_stdin, _real_run, _real_set = sys.stdin, preflight._run, preflight._azd_env_set
+_real_input = builtins.input
+
+AUDIT_ON = {"ENABLE_AUDIT": "true", "AZURE_ENV_NAME": "avatar-gf-test"}
+MINE_SWEPT = [{"name": "cosmos-avatar-gf-test-r7qyqm7kattdc", "rg": "rg-a", "pna": "Disabled"}]
+MINE_OPEN = [{"name": "cosmos-avatar-gf-test-r7qyqm7kattdc", "rg": "rg-a", "pna": "Enabled"}]
+OTHER_SWEPT = [{"name": "cosmos-someone-else-9x8y7z", "rg": "rg-b", "pna": "Disabled"}]
+
+
+def _cpa(cfg: dict, accounts, *, tty: bool = False, answer: str = "y", saves: bool = True):
+    """Run check_cosmos_public_access with `az` and `azd` stubbed out.
+
+    accounts=None stands for an `az cosmosdb list` that failed, which must never
+    be read as "the subscription is clean".
+    """
+    def fake_run(args):
+        if args[:2] == ["cosmosdb", "list"]:
+            return (1, "", "denied") if accounts is None else (0, json.dumps(accounts), "")
+        raise AssertionError(f"unexpected az call: {args}")
+
+    preflight._run = fake_run
+    preflight._azd_env_set = lambda *_: saves
+    sys.stdin = _FakeStdin(tty)
+    builtins.input = lambda *_: answer
+    try:
+        return preflight.check_cosmos_public_access(cfg)
+    finally:
+        preflight._run, preflight._azd_env_set = _real_run, _real_set
+        sys.stdin = _real_stdin
+        builtins.input = _real_input
+
+
+def _blocks(results) -> bool:
+    """Mirrors main()'s rule: only a failing check that is not warn_only stops a deploy."""
+    return any(not r.ok and not r.warn_only for r in results)
+
+
+check("audit off means there is nothing to probe", _cpa({}, MINE_SWEPT) == [])
+check(
+    "a non-Cosmos sink is not probed",
+    _cpa({**AUDIT_ON, "AUDIT_SINK": "file"}, MINE_SWEPT) == [],
+)
+check(
+    "this environment's own swept account blocks the deploy",
+    _blocks(_cpa(dict(AUDIT_ON), MINE_SWEPT)),
+)
+check(
+    "the block names the account rather than describing the policy in the abstract",
+    any("cosmos-avatar-gf-test-r7qyqm7kattdc" in r.detail for r in _cpa(dict(AUDIT_ON), MINE_SWEPT)),
+)
+check(
+    "the fix line uses the exact spelling the template accepts",
+    any(
+        "azd env set ENABLE_PRIVATE_NETWORKING true" in r.fix
+        for r in _cpa(dict(AUDIT_ON), MINE_SWEPT)
+    ),
+)
+check(
+    "a swept account with private networking already on is fine",
+    not _blocks(_cpa({**AUDIT_ON, "ENABLE_PRIVATE_NETWORKING": "true"}, MINE_SWEPT)),
+)
+check(
+    "someone else's swept account warns without blocking, because it is inference not proof",
+    not _blocks(_cpa(dict(AUDIT_ON), OTHER_SWEPT))
+    and any(r.warn_only for r in _cpa(dict(AUDIT_ON), OTHER_SWEPT)),
+)
+check(
+    "and it says why: the platform is closing accounts, so this one is next",
+    any("policy is closing them" in r.detail for r in _cpa(dict(AUDIT_ON), OTHER_SWEPT)),
+)
+check(
+    "the warning carries its own remedy, because main() never prints a warning's fix block",
+    any(
+        "azd env set ENABLE_PRIVATE_NETWORKING true" in r.detail
+        for r in _cpa(dict(AUDIT_ON), OTHER_SWEPT)
+    ),
+)
+check(
+    "someone else's swept account is fine once private networking is on",
+    not _blocks(_cpa({**AUDIT_ON, "ENABLE_PRIVATE_NETWORKING": "true"}, OTHER_SWEPT)),
+)
+check(
+    "an open subscription passes without a warning",
+    _cpa(dict(AUDIT_ON), MINE_OPEN)[0].ok
+    and not _cpa(dict(AUDIT_ON), MINE_OPEN)[0].warn_only,
+)
+check(
+    "private networking on states that public access will be Disabled",
+    "Disabled" in _cpa({**AUDIT_ON, "ENABLE_PRIVATE_NETWORKING": "true"}, [])[0].detail,
+)
+check(
+    "an empty subscription warns rather than claiming the posture is known",
+    _cpa(dict(AUDIT_ON), [])[0].warn_only,
+)
+check(
+    "an unreadable subscription never blocks a deploy",
+    not _blocks(_cpa(dict(AUDIT_ON), None)),
+)
+check(
+    "an unreadable subscription is reported as unknown, not as clean",
+    _cpa(dict(AUDIT_ON), None)[0].warn_only,
+)
+
+print("\nthe operator can turn private networking on from the prompt")
+_flipped = dict(AUDIT_ON)
+_flip_results = _cpa(_flipped, MINE_SWEPT, tty=True, answer="y")
+check("accepting the prompt clears the check", not _blocks(_flip_results))
+check("accepting the prompt persists the flag into the config", _flipped.get("ENABLE_PRIVATE_NETWORKING") == "true")
+_declined = dict(AUDIT_ON)
+check(
+    "declining the prompt still blocks the deploy",
+    _blocks(_cpa(_declined, MINE_SWEPT, tty=True, answer="n")),
+)
+check("declining the prompt leaves the flag alone", "ENABLE_PRIVATE_NETWORKING" not in _declined)
+_unsaved = dict(AUDIT_ON)
+check(
+    "an azd that cannot store the flag blocks rather than pretending it worked",
+    _blocks(_cpa(_unsaved, MINE_SWEPT, tty=True, answer="y", saves=False)),
+)
+
+print("\nturning the flag on mid-run still validates the address space")
+# Ordering regression: the probe runs before check_private_networking inside
+# check_audit. If it ran after, a flag flipped at the prompt would skip the /22
+# and reserved-range validation entirely and fail during provisioning instead.
+
+
+def _audit(cfg: dict, accounts, **kw):
+    def fake_run(args):
+        if args[:2] == ["cosmosdb", "list"]:
+            return 0, json.dumps(accounts), ""
+        if args[:2] == ["provider", "show"]:
+            return 0, "Registered\n", ""
+        raise AssertionError(f"unexpected az call: {args}")
+
+    preflight._run = fake_run
+    preflight._azd_env_set = lambda *_: True
+    sys.stdin = _FakeStdin(True)
+    builtins.input = lambda *_: "y"
+    try:
+        return preflight.check_audit(cfg)
+    finally:
+        preflight._run, preflight._azd_env_set = _real_run, _real_set
+        sys.stdin = _real_stdin
+        builtins.input = _real_input
+
+
+_late = {"ENABLE_AUDIT": "true", "AZURE_ENV_NAME": "avatar-gf-test"}
+_late_results = _audit(_late, MINE_SWEPT)
+check(
+    "a flag turned on at the prompt still reaches the environment-replacement warning",
+    any("in place" in r.detail for r in _late_results),
+)
+_bad_space = {
+    "ENABLE_AUDIT": "true",
+    "AZURE_ENV_NAME": "avatar-gf-test",
+    "VNET_ADDRESS_PREFIX": "10.20.0.0/24",
+}
+check(
+    "a flag turned on at the prompt is still checked against a too-small address space",
+    any(not r.ok and not r.warn_only for r in _audit(_bad_space, MINE_SWEPT)),
 )
 
 print()

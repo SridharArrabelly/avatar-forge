@@ -451,6 +451,56 @@ and the container would not start — while Container Apps went on reporting the
 deployment as successful, because the revision that failed was never the one
 serving traffic ([#122](https://github.com/SridharArrabelly/avatar-forge/issues/122)).
 
+#### How you find out before it bites you
+
+The uncomfortable part of that story is that nothing in the deploy path mentioned
+any of it. So preflight now looks, on every run where the audit trail is on and
+the sink is Cosmos:
+
+```
+FAIL  Cosmos public access: cosmos-avatar-gf-test-r7qyqm7kattdc has public
+      network access Disabled. The audit sink is fail-closed, so the app cannot
+      start until it can reach that account privately
+
+        azd env set ENABLE_PRIVATE_NETWORKING true
+```
+
+It reads the **state of Cosmos accounts that already exist**, not policy
+assignments. That is a deliberate choice, and it is worth knowing why: on the
+subscription this was built against, `az policy assignment list
+--disable-scope-strict-match` returns three Defender-for-Cloud defaults and says
+nothing whatsoever about Cosmos, because the governing assignment lives at a
+management group the deploying identity cannot read. A check that scanned
+assignments would report "no policy here" on precisely the subscription that has
+one. An account sitting at `publicNetworkAccess: Disabled` is the *effect* of the
+policy rather than a guess at it, and anyone who can deploy can read it.
+
+| What preflight sees | Private networking off | Private networking on |
+| --- | --- | --- |
+| Every Cosmos account is public | `OK` — deploy the public route | `OK` |
+| **This environment's own account is `Disabled`** | **Fails the run.** The app cannot start; that is not a prediction | `OK` — this deploy supplies the endpoint it was missing |
+| **Some other account in the subscription is `Disabled`** | **Warns.** The platform closes Cosmos accounts, so this one is next | `OK` — already matches |
+| No Cosmos accounts yet | Warns that the posture is unknown | `OK` |
+| Accounts could not be read | Warns. Never blocks on a failed lookup | `OK` |
+
+The distinction between the second and third rows is evidence. Your own account
+being closed is proof; someone else's is inference — a shared subscription can
+hold a private Cosmos for reasons that have nothing to do with policy — so the
+first stops the deploy and the second lets it through with a warning.
+
+Run interactively, preflight offers to make the change and persists it for you:
+
+```
+Deploy Cosmos with private networking? [Y/n]:
+```
+
+As the `preprovision` hook there is no TTY to answer, so there it prints the
+finding and stops rather than changing your network topology unasked — turning
+this on replaces the Container Apps environment and changes the app's FQDN, which
+is not something a deploy should decide on your behalf. Running
+`uv run python scripts/preflight.py` before `azd up` is what makes that a
+one-keystroke answer instead of a failed deploy.
+
 A policy exemption is not the fix. It treats the symptom, it has to be renewed,
 and it argues that this particular transcript store deserves to stay public. The
 fix is to stop needing public access:

@@ -303,6 +303,16 @@ endpoint. These two parameters give the app a private route in, so the account
 can be closed to the internet instead of that closure becoming an outage — see
 [audit.md](audit.md#private-networking) for the full story.
 
+**You do not have to guess whether you need this.** Preflight inspects the Cosmos
+accounts that already exist in the subscription and says so: it fails the run
+outright when this environment's own account is already `Disabled` (the app
+cannot start in that state), and warns when some *other* account is, since that
+means the platform is closing them and this one is next. Run interactively it
+offers to set the flag for you. It deliberately does not scan policy assignments
+— the assignment that causes this typically lives at a management group a
+deployer cannot read, so scanning would report "no policy" on exactly the
+subscriptions that have one.
+
 | Variable | Default | Purpose |
 |---|---|---|
 | `ENABLE_PRIVATE_NETWORKING` | `false` | Bicep parameter. Creates a VNet, injects the Container Apps environment into it, and reaches Cosmos through a private endpoint with `publicNetworkAccess` set to `Disabled`. Requires `ENABLE_AUDIT=true`; on its own it does nothing, because with no Cosmos account there is nothing to reach privately. |
