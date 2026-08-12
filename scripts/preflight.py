@@ -634,15 +634,7 @@ def check_private_networking(cfg: dict[str, str]) -> list[CheckResult]:
             f"on — Cosmos reached over a private endpoint, VNet {prefix}",
         )
     )
-    results.append(
-        CheckResult(
-            "Private networking: environment",
-            True,
-            "the Container Apps environment is VNet-injected, which Azure cannot do in "
-            "place — an existing environment must be deleted first and the app's FQDN "
-            "will change (docs/audit.md#private-networking)",
-        )
-    )
+    results.extend(check_environment_network(cfg))
     return results
 
 
@@ -846,6 +838,133 @@ def check_cosmos_public_access(cfg: dict[str, str]) -> list[CheckResult]:
             "no existing Cosmos accounts to compare against, so a private-link policy cannot be "
             "ruled out — docs/audit.md#private-networking",
             warn_only=True,
+        )
+    ]
+
+
+def _container_app_environments(subscription: str) -> list[dict] | None:
+    """Container Apps environments in the subscription, or None if unreadable."""
+    args = [
+        "containerapp", "env", "list",
+        "--query",
+        "[].{name:name,rg:resourceGroup,id:id,"
+        "subnet:properties.vnetConfiguration.infrastructureSubnetId}",
+        "-o", "json",
+    ]
+    if subscription:
+        args += ["--subscription", subscription]
+    code, out, _ = _run(args)
+    if code != 0 or not out.strip():
+        return None
+    try:
+        parsed = json.loads(out)
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, list) else None
+
+
+def _apps_in_environment(resource_group: str, environment_id: str, subscription: str) -> list[str]:
+    """Names of the container apps in one environment, for the delete commands.
+
+    The app name is truncated to fit a 32-character budget, so it cannot be
+    derived from the environment name reliably — it has to be read.
+    """
+    if not resource_group or not environment_id:
+        return []
+    args = [
+        "containerapp", "list", "-g", resource_group,
+        "--query", f"[?properties.environmentId=='{environment_id}'].name", "-o", "json",
+    ]
+    if subscription:
+        args += ["--subscription", subscription]
+    code, out, _ = _run(args)
+    if code != 0 or not out.strip():
+        return []
+    try:
+        names = json.loads(out)
+    except json.JSONDecodeError:
+        return []
+    return [n for n in names if isinstance(n, str)]
+
+
+def check_environment_network(cfg: dict[str, str]) -> list[CheckResult]:
+    """Can this deploy actually get the VNet-injected environment it is asking for?
+
+    Both halves of the private path are create-time-only: Azure cannot add a VNet
+    to an existing Container Apps environment, and the private path also moves the
+    environment from Consumption-only to workload profiles. On a deployment that
+    already exists, ``azd provision`` therefore does not migrate anything — it
+    fails and leaves what you had intact.
+
+    Preflight can see that coming. Saying so here is the difference between one
+    instruction the operator can follow and an ARM error that names none of this.
+    """
+    generic = CheckResult(
+        "Private networking: environment",
+        True,
+        "the Container Apps environment is VNet-injected, which Azure cannot do in "
+        "place — an existing environment must be deleted first and the app's FQDN "
+        "will change (docs/audit.md#private-networking)",
+    )
+
+    env_name = cfg.get("AZURE_ENV_NAME", "").strip().lower()
+    if not env_name:
+        return [generic]
+
+    subscription = cfg.get("AZURE_SUBSCRIPTION_ID", "").strip()
+    envs = _container_app_environments(subscription)
+    if envs is None:
+        # Unreadable is not the same as absent, so fall back to the warning that
+        # states the constraint rather than claiming this deploy is clear.
+        return [generic]
+
+    prefix = f"cae-{env_name}-"
+    mine = [e for e in envs if (e.get("name") or "").lower().startswith(prefix)]
+    if not mine:
+        return [
+            CheckResult(
+                "Private networking: environment",
+                True,
+                "no Container Apps environment exists yet, so it is created VNet-injected — "
+                "nothing to replace and no FQDN to move",
+            )
+        ]
+
+    existing = mine[0]
+    name = existing.get("name") or ""
+    rg = existing.get("rg") or "<rg>"
+    if existing.get("subnet"):
+        return [
+            CheckResult(
+                "Private networking: environment",
+                True,
+                f"{name} is already VNet-injected",
+            )
+        ]
+
+    apps = _apps_in_environment(rg, existing.get("id") or "", subscription)
+    app_lines = "\n".join(
+        f"        az containerapp delete -g {rg} -n {a} --yes" for a in apps
+    ) or f"        az containerapp delete -g {rg} -n <container-app> --yes"
+
+    return [
+        CheckResult(
+            "Private networking: environment",
+            False,
+            f"{name} already exists on the Azure-managed network. Azure cannot add a VNet to "
+            "an environment in place, so `azd provision` fails rather than replacing it",
+            fix=(
+                "        The environment has to go before the private one can take its name.\n"
+                "        This is downtime, and the app's FQDN changes — repoint ACS callback\n"
+                "        URLs, the Teams app manifest and any bookmarks afterwards.\n"
+                "\n"
+                f"{app_lines}\n"
+                f"        az containerapp env delete -g {rg} -n {name} --yes\n"
+                "        azd provision\n"
+                "\n"
+                "        The audit history survives this: Cosmos is a separate resource and\n"
+                "        none of these commands touch it. docs/audit.md#private-networking"
+            ),
         )
     ]
 

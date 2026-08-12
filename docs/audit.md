@@ -501,6 +501,39 @@ is not something a deploy should decide on your behalf. Running
 `uv run python scripts/preflight.py` before `azd up` is what makes that a
 one-keystroke answer instead of a failed deploy.
 
+#### Greenfield and brownfield answer differently
+
+On a **new environment** there is no account of yours to inspect, so preflight
+can only infer from the rest of the subscription. If nothing else has a Cosmos
+account it cannot tell, warns that the posture is unknown, and lets the public
+deploy proceed. That gap closes one step later: `check_audit_sink.py` runs
+`postprovision` and fails the deploy outright if the account came back `Disabled`
+when the template asked for `Enabled`. On a new environment that is a cheap
+mistake — set the flag, provision again, no FQDN to move and no history to keep.
+
+On an **existing deployment** the detection is stronger — your own account is
+right there — but the remedy is not a single flag. Answering `Y` sets
+`ENABLE_PRIVATE_NETWORKING`, and the next `azd provision` still fails, because
+*both* halves of the private path are create-time-only decisions: Azure will not
+add a VNet to an existing Container Apps environment, and the private path also
+moves it from Consumption-only to workload profiles. So preflight checks for that
+too, and prints the sequence with your real resource names filled in:
+
+```
+FAIL  Private networking: environment: cae-avatar-gf-test-r7qyqm7kattdc already
+      exists on the Azure-managed network. Azure cannot add a VNet to an
+      environment in place, so `azd provision` fails rather than replacing it
+
+        az containerapp delete -g rg-avatar-gf-test -n ca-avatar-gf-test-... --yes
+        az containerapp env delete -g rg-avatar-gf-test -n cae-avatar-gf-test-... --yes
+        azd provision
+```
+
+It stops there rather than running the deletions itself. The audit history is not
+at risk from that sequence — Cosmos is a separate resource and none of those
+commands touch it — but the app is down between the first command and the last,
+and that is not a decision preflight should make for you.
+
 A policy exemption is not the fix. It treats the symptom, it has to be renewed,
 and it argues that this particular transcript store deserves to stay public. The
 fix is to stop needing public access:
@@ -527,7 +560,9 @@ inside the network, so no application code or setting moves.
 Because that switch is not an in-place update, do not expect `azd provision` to
 migrate a running deployment for you: Azure rejects the change rather than
 quietly recreating the environment, so provisioning fails and leaves what you
-already had intact. There are two honest ways through it:
+already had intact. Preflight catches this before the deploy and prints the
+second route below with your real resource names substituted. There are two
+honest ways through it:
 
 ```powershell
 # Preferred: stand the private deployment up beside the current one, verify it,

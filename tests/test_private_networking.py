@@ -413,16 +413,31 @@ print("\nturning the flag on mid-run still validates the address space")
 # check_audit. If it ran after, a flag flipped at the prompt would skip the /22
 # and reserved-range validation entirely and fail during provisioning instead.
 
+CAE_MANAGED = [{
+    "name": "cae-avatar-gf-test-r7qyqm7kattdc", "rg": "rg-a",
+    "id": "/subscriptions/s/resourceGroups/rg-a/providers/Microsoft.App/managedEnvironments/cae-avatar-gf-test-r7qyqm7kattdc",
+    "subnet": None,
+}]
+CAE_VNET = [{**CAE_MANAGED[0], "subnet": "/subscriptions/s/.../subnets/snet-apps"}]
 
-def _audit(cfg: dict, accounts, **kw):
+
+def _stub_az(accounts, envs, apps=("ca-avatar-gf-test-r7qyqm7kattdc",)):
     def fake_run(args):
         if args[:2] == ["cosmosdb", "list"]:
             return 0, json.dumps(accounts), ""
         if args[:2] == ["provider", "show"]:
             return 0, "Registered\n", ""
+        if args[:3] == ["containerapp", "env", "list"]:
+            return (1, "", "denied") if envs is None else (0, json.dumps(envs), "")
+        if args[:2] == ["containerapp", "list"]:
+            return 0, json.dumps(list(apps)), ""
         raise AssertionError(f"unexpected az call: {args}")
 
-    preflight._run = fake_run
+    return fake_run
+
+
+def _audit(cfg: dict, accounts, envs=None, apps=("ca-avatar-gf-test-r7qyqm7kattdc",)):
+    preflight._run = _stub_az(accounts, envs, apps)
     preflight._azd_env_set = lambda *_: True
     sys.stdin = _FakeStdin(True)
     builtins.input = lambda *_: "y"
@@ -448,6 +463,87 @@ _bad_space = {
 check(
     "a flag turned on at the prompt is still checked against a too-small address space",
     any(not r.ok and not r.warn_only for r in _audit(_bad_space, MINE_SWEPT)),
+)
+
+print("\nbrownfield: an existing environment cannot take the VNet in place")
+# Answering Y sets the flag, but `azd provision` still fails: Azure will not add a
+# VNet to an existing Container Apps environment, and the private path also moves
+# it from Consumption-only to workload profiles. Both are create-time-only, so the
+# operator needs the cut-over sequence BEFORE the deploy dies, not after.
+
+
+def _env_net(cfg: dict, envs, apps=("ca-avatar-gf-test-r7qyqm7kattdc",)):
+    preflight._run = _stub_az([], envs, apps)
+    try:
+        return preflight.check_environment_network(cfg)
+    finally:
+        preflight._run = _real_run
+
+
+ENV_CFG = {"AZURE_ENV_NAME": "avatar-gf-test"}
+
+check(
+    "an existing managed-network environment blocks the deploy",
+    _blocks(_env_net(ENV_CFG, CAE_MANAGED)),
+)
+check(
+    "the block names the environment rather than describing the constraint abstractly",
+    any("cae-avatar-gf-test-r7qyqm7kattdc" in r.detail for r in _env_net(ENV_CFG, CAE_MANAGED)),
+)
+_brownfield_fix = _env_net(ENV_CFG, CAE_MANAGED)[0].fix
+check(
+    "the fix deletes the app by its real name, which cannot be derived from the env name",
+    "az containerapp delete -g rg-a -n ca-avatar-gf-test-r7qyqm7kattdc --yes" in _brownfield_fix,
+)
+check(
+    "the fix deletes the environment and re-provisions, in that order",
+    _brownfield_fix.index("containerapp env delete") < _brownfield_fix.index("azd provision"),
+)
+check(
+    "the fix says the FQDN moves, because that is what breaks callbacks",
+    "FQDN changes" in _brownfield_fix,
+)
+check(
+    "the fix says audit history survives, since that is the obvious fear",
+    "audit history survives" in _brownfield_fix,
+)
+check(
+    "an app whose name could not be read still leaves a usable command",
+    "-n <container-app> --yes" in _env_net(ENV_CFG, CAE_MANAGED, apps=())[0].fix,
+)
+check(
+    "an already VNet-injected environment passes",
+    not _blocks(_env_net(ENV_CFG, CAE_VNET))
+    and "already VNet-injected" in _env_net(ENV_CFG, CAE_VNET)[0].detail,
+)
+check(
+    "greenfield passes: there is no environment to replace",
+    not _blocks(_env_net(ENV_CFG, []))
+    and "nothing to replace" in _env_net(ENV_CFG, [])[0].detail,
+)
+check(
+    "another environment in the subscription is not mistaken for this one",
+    "nothing to replace" in _env_net({"AZURE_ENV_NAME": "avatar-other"}, CAE_MANAGED)[0].detail,
+)
+check(
+    "an unreadable environment list warns about the constraint rather than clearing it",
+    not _blocks(_env_net(ENV_CFG, None))
+    and "in place" in _env_net(ENV_CFG, None)[0].detail,
+)
+check(
+    "with no environment name there is nothing to match on, so the constraint is stated",
+    "in place" in _env_net({}, CAE_MANAGED)[0].detail,
+)
+check(
+    "the brownfield block reaches check_audit, so `azd up` stops",
+    _blocks(
+        _audit(
+            {"ENABLE_AUDIT": "true", "AZURE_ENV_NAME": "avatar-gf-test",
+             "ENABLE_PRIVATE_NETWORKING": "true"},
+            MINE_SWEPT,
+            envs=CAE_MANAGED,
+        )
+    ),
 )
 
 print()
