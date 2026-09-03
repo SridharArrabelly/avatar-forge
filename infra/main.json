@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.43.8.12551",
-      "templateHash": "13782540376781436422"
+      "templateHash": "13054266148681300215"
     }
   },
   "parameters": {
@@ -373,7 +373,7 @@
     },
     "srModel": {
       "type": "string",
-      "defaultValue": "mai-transcribe-1"
+      "defaultValue": "mai-transcribe-2"
     },
     "recognitionLanguage": {
       "type": "string",
@@ -733,7 +733,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.43.8.12551",
-              "templateHash": "18064381251811609644"
+              "templateHash": "8285489260230191256"
             }
           },
           "parameters": {
@@ -927,7 +927,7 @@
             },
             "srModel": {
               "type": "string",
-              "defaultValue": "mai-transcribe-1"
+              "defaultValue": "mai-transcribe-2"
             },
             "recognitionLanguage": {
               "type": "string",
@@ -2900,7 +2900,7 @@
                     "_generator": {
                       "name": "bicep",
                       "version": "0.43.8.12551",
-                      "templateHash": "9753749465486170982"
+                      "templateHash": "8313320423315884789"
                     }
                   },
                   "parameters": {
@@ -3039,9 +3039,9 @@
                     },
                     "srModel": {
                       "type": "string",
-                      "defaultValue": "mai-transcribe-1",
+                      "defaultValue": "mai-transcribe-2",
                       "metadata": {
-                        "description": "Speech recognition model. Defaults to mai-transcribe-1; cascaded options include azure-speech, gpt-4o-transcribe."
+                        "description": "Speech recognition model. Defaults to mai-transcribe-2; mai-transcribe uses the service-managed default."
                       }
                     },
                     "recognitionLanguage": {

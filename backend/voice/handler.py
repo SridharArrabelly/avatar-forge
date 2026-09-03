@@ -235,7 +235,7 @@ class VoiceSessionHandler:
         # ISO-639-1 codes (en), azure-speech takes full BCP-47 (en-ZA). See
         # normalize_recognition_language for why a raw "en-ZA" on mai-transcribe
         # causes empty transcripts.
-        sr_model = config.get("srModel", "mai-transcribe-1")
+        sr_model = config.get("srModel", "mai-transcribe-2")
         recognition_language = config.get("recognitionLanguage", "auto")
         normalized_language = normalize_recognition_language(
             sr_model, recognition_language
@@ -310,7 +310,18 @@ class VoiceSessionHandler:
         if session_updated is None:
             raise ValueError("SESSION_UPDATED event not received")
 
-        logger.info(f"Session configured for client {self.client_id}")
+        applied_transcription = getattr(
+            getattr(session_updated, "session", None),
+            "input_audio_transcription",
+            None,
+        )
+        applied_sr_model = getattr(applied_transcription, "model", None)
+        logger.info(
+            "Session configured for client %s (requested SR model=%s, applied=%s)",
+            self.client_id,
+            sr_model,
+            applied_sr_model or "not returned",
+        )
 
         # Inject the live meeting catalogue as a SYSTEM message so the
         # Foundry agent can answer first/last/count/listing questions

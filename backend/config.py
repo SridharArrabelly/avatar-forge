@@ -57,10 +57,8 @@ DEFAULT_API_KEY = os.getenv("AZURE_VOICELIVE_API_KEY", "")
 AGENT_NAME = os.getenv("AGENT_NAME", "")
 AGENT_PROJECT_NAME = os.getenv("AGENT_PROJECT_NAME", "")
 # Voice Live REST/WebSocket API version. The set of accepted speech-recognition
-# models is gated server-side by this version. NOTE: mai-transcribe-1.5 is
-# currently only available via the separate LLM Speech (batch) API, NOT the
-# Voice Live realtime API used here — bumping this does not unlock it yet.
-VOICELIVE_API_VERSION = os.getenv("VOICELIVE_API_VERSION", "2026-01-01-preview")
+# models is gated server-side by this version.
+VOICELIVE_API_VERSION = os.getenv("VOICELIVE_API_VERSION", "2026-04-10")
 DEVELOPER_MODE = os.getenv("DEVELOPER_MODE", "false").strip().lower() == "true"
 
 # Verbatim opening line spoken by the avatar when proactive greeting is enabled.
@@ -342,7 +340,7 @@ def get_ui_defaults() -> dict:
     is_custom_avatar = selected_avatar_type.startswith("custom-")
     return {
         # Conversation
-        "srModel": _str("SR_MODEL", "mai-transcribe-1"),
+        "srModel": _str("SR_MODEL", "mai-transcribe-2"),
         "recognitionLanguage": _str("RECOGNITION_LANGUAGE", "auto"),
         "useNS": _bool("USE_NOISE_SUPPRESSION", True),
         "useEC": _bool("USE_ECHO_CANCELLATION", True),
