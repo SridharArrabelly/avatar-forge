@@ -340,7 +340,7 @@ def get_ui_defaults() -> dict:
     is_custom_avatar = selected_avatar_type.startswith("custom-")
     return {
         # Conversation
-        "srModel": _str("SR_MODEL", "mai-transcribe-2"),
+        "srModel": _str("SR_MODEL", "mai-transcribe"),
         "recognitionLanguage": _str("RECOGNITION_LANGUAGE", "auto"),
         "useNS": _bool("USE_NOISE_SUPPRESSION", True),
         "useEC": _bool("USE_ECHO_CANCELLATION", True),

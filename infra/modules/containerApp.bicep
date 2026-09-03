@@ -43,8 +43,8 @@ param avatarDisplayName string = ''
 param avatarTagline string = ''
 param avatarBackgroundImageUrl string = ''
 param enableAvatarSpeakingStyle string = 'false'
-@description('Speech recognition model. Defaults to mai-transcribe-2; mai-transcribe uses the service-managed default.')
-param srModel string = 'mai-transcribe-2'
+@description('Speech recognition model. Voice Live accepts mai-transcribe (service-managed MAI model) or azure-speech.')
+param srModel string = 'mai-transcribe'
 @description('Recognition language locale (BCP-47, e.g. en-ZA). Use "auto" to let the SR model auto-detect.')
 param recognitionLanguage string = 'auto'
 

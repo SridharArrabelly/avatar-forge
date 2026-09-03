@@ -317,7 +317,7 @@ Applied when `DEVELOPER_MODE=false`; each also has a matching control in develop
 
 | Variable | Default | Options / notes |
 |---|---|---|
-| `SR_MODEL` | `mai-transcribe-2` | `azure-speech` \| `mai-transcribe` \| `mai-transcribe-2`. `mai-transcribe-2` pins MAI-Transcribe-2; `mai-transcribe` lets Voice Live select its service-managed default. See the [language-support matrix](https://learn.microsoft.com/azure/ai-services/speech-service/voice-live-language-support?tabs=speechinput). |
+| `SR_MODEL` | `mai-transcribe` | `azure-speech` \| `mai-transcribe`. Voice Live's versioned allow-list currently includes `mai-transcribe-1.5`, but rejects the `mai-transcribe-2` literal; use `mai-transcribe` for the service-managed MAI model. See the [language-support matrix](https://learn.microsoft.com/azure/ai-services/speech-service/voice-live-language-support?tabs=speechinput). |
 | `RECOGNITION_LANGUAGE` | `auto` | `auto` or a BCP-47 tag. MAI Transcribe accepts the primary ISO-639-1 subtag and auto-detects when unset. |
 | `USE_NOISE_SUPPRESSION` | `true` | Audio pre-processing. |
 | `USE_ECHO_CANCELLATION` | `true` | Audio pre-processing. |

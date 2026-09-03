@@ -18,6 +18,7 @@ from azure.ai.voicelive.models import (
 )
 
 from .. import audit
+from ..error_reporting import describe_error
 from ..logsafe import fingerprint, keys_only
 from .functions import execute_function
 
@@ -496,11 +497,15 @@ async def handle_event(handler, event, connection):
             if error_code == "response_cancel_not_active":
                 logger.debug("Voice Live response was already stopped before cancellation")
                 return
-            error_msg = str(event)
-            logger.error(f"Voice Live error: {error_msg}")
+            error_msg = describe_error(
+                event,
+                "Voice Live returned an error without details. Check the server logs.",
+            )
+            logger.error("Voice Live error: %s", error_msg)
             await handler.send_message({
                 "type": "error",
                 "error": error_msg,
+                "code": error_code,
             })
 
         # Session updated (may contain additional info)

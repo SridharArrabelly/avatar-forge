@@ -229,7 +229,7 @@ param avatarTagline string = ''
 param avatarBackgroundImageUrl string = ''
 @description('Enable the grayscale idle / color speaking avatar treatment ("true"/"false"). Disabled by default to preserve the avatar original appearance.')
 param enableAvatarSpeakingStyle string = 'false'
-param srModel string = 'mai-transcribe-2'
+param srModel string = 'mai-transcribe'
 param recognitionLanguage string = 'auto'
 
 var resolvedAvatarType = toLower(trim(avatarType))

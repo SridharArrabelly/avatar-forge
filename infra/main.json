@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.43.8.12551",
-      "templateHash": "13054266148681300215"
+      "templateHash": "11134922463649686204"
     }
   },
   "parameters": {
@@ -373,7 +373,7 @@
     },
     "srModel": {
       "type": "string",
-      "defaultValue": "mai-transcribe-2"
+      "defaultValue": "mai-transcribe"
     },
     "recognitionLanguage": {
       "type": "string",
@@ -733,7 +733,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.43.8.12551",
-              "templateHash": "8285489260230191256"
+              "templateHash": "4475397185350458663"
             }
           },
           "parameters": {
@@ -927,7 +927,7 @@
             },
             "srModel": {
               "type": "string",
-              "defaultValue": "mai-transcribe-2"
+              "defaultValue": "mai-transcribe"
             },
             "recognitionLanguage": {
               "type": "string",
@@ -2900,7 +2900,7 @@
                     "_generator": {
                       "name": "bicep",
                       "version": "0.43.8.12551",
-                      "templateHash": "8313320423315884789"
+                      "templateHash": "9973032008940133138"
                     }
                   },
                   "parameters": {
@@ -3039,9 +3039,9 @@
                     },
                     "srModel": {
                       "type": "string",
-                      "defaultValue": "mai-transcribe-2",
+                      "defaultValue": "mai-transcribe",
                       "metadata": {
-                        "description": "Speech recognition model. Defaults to mai-transcribe-2; mai-transcribe uses the service-managed default."
+                        "description": "Speech recognition model. Voice Live accepts mai-transcribe (service-managed MAI model) or azure-speech."
                       }
                     },
                     "recognitionLanguage": {

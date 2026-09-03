@@ -90,7 +90,7 @@ param avatarDisplayName string = ''
 param avatarTagline string = ''
 param avatarBackgroundImageUrl string = ''
 param enableAvatarSpeakingStyle string = 'false'
-param srModel string = 'mai-transcribe-2'
+param srModel string = 'mai-transcribe'
 param recognitionLanguage string = 'auto'
 
 // ───────── channel C in-call media (#27) ─────────

@@ -717,7 +717,10 @@ async function connectSession() {
 
         ws.onerror = (err) => {
             console.error('WebSocket error', err);
-            notifySystem('Connection error', 'error');
+            if (isDeveloperMode) {
+                addMessage('system', 'Connection to the service failed.', false, true);
+            }
+            setConnectionState('error', 'Connection to the service failed');
             setConnecting(false);
         };
 
@@ -733,7 +736,7 @@ async function connectSession() {
                 addMessage('system', 'Disconnected');
             }
             handleDisconnect();
-            if (!wasIntentional && wasLive) {
+            if (!wasIntentional && wasLive && connectionState !== 'error') {
                 setConnectionState('ended');
             }
             intentionalDisconnect = false;
@@ -748,9 +751,10 @@ async function connectSession() {
 
     } catch (err) {
         console.error('Connection error', err);
-        notifySystem('Failed to connect: ' + err.message, 'error');
+        const message = normalizeErrorMessage(err, 'Connection to the service failed.');
+        if (isDeveloperMode) addMessage('system', message, false, true);
         setConnecting(false);
-        setConnectionState('error');
+        setConnectionState('error', message);
     }
 }
 
@@ -812,13 +816,21 @@ function handleServerMessage(msg) {
             onSessionStarted(msg);
             break;
         case 'session_error':
-            notifySystem('Error: ' + (msg.error || 'Unknown error'), 'error');
+            showSessionError(msg.error);
             setConnecting(false);
             avatarConnecting = false;
             pendingAvatarEnabled = false;
             clearAvatarLoading();
-            setConnectionState('error');
             updateDeveloperModeLayout();
+            break;
+        case 'error':
+            notifySystem(
+                normalizeErrorMessage(
+                    msg.error,
+                    'Voice Live returned an error without details. Check the server logs.'
+                ),
+                'error'
+            );
             break;
         case 'ice_servers':
             // Only setup WebRTC when avatar output mode is webrtc
@@ -2773,7 +2785,7 @@ function toggleMicrophone() {
 // user would otherwise never see in production (chat is hidden): reconnecting,
 // session ended, and microphone permission problems. In the 'ended' state the
 // pill is clickable to restart the session.
-function setConnectionState(state) {
+function setConnectionState(state, detail = '') {
     connectionState = state || null;
     const el = document.getElementById('stageStatus');
     const live = document.getElementById('stageStatusLive');
@@ -2784,7 +2796,11 @@ function setConnectionState(state) {
         ended: { text: 'Session ended — tap to restart', cls: '', clickable: true },
         'mic-blocked': { text: 'Microphone blocked — allow mic access in your browser, then tap to retry', cls: 'error', clickable: true },
         'mic-missing': { text: 'No microphone found — connect one, then tap to retry', cls: 'error', clickable: true },
-        error: { text: 'Something went wrong — tap to restart', cls: 'error', clickable: true },
+        error: {
+            text: detail ? `${detail} — tap to restart` : 'Something went wrong — tap to restart',
+            cls: 'error',
+            clickable: true,
+        },
     };
     const cfg = map[connectionState];
 
@@ -2821,11 +2837,32 @@ function setConnectionState(state) {
     }
 }
 
-// Surface a system message so it's visible in BOTH modes: the chat line (dev)
-// plus a toast in normal mode where the chat area is hidden.
+// Surface a system message through one channel: chat in developer mode and a
+// toast in normal mode.
 function notifySystem(message, type = 'error') {
-    addMessage('system', message);
-    if (!isDeveloperMode) showToast(message, type, 6000);
+    // Use exactly one visible channel: chat in developer mode, toast otherwise.
+    if (isDeveloperMode) addMessage('system', message, false, true);
+    else showToast(message, type, 6000);
+}
+
+function normalizeErrorMessage(value, fallback) {
+    if (typeof value === 'string' && value.trim()) return value.trim();
+    if (value && typeof value === 'object') {
+        const nested = value.message || value.detail || value.reason || value.error;
+        if (typeof nested === 'string' && nested.trim()) return nested.trim();
+    }
+    return fallback;
+}
+
+function showSessionError(value) {
+    const message = normalizeErrorMessage(
+        value,
+        'Voice Live could not start the session. Check the server logs.'
+    );
+    // Production gets one persistent, actionable surface. Developer mode gets
+    // one chat entry instead; setConnectionState hides the pill there.
+    if (isDeveloperMode) addMessage('system', `Error: ${message}`, false, true);
+    setConnectionState('error', message);
 }
 
 // ===== Send Text =====

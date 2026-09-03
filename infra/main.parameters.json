@@ -43,7 +43,7 @@
     "avatarTagline":          { "value": "${AVATAR_TAGLINE=}" },
     "avatarBackgroundImageUrl": { "value": "${AVATAR_BACKGROUND_IMAGE_URL=}" },
     "enableAvatarSpeakingStyle": { "value": "${ENABLE_AVATAR_SPEAKING_STYLE=false}" },
-    "srModel":             { "value": "${SR_MODEL=mai-transcribe-2}" },
+    "srModel":             { "value": "${SR_MODEL=mai-transcribe}" },
     "recognitionLanguage": { "value": "${RECOGNITION_LANGUAGE=auto}" },
 
     "modelName":           { "value": "${MODEL_NAME=gpt-5.4}" },

@@ -32,6 +32,7 @@ from ..config import (
     VOICELIVE_API_VERSION,
     VOICELIVE_MODEL,
 )
+from ..error_reporting import describe_error, describe_session_start_error
 from .builders import (
     build_avatar_config,
     build_interim_response,
@@ -200,10 +201,17 @@ class VoiceSessionHandler:
         except asyncio.CancelledError:
             logger.info(f"Session cancelled for client {self.client_id}")
         except Exception as e:
-            logger.error(f"Voice session error for {self.client_id}: {e}")
+            error_message = describe_session_start_error(e, self.config)
+            logger.error(
+                "Voice session error for %s: %s: %s",
+                self.client_id,
+                type(e).__name__,
+                error_message,
+                exc_info=True,
+            )
             await self.send_message({
                 "type": "session_error",
-                "error": str(e),
+                "error": error_message,
             })
         finally:
             self.is_running = False
@@ -235,7 +243,7 @@ class VoiceSessionHandler:
         # ISO-639-1 codes (en), azure-speech takes full BCP-47 (en-ZA). See
         # normalize_recognition_language for why a raw "en-ZA" on mai-transcribe
         # causes empty transcripts.
-        sr_model = config.get("srModel", "mai-transcribe-2")
+        sr_model = config.get("srModel", "mai-transcribe")
         recognition_language = config.get("recognitionLanguage", "auto")
         normalized_language = normalize_recognition_language(
             sr_model, recognition_language
@@ -631,6 +639,13 @@ class VoiceSessionHandler:
                 etype = getattr(event, 'type', 'unknown')
                 if etype != ServerEventType.RESPONSE_AUDIO_DELTA:
                     logger.debug(f"[RECV-WAIT] {etype}")
+                if event.type == ServerEventType.ERROR:
+                    raise RuntimeError(
+                        describe_error(
+                            event,
+                            "Voice Live rejected the session configuration.",
+                        )
+                    )
                 if event.type in wanted_types:
                     if event.type == ServerEventType.RESPONSE_DONE:
                         self._response_active = False
