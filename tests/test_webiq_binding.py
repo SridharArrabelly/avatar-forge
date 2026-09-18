@@ -1,4 +1,4 @@
-"""Offline check: the Web IQ allow-list is emitted unconditionally.
+"""Offline check: model-mode settings and credential-independent Web IQ scoping.
 
 Needs **no Azure resources and no credentials**. Runs in well under a second.
 
@@ -26,6 +26,9 @@ re-implementing it here:
 * API key                -> key as a secretRef, allow-list present
 * base URL               -> passes through under either
 * **the invariant**: the allow-list is emitted for every credential combination
+* model mode emits realtime/Web IQ defaults, never AGENT_MODEL
+* agent mode emits AGENT_MODEL, never realtime/Web IQ settings or secrets
+* azd inputs pass through both module boundaries into the container
 
 Run from the repo root:
 
@@ -104,7 +107,8 @@ def evaluate(expr: str, params: dict[str, str], variables: dict[str, str]) -> ob
         key = evaluate(args[0], params, variables)
         if key not in variables:
             raise ValueError(f"template reads unknown variable {key!r}")
-        return evaluate(variables[key], params, variables)
+        value = variables[key]
+        return evaluate(value, params, variables) if isinstance(value, str) else render(value, params, variables)
     if name == "empty":
         return evaluate(args[0], params, variables) == ""
     if name == "not":
@@ -132,6 +136,17 @@ def evaluate(expr: str, params: dict[str, str], variables: dict[str, str]) -> ob
         return out
 
     raise ValueError(f"unsupported ARM function {name!r} in {expr!r}")
+
+
+def render(value: object, params: dict, variables: dict) -> object:
+    """Evaluate expressions inside a compiled ARM object, preserving literals."""
+    if isinstance(value, dict):
+        return {key: render(item, params, variables) for key, item in value.items()}
+    if isinstance(value, list):
+        return [render(item, params, variables) for item in value]
+    if isinstance(value, str) and value.startswith("[") and value.endswith("]"):
+        return evaluate(value[1:-1], params, variables)
+    return value
 
 
 def _walk_templates(node: object):
@@ -194,6 +209,8 @@ DOMAINS = {"webIqAllowedDomains": "mtn.com,sashares.co.za"}
 
 def main() -> int:
     defaults, variables = load_webiq_scope()
+    defaults["voiceBinding"] = "model"
+    base_names = ["WEBIQ_BASE_URL", "WEBIQ_LANGUAGE", "WEBIQ_REGION", "WEBIQ_ALLOWED_DOMAINS"]
 
     print("Web IQ env gating (infra/main.json)")
     print("-" * 62)
@@ -201,12 +218,12 @@ def main() -> int:
     check(
         "no key -> allow-list is STILL emitted (the regression this pins)",
         env_names(defaults, variables, **DOMAINS),
-        ["WEBIQ_ALLOWED_DOMAINS"],
+        base_names,
     )
     check(
         "API key -> key as secretRef, allow-list alongside",
         env_names(defaults, variables, webIqApiKey="k", **DOMAINS),
-        ["WEBIQ_API_KEY", "WEBIQ_ALLOWED_DOMAINS"],
+        ["WEBIQ_API_KEY", *base_names],
     )
 
     print()
@@ -250,7 +267,7 @@ def main() -> int:
             defaults, variables,
             webIqBaseUrl="https://example.invalid/v3", **DOMAINS,
         ),
-        ["WEBIQ_BASE_URL", "WEBIQ_ALLOWED_DOMAINS"],
+        base_names,
     )
     check(
         "API key + base URL",
@@ -258,8 +275,103 @@ def main() -> int:
             defaults, variables,
             webIqApiKey="k", webIqBaseUrl="https://example.invalid/v3", **DOMAINS,
         ),
-        ["WEBIQ_API_KEY", "WEBIQ_BASE_URL", "WEBIQ_ALLOWED_DOMAINS"],
+        ["WEBIQ_API_KEY", *base_names],
     )
+
+    print()
+    print("Effective container settings and mode isolation")
+    print("-" * 62)
+    template = json.loads(TEMPLATE.read_text(encoding="utf-8"))
+    scope = next(body for body in _walk_templates(template) if "webIqEnv" in body["variables"])
+    app = next(resource for resource in scope["resources"] if resource["type"] == "Microsoft.App/containerApps")
+    container_env = app["properties"]["template"]["containers"][0]["env"]
+
+    def settings(**overrides: str) -> dict:
+        params = {**defaults, **DOMAINS, **overrides}
+        entries = render(container_env, params, variables)
+        check("no duplicate container setting names", len({entry["name"] for entry in entries}), len(entries))
+        return {entry["name"]: entry for entry in entries}
+
+    model = settings(agentModel="chat-deployment")
+    expected_defaults = {
+        "VOICELIVE_MODEL": "gpt-realtime-2",
+        "WEBIQ_BASE_URL": "https://api.microsoft.ai/v3",
+        "WEBIQ_LANGUAGE": "en",
+        "WEBIQ_REGION": "ZA",
+        "WEBIQ_ALLOWED_DOMAINS": DOMAINS["webIqAllowedDomains"],
+    }
+    for name, value in expected_defaults.items():
+        check(f"model default {name}", model.get(name), {"name": name, "value": value})
+    check("model omits AGENT_MODEL", "AGENT_MODEL" in model, False)
+    check("keyless model omits WEBIQ_API_KEY", "WEBIQ_API_KEY" in model, False)
+
+    empty = settings(voiceLiveModel="", webIqBaseUrl="", webIqLanguage="", webIqRegion="")
+    for name, value in expected_defaults.items():
+        check(f"empty input preserves {name} default", empty.get(name), {"name": name, "value": value})
+
+    custom = settings(
+        voiceLiveModel="gpt-realtime", webIqBaseUrl="https://example.invalid/v3",
+        webIqLanguage="fr", webIqRegion="FR", webIqApiKey="test-key",
+        webIqAllowedDomains="example.org",
+    )
+    for name, value in {
+        "VOICELIVE_MODEL": "gpt-realtime",
+        "WEBIQ_BASE_URL": "https://example.invalid/v3",
+        "WEBIQ_LANGUAGE": "fr",
+        "WEBIQ_REGION": "FR",
+        "WEBIQ_ALLOWED_DOMAINS": "example.org",
+    }.items():
+        check(f"override {name}", custom.get(name), {"name": name, "value": value})
+    check(
+        "API key is a secret reference, never a plain container value",
+        custom.get("WEBIQ_API_KEY"),
+        {"name": "WEBIQ_API_KEY", "secretRef": "webiq-api-key"},
+    )
+    check(
+        "API key secret contains the supplied value",
+        render(app["properties"]["configuration"]["secrets"], {**defaults, "webIqApiKey": "test-key"}, variables),
+        [{"name": "webiq-api-key", "value": "test-key"}],
+    )
+    for binding in ("agent", "AGENT"):
+        agent = settings(
+            voiceBinding=binding, agentModel="chat-deployment", voiceLiveModel="gpt-realtime",
+            webIqApiKey="test-key", webIqBaseUrl="https://example.invalid/v3",
+        )
+        check("agent keeps AGENT_MODEL", agent.get("AGENT_MODEL"), {"name": "AGENT_MODEL", "value": "chat-deployment"})
+        check("agent omits VOICELIVE_MODEL", "VOICELIVE_MODEL" in agent, False)
+        check("agent omits all Web IQ settings", [name for name in agent if name.startswith("WEBIQ_")], [])
+        check("agent omits Web IQ secret even with a key", secret_names(defaults, variables, voiceBinding=binding, webIqApiKey="test-key"), [])
+    upper_model = settings(voiceBinding="MODEL")
+    check("model binding is case insensitive", upper_model, {**model, "VOICE_BINDING": {"name": "VOICE_BINDING", "value": "MODEL"}})
+
+    print()
+    print("azd parameter and nested module wiring")
+    print("-" * 62)
+    parameter_file = json.loads((ROOT / "infra" / "main.parameters.json").read_text(encoding="utf-8"))
+    for parameter, substitution in {
+        "voiceLiveModel": "${VOICELIVE_MODEL=}",
+        "webIqBaseUrl": "${WEBIQ_BASE_URL=}",
+        "webIqAllowedDomains": "${WEBIQ_ALLOWED_DOMAINS=}",
+        "webIqApiKey": "${WEBIQ_API_KEY=}",
+        "webIqLanguage": "${WEBIQ_LANGUAGE=en}",
+        "webIqRegion": "${WEBIQ_REGION=ZA}",
+    }.items():
+        check(f"azd supplies {parameter}", parameter_file["parameters"].get(parameter), {"value": substitution})
+        forwarding = []
+        for body in _walk_templates(template):
+            for resource in body.get("resources", []):
+                if resource["type"] != "Microsoft.Resources/deployments":
+                    continue
+                value = resource["properties"].get("parameters", {}).get(parameter)
+                if value is not None:
+                    forwarding.append(value["value"])
+        expression = f"[parameters('{parameter}')]"
+        expected = [expression, expression]
+        if parameter == "webIqAllowedDomains":
+            expected[0] = "[variables('webIqEffectiveDomains')]"
+        check(f"{parameter} crosses both module boundaries", forwarding, expected)
+    for body in (template, scope):
+        check("API key parameter stays secure", body["parameters"]["webIqApiKey"]["type"].lower(), "securestring")
 
     print()
     if FAILURES:

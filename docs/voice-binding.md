@@ -332,26 +332,38 @@ constraint is purely which binding the deployment was built with.
 | `VOICELIVE_MODEL` | `gpt-realtime-2` | Realtime model bound in model mode. Managed by Voice Live — no deployment, no quota. Ignored in agent mode. |
 | `WEBIQ_API_KEY` | *(unset)* | Enables `search_web` outright. Stored as a **container-app secret**, never a plain env var. Required when the managed identity cannot be bound with Web IQ. |
 | *(no flag)* | — | With no key the app asks for a Web IQ token at startup and enables `search_web` only if one comes back. Nothing to set — but the identity's client id must be **bound in the Web IQ portal**, or the calls 401 even though the token succeeded. See [auth.md](auth.md#the-keyless-web-iq-route-needs-one-thing-azure-cannot-give-you). |
-| `WEBIQ_BASE_URL` | code default | Web IQ endpoint. Optional. |
+| `WEBIQ_BASE_URL` | `https://api.microsoft.ai/v3` | Web IQ endpoint. Emitted explicitly in model-mode deployments. |
 | `WEBIQ_ALLOWED_DOMAINS` | *derived from `bingAllowedDomains`* | Comma-separated host allow-list applied to results. |
+| `WEBIQ_LANGUAGE` | `en` | Web IQ result language hint, configurable through azd. |
+| `WEBIQ_REGION` | `ZA` | Web IQ result region hint, configurable through azd. |
 
 `WEBIQ_ALLOWED_DOMAINS` is the same security boundary as `bingAllowedDomains`: a
 hard host allow-list is what makes an open-web tool safe to hand an executive
 assistant. Because the app can enable `search_web` on its own, the template
-emits the allow-list **unconditionally**, defaulting to the same hosts agent
+emits the allow-list **regardless of credentials in model mode**, defaulting to the same hosts agent
 mode already uses — so the tool cannot be switched on and left unscoped.
 
 To switch a deployment over:
 
 ```powershell
 azd env set VOICE_BINDING model
+azd env set VOICELIVE_MODEL gpt-realtime-2
+azd env set WEBIQ_BASE_URL https://api.microsoft.ai/v3
+azd env set WEBIQ_LANGUAGE en
+azd env set WEBIQ_REGION ZA
 azd env set WEBIQ_API_KEY <key>   # optional only if the identity is bound with Web IQ
 azd env set WEBIQ_ALLOWED_DOMAINS "mtn.com,sashares.co.za"   # optional; defaults to bingAllowedDomains
 azd up
 ```
 
-To switch back, set `VOICE_BINDING=agent` and redeploy. Nothing is provisioned or
-destroyed either way.
+The model, endpoint, language, and region above already have those defaults;
+setting them makes the environment's intent explicit. Model-mode containers omit
+`AGENT_MODEL`; agent-mode containers omit `VOICELIVE_MODEL` and Web IQ settings.
+Keep custom values in azd rather than only editing container variables in the
+portal, so later deployments preserve them.
+
+To switch back, set `VOICE_BINDING=agent` and redeploy. This changes the selected
+deployment; use a separate azd environment to keep both modes running.
 
 ### The prompt moves too
 

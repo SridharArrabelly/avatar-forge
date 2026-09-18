@@ -21,11 +21,17 @@ param voiceBinding string = 'agent'
 @description('Realtime model deployed by Voice Live when voiceBinding is "model". Voice Live manages this model itself — no model deployment or quota is needed.')
 param voiceLiveModel string = ''
 
-@description('Web IQ base URL used as the web tool in model mode. Empty falls back to the code default — the tool is gated on webIqApiKey, not on this.')
+@description('Web IQ endpoint in model mode. Empty resolves to https://api.microsoft.ai/v3.')
 param webIqBaseUrl string = ''
 
 @description('Comma-separated host allow-list applied to Web IQ results. Same security boundary as bingAllowedDomains — and by default the same sources: main.bicep derives these bare hosts from bingAllowedDomains, because site: cannot express the paths and boost levels Bing Custom Search enforces.')
 param webIqAllowedDomains string = ''
+
+@description('Web IQ result language hint in model mode.')
+param webIqLanguage string = 'en'
+
+@description('Web IQ result region hint in model mode.')
+param webIqRegion string = 'ZA'
 
 @description('Web IQ API key. Passed as a container-app SECRET, never as a plain env var. Optional: with no key the app authenticates to Web IQ with its managed identity, and decides at startup whether that works.')
 @secure()
@@ -130,15 +136,14 @@ var auditEnv = toLower(enableAudit) == 'true' ? [
   }
 ] : []
 
-// Model-mode env (additive). VOICE_BINDING defaults to 'agent', so a deploy
-// that sets nothing is byte-identical to today: the Foundry agent stays bound
-// and none of these variables are read. VOICELIVE_MODEL only matters when the
-// binding is 'model' — Voice Live manages that model itself, so there is no
-// model deployment and no quota request behind it.
+// Keep the effective model visible without exposing the other binding's setting.
+var modelBinding = toLower(voiceBinding) == 'model'
 var voiceBindingEnv = concat([
   { name: 'VOICE_BINDING', value: voiceBinding }
-], empty(voiceLiveModel) ? [] : [
-  { name: 'VOICELIVE_MODEL', value: voiceLiveModel }
+], modelBinding ? [
+  { name: 'VOICELIVE_MODEL', value: empty(voiceLiveModel) ? 'gpt-realtime-2' : voiceLiveModel }
+] : [
+  { name: 'AGENT_MODEL', value: agentModel }
 ])
 
 // Web IQ is the web tool in model mode. Binding Voice Live to a model removes
@@ -154,23 +159,25 @@ var voiceBindingEnv = concat([
 // tool is usable by asking for a Web IQ token (web_search_available() in
 // backend/voice/tools.py), because a flag can claim an entitlement a tenant does
 // not have and a token cannot. That means the app can switch search_web on with
-// no key present, so the allow-list must ALWAYS be here — the dangerous state is
+// no key present, so model mode must ALWAYS include the allow-list — the dangerous state is
 // an enabled web tool with no host restriction, which would answer from the
 // entire open web while agent mode stayed scoped to bingAllowedDomains.
-var webIqKeyed = !empty(webIqApiKey)
+var webIqKeyed = modelBinding && !empty(webIqApiKey)
 var webIqSecrets = webIqKeyed ? [
   {
     name: 'webiq-api-key'
     value: webIqApiKey
   }
 ] : []
-var webIqEnv = concat(webIqKeyed ? [
+var webIqEnv = modelBinding ? concat(webIqKeyed ? [
   { name: 'WEBIQ_API_KEY', secretRef: 'webiq-api-key' }
-] : [], empty(webIqBaseUrl) ? [] : [
-  { name: 'WEBIQ_BASE_URL', value: webIqBaseUrl }
+] : [], [
+  { name: 'WEBIQ_BASE_URL', value: empty(webIqBaseUrl) ? 'https://api.microsoft.ai/v3' : webIqBaseUrl }
+  { name: 'WEBIQ_LANGUAGE', value: empty(webIqLanguage) ? 'en' : webIqLanguage }
+  { name: 'WEBIQ_REGION', value: empty(webIqRegion) ? 'ZA' : webIqRegion }
 ], empty(webIqAllowedDomains) ? [] : [
   { name: 'WEBIQ_ALLOWED_DOMAINS', value: webIqAllowedDomains }
-])
+]) : []
 
 // Channel D Teams media-bot env (additive). The .NET media bot connects to the
 // /ws/acs/audio bridge, which only needs Voice Live (no ACS resource). MEETING_BOT_ENABLED
@@ -239,7 +246,6 @@ resource app 'Microsoft.App/containerApps@2024-10-02-preview' = {
             { name: 'PROJECT_ENDPOINT', value: projectEndpoint }
             { name: 'AGENT_NAME', value: agentName }
             { name: 'AGENT_PROJECT_NAME', value: agentProjectName }
-            { name: 'AGENT_MODEL', value: agentModel }
             { name: 'EMBEDDING_DEPLOYMENT', value: embeddingDeployment }
             { name: 'AZURE_SEARCH_ENDPOINT', value: searchEndpoint }
             { name: 'SEARCH_CONNECTION_NAME', value: searchConnectionName }

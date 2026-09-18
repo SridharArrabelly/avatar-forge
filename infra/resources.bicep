@@ -38,8 +38,12 @@ param voiceLiveModel string = ''
 
 @description('"true"/"false" string. Developer mode exposes the settings panel and live transcript so settings can be tried live while testing. Default "false" is the production experience, with settings locked.')
 param developerMode string = 'false'
-@description('Web IQ base URL — the web tool in model mode. Empty uses the code default.')
+@description('Web IQ endpoint in model mode. Empty resolves to https://api.microsoft.ai/v3.')
 param webIqBaseUrl string = ''
+@description('Web IQ result language hint in model mode.')
+param webIqLanguage string = 'en'
+@description('Web IQ result region hint in model mode.')
+param webIqRegion string = 'ZA'
 @description('Comma-separated host allow-list for Web IQ results.')
 param webIqAllowedDomains string = ''
 @description('Web IQ API key, passed to the container app as a secret.')
@@ -365,6 +369,8 @@ module app 'modules/containerApp.bicep' = {
     voiceLiveModel: voiceLiveModel
     developerMode: developerMode
     webIqBaseUrl: webIqBaseUrl
+    webIqLanguage: webIqLanguage
+    webIqRegion: webIqRegion
     webIqAllowedDomains: webIqAllowedDomains
     webIqApiKey: webIqApiKey
     appInsightsConnectionString: appInsightsConnectionStringEffective

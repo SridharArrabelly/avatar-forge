@@ -86,8 +86,14 @@ It does not expose voiceBinding, which is deployment-wide by design.
 @allowed([ 'true', 'false' ])
 param developerMode string = 'false'
 
-@description('Web IQ base URL. This is the web tool in model mode, where the agent (and therefore its managed Bing grounding tool) is out of the picture. Leave empty to use the code default — the tool is switched on by webIqApiKey, not by this.')
+@description('Web IQ endpoint in model mode. Empty resolves to https://api.microsoft.ai/v3. Authentication uses an optional API key or the managed identity.')
 param webIqBaseUrl string = ''
+
+@description('Web IQ result language hint in model mode.')
+param webIqLanguage string = 'en'
+
+@description('Web IQ result region hint in model mode.')
+param webIqRegion string = 'ZA'
 
 @description('Comma-separated hosts that scope Web IQ searches, e.g. "mtn.com,sashares.co.za". Web IQ has no server-side allow-list, so these are compiled into site: operators on the query. Same intent as bingAllowedDomains — an open-web tool answering to an executive should not be able to cite anywhere at all. LEAVE EMPTY to derive the hosts from bingAllowedDomains, which is what keeps the two bindings searching the same sources; set it only to make model mode diverge deliberately.')
 param webIqAllowedDomains string = ''
@@ -362,6 +368,8 @@ module resources 'resources.bicep' = {
     voiceLiveModel: voiceLiveModel
     developerMode: developerMode
     webIqBaseUrl: webIqBaseUrl
+    webIqLanguage: webIqLanguage
+    webIqRegion: webIqRegion
     webIqAllowedDomains: webIqEffectiveDomains
     webIqApiKey: webIqApiKey
     deployBingGrounding: toLower(deployBingGrounding) == 'true'

@@ -46,7 +46,7 @@ def load_settings() -> dict:
     return settings
 
 
-def _fetch_catalog() -> str | None:
+def _fetch_catalog(*, credential=None) -> str | None:
     """Mirror of ``backend/voice/catalog.py`` for the CLI smoke test.
 
     The live Voice Live handler injects a MEETINGS LIST system message
@@ -66,7 +66,8 @@ def _fetch_catalog() -> str | None:
         return None
 
     api_key = os.getenv("AZURE_SEARCH_API_KEY", "").strip()
-    credential = AzureKeyCredential(api_key) if api_key else DefaultAzureCredential()
+    if credential is None:
+        credential = AzureKeyCredential(api_key) if api_key else DefaultAzureCredential()
     client = SearchClient(endpoint=endpoint, index_name=index, credential=credential)
     try:
         # Mirrors backend/voice/catalog.py: filter on chunk_index eq 0 to

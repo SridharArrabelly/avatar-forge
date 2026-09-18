@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.43.8.12551",
-      "templateHash": "11134922463649686204"
+      "templateHash": "3295111750421932464"
     }
   },
   "parameters": {
@@ -154,7 +154,21 @@
       "type": "string",
       "defaultValue": "",
       "metadata": {
-        "description": "Web IQ base URL. This is the web tool in model mode, where the agent (and therefore its managed Bing grounding tool) is out of the picture. Leave empty to use the code default — the tool is switched on by webIqApiKey, not by this."
+        "description": "Web IQ endpoint in model mode. Empty resolves to https://api.microsoft.ai/v3. Authentication uses an optional API key or the managed identity."
+      }
+    },
+    "webIqLanguage": {
+      "type": "string",
+      "defaultValue": "en",
+      "metadata": {
+        "description": "Web IQ result language hint in model mode."
+      }
+    },
+    "webIqRegion": {
+      "type": "string",
+      "defaultValue": "ZA",
+      "metadata": {
+        "description": "Web IQ result region hint in model mode."
       }
     },
     "webIqAllowedDomains": {
@@ -640,6 +654,12 @@
           "webIqBaseUrl": {
             "value": "[parameters('webIqBaseUrl')]"
           },
+          "webIqLanguage": {
+            "value": "[parameters('webIqLanguage')]"
+          },
+          "webIqRegion": {
+            "value": "[parameters('webIqRegion')]"
+          },
           "webIqAllowedDomains": {
             "value": "[variables('webIqEffectiveDomains')]"
           },
@@ -733,7 +753,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.43.8.12551",
-              "templateHash": "4475397185350458663"
+              "templateHash": "15649092167862503716"
             }
           },
           "parameters": {
@@ -839,7 +859,21 @@
               "type": "string",
               "defaultValue": "",
               "metadata": {
-                "description": "Web IQ base URL — the web tool in model mode. Empty uses the code default."
+                "description": "Web IQ endpoint in model mode. Empty resolves to https://api.microsoft.ai/v3."
+              }
+            },
+            "webIqLanguage": {
+              "type": "string",
+              "defaultValue": "en",
+              "metadata": {
+                "description": "Web IQ result language hint in model mode."
+              }
+            },
+            "webIqRegion": {
+              "type": "string",
+              "defaultValue": "ZA",
+              "metadata": {
+                "description": "Web IQ result region hint in model mode."
               }
             },
             "webIqAllowedDomains": {
@@ -2830,6 +2864,12 @@
                   "webIqBaseUrl": {
                     "value": "[parameters('webIqBaseUrl')]"
                   },
+                  "webIqLanguage": {
+                    "value": "[parameters('webIqLanguage')]"
+                  },
+                  "webIqRegion": {
+                    "value": "[parameters('webIqRegion')]"
+                  },
                   "webIqAllowedDomains": {
                     "value": "[parameters('webIqAllowedDomains')]"
                   },
@@ -2900,7 +2940,7 @@
                     "_generator": {
                       "name": "bicep",
                       "version": "0.43.8.12551",
-                      "templateHash": "9973032008940133138"
+                      "templateHash": "3549841655450706487"
                     }
                   },
                   "parameters": {
@@ -2972,7 +3012,7 @@
                       "type": "string",
                       "defaultValue": "",
                       "metadata": {
-                        "description": "Web IQ base URL used as the web tool in model mode. Empty falls back to the code default — the tool is gated on webIqApiKey, not on this."
+                        "description": "Web IQ endpoint in model mode. Empty resolves to https://api.microsoft.ai/v3."
                       }
                     },
                     "webIqAllowedDomains": {
@@ -2980,6 +3020,20 @@
                       "defaultValue": "",
                       "metadata": {
                         "description": "Comma-separated host allow-list applied to Web IQ results. Same security boundary as bingAllowedDomains — and by default the same sources: main.bicep derives these bare hosts from bingAllowedDomains, because site: cannot express the paths and boost levels Bing Custom Search enforces."
+                      }
+                    },
+                    "webIqLanguage": {
+                      "type": "string",
+                      "defaultValue": "en",
+                      "metadata": {
+                        "description": "Web IQ result language hint in model mode."
+                      }
+                    },
+                    "webIqRegion": {
+                      "type": "string",
+                      "defaultValue": "ZA",
+                      "metadata": {
+                        "description": "Web IQ result region hint in model mode."
                       }
                     },
                     "webIqApiKey": {
@@ -3146,10 +3200,11 @@
                   "variables": {
                     "acsEnv": "[if(not(empty(parameters('acsEndpoint'))), createArray(createObject('name', 'ACS_ENDPOINT', 'value', parameters('acsEndpoint'))), createArray())]",
                     "auditEnv": "[if(equals(toLower(parameters('enableAudit')), 'true'), createArray(createObject('name', 'ENABLE_AUDIT', 'value', 'true'), createObject('name', 'AUDIT_SINK', 'value', 'cosmos'), createObject('name', 'AUDIT_COSMOS_ENDPOINT', 'value', parameters('auditCosmosEndpoint')), createObject('name', 'AUDIT_COSMOS_DATABASE', 'value', parameters('auditCosmosDatabase')), createObject('name', 'AUDIT_COSMOS_CONTAINER', 'value', parameters('auditCosmosContainer')), createObject('name', 'AUDIT_RETENTION_DAYS', 'value', parameters('auditRetentionDays'))), createArray())]",
-                    "voiceBindingEnv": "[concat(createArray(createObject('name', 'VOICE_BINDING', 'value', parameters('voiceBinding'))), if(empty(parameters('voiceLiveModel')), createArray(), createArray(createObject('name', 'VOICELIVE_MODEL', 'value', parameters('voiceLiveModel')))))]",
-                    "webIqKeyed": "[not(empty(parameters('webIqApiKey')))]",
+                    "modelBinding": "[equals(toLower(parameters('voiceBinding')), 'model')]",
+                    "voiceBindingEnv": "[concat(createArray(createObject('name', 'VOICE_BINDING', 'value', parameters('voiceBinding'))), if(variables('modelBinding'), createArray(createObject('name', 'VOICELIVE_MODEL', 'value', if(empty(parameters('voiceLiveModel')), 'gpt-realtime-2', parameters('voiceLiveModel')))), createArray(createObject('name', 'AGENT_MODEL', 'value', parameters('agentModel')))))]",
+                    "webIqKeyed": "[and(variables('modelBinding'), not(empty(parameters('webIqApiKey'))))]",
                     "webIqSecrets": "[if(variables('webIqKeyed'), createArray(createObject('name', 'webiq-api-key', 'value', parameters('webIqApiKey'))), createArray())]",
-                    "webIqEnv": "[concat(if(variables('webIqKeyed'), createArray(createObject('name', 'WEBIQ_API_KEY', 'secretRef', 'webiq-api-key')), createArray()), if(empty(parameters('webIqBaseUrl')), createArray(), createArray(createObject('name', 'WEBIQ_BASE_URL', 'value', parameters('webIqBaseUrl')))), if(empty(parameters('webIqAllowedDomains')), createArray(), createArray(createObject('name', 'WEBIQ_ALLOWED_DOMAINS', 'value', parameters('webIqAllowedDomains')))))]",
+                    "webIqEnv": "[if(variables('modelBinding'), concat(if(variables('webIqKeyed'), createArray(createObject('name', 'WEBIQ_API_KEY', 'secretRef', 'webiq-api-key')), createArray()), createArray(createObject('name', 'WEBIQ_BASE_URL', 'value', if(empty(parameters('webIqBaseUrl')), 'https://api.microsoft.ai/v3', parameters('webIqBaseUrl'))), createObject('name', 'WEBIQ_LANGUAGE', 'value', if(empty(parameters('webIqLanguage')), 'en', parameters('webIqLanguage'))), createObject('name', 'WEBIQ_REGION', 'value', if(empty(parameters('webIqRegion')), 'ZA', parameters('webIqRegion')))), if(empty(parameters('webIqAllowedDomains')), createArray(), createArray(createObject('name', 'WEBIQ_ALLOWED_DOMAINS', 'value', parameters('webIqAllowedDomains'))))), createArray())]",
                     "meetingBotOn": "[equals(toLower(parameters('meetingBotEnabled')), 'true')]",
                     "meetingBotEnv": "[concat(if(variables('meetingBotOn'), createArray(createObject('name', 'MEETING_BOT_ENABLED', 'value', 'true')), createArray()), if(not(empty(parameters('acsAudioSampleRate'))), createArray(createObject('name', 'ACS_AUDIO_SAMPLE_RATE', 'value', parameters('acsAudioSampleRate'))), createArray()), if(not(empty(parameters('acsRequireWakePhrase'))), createArray(createObject('name', 'ACS_REQUIRE_WAKE_PHRASE', 'value', parameters('acsRequireWakePhrase'))), createArray()), if(not(empty(parameters('acsAvatarVideoEnabled'))), createArray(createObject('name', 'ACS_AVATAR_VIDEO_ENABLED', 'value', parameters('acsAvatarVideoEnabled'))), createArray()), if(not(empty(parameters('browserJoinVideoEnabled'))), createArray(createObject('name', 'BROWSER_JOIN_VIDEO_ENABLED', 'value', parameters('browserJoinVideoEnabled'))), createArray()))]"
                   },
@@ -3208,7 +3263,7 @@
                                 "cpu": "[json('2.0')]",
                                 "memory": "4.0Gi"
                               },
-                              "env": "[concat(createArray(createObject('name', 'PORT', 'value', '3000'), createObject('name', 'AZURE_CLIENT_ID', 'value', parameters('uamiClientId')), createObject('name', 'DEVELOPER_MODE', 'value', parameters('developerMode')), createObject('name', 'AZURE_VOICELIVE_ENDPOINT', 'value', parameters('voiceliveEndpoint')), createObject('name', 'PROJECT_ENDPOINT', 'value', parameters('projectEndpoint')), createObject('name', 'AGENT_NAME', 'value', parameters('agentName')), createObject('name', 'AGENT_PROJECT_NAME', 'value', parameters('agentProjectName')), createObject('name', 'AGENT_MODEL', 'value', parameters('agentModel')), createObject('name', 'EMBEDDING_DEPLOYMENT', 'value', parameters('embeddingDeployment')), createObject('name', 'AZURE_SEARCH_ENDPOINT', 'value', parameters('searchEndpoint')), createObject('name', 'SEARCH_CONNECTION_NAME', 'value', parameters('searchConnectionName')), createObject('name', 'SEARCH_INDEX_NAME', 'value', parameters('searchIndexName')), createObject('name', 'VOICELIVE_VOICE', 'value', parameters('voiceLiveVoice')), createObject('name', 'BING_CONNECTION_NAME', 'value', parameters('bingConnectionName')), createObject('name', 'BING_CUSTOM_CONFIG_NAME', 'value', parameters('bingCustomConfigName')), createObject('name', 'AVATAR_TYPE', 'value', parameters('avatarType')), createObject('name', 'AVATAR_MODEL', 'value', parameters('avatarModel')), createObject('name', 'AVATAR_DISPLAY_NAME', 'value', parameters('avatarDisplayName')), createObject('name', 'AVATAR_TAGLINE', 'value', parameters('avatarTagline')), createObject('name', 'AVATAR_BACKGROUND_IMAGE_URL', 'value', parameters('avatarBackgroundImageUrl')), createObject('name', 'ENABLE_AVATAR_SPEAKING_STYLE', 'value', parameters('enableAvatarSpeakingStyle')), createObject('name', 'SR_MODEL', 'value', parameters('srModel')), createObject('name', 'RECOGNITION_LANGUAGE', 'value', parameters('recognitionLanguage')), createObject('name', 'APPLICATIONINSIGHTS_CONNECTION_STRING', 'value', parameters('appInsightsConnectionString'))), concat(variables('acsEnv'), variables('meetingBotEnv'), variables('voiceBindingEnv'), variables('webIqEnv'), variables('auditEnv')))]",
+                              "env": "[concat(createArray(createObject('name', 'PORT', 'value', '3000'), createObject('name', 'AZURE_CLIENT_ID', 'value', parameters('uamiClientId')), createObject('name', 'DEVELOPER_MODE', 'value', parameters('developerMode')), createObject('name', 'AZURE_VOICELIVE_ENDPOINT', 'value', parameters('voiceliveEndpoint')), createObject('name', 'PROJECT_ENDPOINT', 'value', parameters('projectEndpoint')), createObject('name', 'AGENT_NAME', 'value', parameters('agentName')), createObject('name', 'AGENT_PROJECT_NAME', 'value', parameters('agentProjectName')), createObject('name', 'EMBEDDING_DEPLOYMENT', 'value', parameters('embeddingDeployment')), createObject('name', 'AZURE_SEARCH_ENDPOINT', 'value', parameters('searchEndpoint')), createObject('name', 'SEARCH_CONNECTION_NAME', 'value', parameters('searchConnectionName')), createObject('name', 'SEARCH_INDEX_NAME', 'value', parameters('searchIndexName')), createObject('name', 'VOICELIVE_VOICE', 'value', parameters('voiceLiveVoice')), createObject('name', 'BING_CONNECTION_NAME', 'value', parameters('bingConnectionName')), createObject('name', 'BING_CUSTOM_CONFIG_NAME', 'value', parameters('bingCustomConfigName')), createObject('name', 'AVATAR_TYPE', 'value', parameters('avatarType')), createObject('name', 'AVATAR_MODEL', 'value', parameters('avatarModel')), createObject('name', 'AVATAR_DISPLAY_NAME', 'value', parameters('avatarDisplayName')), createObject('name', 'AVATAR_TAGLINE', 'value', parameters('avatarTagline')), createObject('name', 'AVATAR_BACKGROUND_IMAGE_URL', 'value', parameters('avatarBackgroundImageUrl')), createObject('name', 'ENABLE_AVATAR_SPEAKING_STYLE', 'value', parameters('enableAvatarSpeakingStyle')), createObject('name', 'SR_MODEL', 'value', parameters('srModel')), createObject('name', 'RECOGNITION_LANGUAGE', 'value', parameters('recognitionLanguage')), createObject('name', 'APPLICATIONINSIGHTS_CONNECTION_STRING', 'value', parameters('appInsightsConnectionString'))), concat(variables('acsEnv'), variables('meetingBotEnv'), variables('voiceBindingEnv'), variables('webIqEnv'), variables('auditEnv')))]",
                               "probes": [
                                 {
                                   "type": "Liveness",

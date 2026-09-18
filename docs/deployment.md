@@ -172,6 +172,18 @@ azd up
 These two variables are the only avatar-selection settings. See
 [configuration.md](configuration.md#selecting-an-avatar) for the four modes.
 
+For **model mode**, provisioning explicitly sets `VOICELIVE_MODEL=gpt-realtime-2`
+and Web IQ's endpoint, language (`en`), region (`ZA`), and derived domain list in
+the container. Override these through `azd env set VOICELIVE_MODEL`,
+`WEBIQ_BASE_URL`, `WEBIQ_LANGUAGE`, `WEBIQ_REGION`, and `WEBIQ_ALLOWED_DOMAINS`
+with the desired values before provisioning. If using API-key authentication, set
+`WEBIQ_API_KEY` in that azd environment as well; it is deployed as a Container Apps
+secret reference. Otherwise the managed identity needs Web IQ registration.
+See [Web IQ authentication](auth.md#the-keyless-web-iq-route-needs-one-thing-azure-cannot-give-you).
+Settings added manually in the portal are not imported into azd: preserve them in
+the intended azd environment before redeploying. `AGENT_MODEL` is omitted from
+model-mode containers, and agent-mode containers omit the realtime and Web IQ settings.
+
 Preflight also runs automatically as the `preprovision` hook, so a doomed `azd up`
 stops in seconds instead of failing twenty minutes in — skipping step 5 only means you
 find out at `azd up` instead of before it. Bypass with

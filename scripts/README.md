@@ -17,7 +17,7 @@ The prefix answers one question: **what does running this cost me?**
 | `rename_` | rewrites one setting on every surface that holds a copy of it | yes | **yes** |
 | `check_` | reads a published version and fails a build | network only | no |
 | `smoke_` | one live end-to-end question, to prove a deploy works | yes | no |
-| `bench_` | repeated measurement; long-running, prints numbers | yes | no |
+| `bench_` | repeated measurement; long-running, prints numbers | yes | usually no; matrix creates/deletes isolated benchmark agents |
 | *(no prefix)* | imported by other scripts — not meant to be run directly | — | — |
 
 `test_` is deliberately **not** in this table. In this repo it means *offline*, and
@@ -51,6 +51,7 @@ command), or individually as `uv run python scripts/<name>.py`.
 | [`smoke_audit_cosmos.py`](smoke_audit_cosmos.py) | "Can this identity actually write the audit trail?" Round-trips one document through the **production sink** ([`backend/audit/cosmos.py`](../backend/audit/cosmos.py)) — connect, write, read back, assert redaction held, delete. Proves the Entra **data-plane** role, which is the half of the audit trail no mock can cover. Run it *before* enabling audit on a deployment. |
 | [`smoke_webiq_search.py`](smoke_webiq_search.py) | "Does web grounding actually work, and is the content worth the tokens?" Calls the **production** [`search_web()`](../backend/voice/tools.py) live, then re-runs the same query with `contentFormat=passage` and `text` side by side so the difference is visible rather than argued. Reports which credential route it took; never prints the key. Needs `WEBIQ_API_KEY` — the keyless route [cannot work on a laptop](../docs/auth.md). |
 | [`bench_routing_agent.py`](bench_routing_agent.py) | Tool-routing accuracy and latency on the **agent** binding. |
+| [`bench_routing_matrix.py`](bench_routing_matrix.py) | Paced reasoning/retrieval comparison using temporary copies of the live agent. Leaves the source unchanged, captures every round privately, and reports the historical minutes+web subtotal separately. |
 | [`bench_routing_model.py`](bench_routing_model.py) | The same benchmark on the **model** binding. |
 | [`bench_audit_latency.py`](bench_audit_latency.py) | What the audit trail charges the turn it is recording. Three arms — `ENABLE_AUDIT=false`, `AUDIT_SINK=none`, `AUDIT_SINK=file` — so capture cost and sink cost are separated. Offline; touches no Azure resource. |
 | [`check_media_sdk_age.py`](check_media_sdk_age.py) | Fails once the Graph media SDK pin passes 90 days. Wired into [`../meeting-bot/MeetingBot.csproj`](../meeting-bot/MeetingBot.csproj), so a channel-D build runs it for you. |

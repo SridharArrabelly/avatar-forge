@@ -290,6 +290,68 @@ Notes:
   awarding internal questions a free pass because only one tool exists. External
   answer quality is still untestable until `WEBIQ_API_KEY` is configured.
 
+## Paced reasoning/retrieval matrix without changing the live agent
+
+Use `scripts/bench_routing_matrix.py` to compare reasoning `none`/`low` at
+AI Search `top_k=5/8` and matching Bing `count=5/8`. Each configuration gets
+the same selected questions, three independent rounds, and a separate
+subtotal for the historical ten (minutes + web). By default it includes all
+15 core questions; use `--groups minutes web` when the policy corpus is absent
+or excluded. The script copies the **live agent definition**, changes only
+the requested model deployment, reasoning effort and retrieval breadth, and
+creates a uniquely named benchmark agent in the same Foundry project. It reads
+back that definition before inference and deletes the copy afterwards; it never
+updates the source agent or either Container App.
+
+`--model` may select another **already deployed** model in the same project
+without switching the live agent. Resuming with a different benchmark model is
+rejected; use a separate output directory for each model.
+
+```powershell
+$env:PYTHONIOENCODING='utf-8'
+uv run python scripts\bench_routing_matrix.py `
+  --env-file .azure\avatar-agent-env\.env `
+  --output-dir "$env:TEMP\avatar-luna-benchmark-20260918" `
+  --model gpt-5.6-luna --runs 3 --groups minutes web `
+  --interval 8 --token-budget 240000 --reserve-tokens 30000
+```
+
+Use a **new, empty output directory outside the repository**. It contains all
+rounds' answers, retrieved passages, citations, usage, errors, and exact agent
+definitions; these may include private meeting and policy text and must not be
+committed. The source environment file is read, not copied or changed. Azure CLI
+credentials are used explicitly, so a deployed managed-identity client ID cannot
+accidentally select the local authentication path.
+
+The example is 120 scored turns (10 questions x 3 rounds x 4 configurations),
+run serially; including policies gives 180. These pacing arguments reserve at
+least 30,000 tokens per attempt against a 240,000-token rolling 61-second budget,
+with at least eight seconds between request starts. Observed usage can increase
+the reservation. This leaves headroom below a 333,000 TPM deployment; it is a
+conservative client-side estimate, **not** a guarantee against server admission
+limits or concurrent traffic. Transient errors honor numeric Retry-After headers
+and wait at least 65 seconds before retrying. Permanent or exhausted errors stop
+the matrix rather than silently producing a success-shaped score.
+
+Unlike the original agent harness, this runner saves **every** round and requires
+a completed response event. It supplies `TODAY` plus a silent meeting catalogue,
+matching the current prompt's requirement for relative-date questions. Successful
+attempt latency excludes pacing and retry sleeps; wall time and retry errors are
+stored separately. Routing is still only the first-tool classifier: inspect all
+tool calls, retrieved evidence, and answers before making a quality claim.
+
+`--efforts none --breadths 5 --runs 1 --question-limit 1` is a setup pilot, not a
+scored comparison. `--efforts medium` is available for a separately requested
+follow-up; medium is not part of the default matrix.
+
+`--resume` reuses completed matching turns from the output directory, allowing
+the selected groups to be narrowed without rerunning successful answers. It
+rejects changed source definitions, catalogues, dates, and duplicate completed
+turns. After forcibly stopping a process, delete only its recorded temporary
+benchmark agent before resuming; normal completion and handled errors perform
+that cleanup automatically. Excluded groups remain in the private original
+evidence but are not included in the resumed scores.
+
 ---
 
 # Model-mode baseline (`gpt-realtime-2`)
@@ -440,3 +502,404 @@ slips into the deferral failure mode.
 >
 > Still open in the same family: the board-of-directors-as-an-image gap on
 > mtn.com/leadership.
+
+---
+
+# Luna comparison — 18 September 2026
+
+**Scope:** `avatar-agent-env`, deployed `gpt-5.6-luna` version `2026-07-09`,
+DataZoneStandard, 333,000 TPM / 333 RPM. Four configurations:
+`reasoning.effort=none/low` x AI Search `top_k=5/8`, with Bing `count` matching
+`top_k`. **Ten questions x three rounds per configuration = 120 scored turns.**
+These are the historical five minutes + five web questions (current core IDs
+Q1-5 and Q11-15), not the policy questions or boundary tier.
+
+Policies were explicitly excluded at the owner's request: customer policy
+documents had intentionally been removed. A read-only index check found
+110 meeting-minutes chunks and zero policy chunks. No policy documents were
+loaded. The initial run had included policies; it was stopped, its temporary
+agent deleted, and resumed with only minutes + web. Completed matching turns
+were retained; all exploratory policy turns and the one-question setup pilot
+are excluded from every table below.
+
+## Configuration and preservation
+
+The source was `AvatarAgent` version 5: Luna / none / 8/8. The matrix copied its
+exact prompt and hosted tool connections into temporary agents; only reasoning
+effort and retrieval breadth changed. The source definition's SHA-256 was
+captured privately, and its version and definition were unchanged after the run.
+Both live Container Apps and all azd environment settings were left untouched.
+All benchmark agents, including the interrupted copy, were deleted.
+
+Each question used a fresh response without conversation history. The same
+ten-meeting catalogue and `TODAY: Friday, 18 September 2026 (UTC)` context were
+supplied across configurations. All 120 response objects reported model
+`gpt-5.6-luna` and the requested reasoning effort. The none configurations
+reported zero reasoning tokens; low reported 1,859 tokens at 5/5 and 1,857
+at 8/8 across their respective 30 turns.
+
+## Routing and latency
+
+**All four configurations routed 30/30 correctly**: minutes 15/15 and web
+15/15 in each. Every question passed routing in all three rounds. This is
+**100% routing, not 100% answer quality**.
+
+| Luna configuration | Routing | First token mean / median | Completion mean / median | Maximum completion |
+|---|---|---|---|---|
+| none, 5/5 | 30/30 | 5.61s / 4.49s | 7.06s / 5.73s | 47.65s |
+| none, 8/8 | 30/30 | 4.84s / 4.61s | 5.98s / 5.73s | 13.08s |
+| low, 5/5 | 30/30 | 6.49s / 5.69s | 7.67s / 6.93s | 16.66s |
+| low, 8/8 | 30/30 | 12.97s / 6.11s | 14.14s / 7.21s | 203.24s |
+
+All turns eventually completed. **No observed HTTP 429s and no exhausted
+retries.** Low/8 had one transport `APIConnectionError`, recovered after the
+runner's backoff; its retry wait is excluded from the successful-attempt latency.
+The 203.24s low/8 turn was a completed response, with 203.13s to first text and
+completed hosted-tool statuses. Its cause was not diagnosed, so it must not be
+called a reasoning-cost or throttling measurement. It remains in the mean;
+the median shows the otherwise much shorter typical latency. The 47.65s
+none/5 outlier also had no client retry.
+
+The subsequent Terra comparison inspected the saved server timestamps too:
+Luna's 203.24s client-observed turn spans only **7 seconds** between the response's
+`created_at` and `completed_at`; the 47.65s turn spans **20 seconds**. Those
+integer-resolution server windows exclude time outside the server response
+lifecycle. They reinforce why the client-side tails must not be attributed
+entirely to model inference; the transport/client/queue contribution was not
+isolated.
+
+Low used additional tool calls: 11/30 turns at 5/5 and 6/30 at 8/8 used two or
+three calls; both none configurations used exactly one call on every turn.
+The 120 scored responses reported 1,250,263 total tokens, including cached
+input tokens; this excludes exploratory/pilot and unsuccessful request usage.
+Pacing reserved 30,000 tokens per attempt against a 240,000-token rolling budget,
+with at least eight seconds between starts.
+
+## Answer quality
+
+**Low/5 was the best Luna configuration in this sample: 20/30 source-review
+passes, not 30/30.** These are factual/completeness verdicts, separate from
+routing and speech formatting. An **unverified** answer is not proven false;
+it lacks enough evidence to award a pass. No configuration reached 100%, even
+if the unverified share-price answers were subsequently confirmed.
+
+| Luna configuration | Minutes pass | Web pass | Overall pass | Incomplete | Factual/unsupported error | Unverified |
+|---|---|---|---|---|---|---|
+| none, 5/5 | 8/15 | 4/15 | 12/30 (40.0%) | 9 | 4 | 5 |
+| none, 8/8 | 12/15 | 6/15 | 18/30 (60.0%) | 5 | 4 | 3 |
+| low, 5/5 | 13/15 | 7/15 | **20/30 (66.7%)** | 5 | 2 | 3 |
+| low, 8/8 | 12/15 | 6/15 | 18/30 (60.0%) | 5 | 4 | 3 |
+
+This is a source-based review of a small, fixed question set, not a calibrated
+model-wide accuracy estimate. Public answers were checked independently where
+the hosted tool did not expose its results, as explained below. Do not compare
+these percentages to the historical **routing** percentages.
+
+### Minutes answer quality
+
+All 60 minutes answers were reviewed against both the passages actually returned
+on that turn and the full indexed text of the three relevant meetings. A pass
+requires a materially correct, sufficiently complete answer supported by the
+retrieved evidence. Reasonable compression for the 70-word voice target is
+allowed. A cautious retrieval-limited nonanswer is **incomplete**, not a
+hallucination; an unsupported assertion or wrong date/deadline attribution is
+an **error**. Style violations are recorded separately.
+
+| Luna configuration | Pass / 15 | Incomplete | Error | Q1 / Q2 / Q3 / Q4 / Q5 passes, each out of 3 |
+|---|---|---|---|---|
+| none, 5/5 | 8/15 | 6 | 1 | 3 / 2 / 0 / 3 / 0 |
+| none, 8/8 | 12/15 | 3 | 0 | 3 / 3 / 3 / 3 / 0 |
+| low, 5/5 | 13/15 | 2 | 0 | 3 / 3 / 3 / 3 / 1 |
+| low, 8/8 | 12/15 | 2 | 1 | 3 / 3 / 3 / 2 / 1 |
+
+- **Q3, attendance:** none/5 failed to supply the list in all three rounds;
+  the other configurations answered it in all three. The meeting exists in
+  the index; this was a retrieval/answer-completeness failure, not an absent
+  source document.
+- **Q5, meeting-scoped strategy:** remained the weakest question. Neither none
+  configuration produced a passing answer; low passed once at each breadth.
+  Most misses were cautious nonanswers after retrieval returned other meetings.
+  One none/5 answer instead attributed other meetings' strategy to the requested
+  meeting, which is a materially different and worse failure.
+- **Other misses:** none/5 omitted a key action-owner group once. Low/8
+  incorrectly extended a deadline to a different action once, despite correct
+  routing. Its 203-second turn was judged on content independently of latency.
+- **Spoken-output issues:** one overlength minutes answer in none/5, two in
+  none/8, one in low/5 and one in low/8. Low/5 leaked citation markers three
+  times; low/8 once. These were not deducted again from factual pass counts.
+
+**Low/5 had the strongest minutes result in this sample, but no configuration
+achieved 100% minutes answer quality.** More reasoning was not uniformly better,
+and 8/8 did not eliminate the meeting-scoped strategy retrieval gap.
+
+### Web answer quality
+
+| Luna configuration | Pass / 15 | Incomplete | Factual/unsupported error | Unverified | Q11 / Q12 / Q13 / Q14 / Q15 passes, each out of 3 |
+|---|---|---|---|---|---|
+| none, 5/5 | 4/15 | 3 | 3 | 5 | 3 / 0 / 0 / 1 / 0 |
+| none, 8/8 | 6/15 | 2 | 4 | 3 | 3 / 0 / 0 / 1 / 2 |
+| low, 5/5 | 7/15 | 3 | 2 | 3 | 3 / 0 / 0 / 3 / 1 |
+| low, 8/8 | 6/15 | 3 | 3 | 3 | 3 / 0 / 0 / 0 / 3 |
+
+**Grounding visibility is limited:** the captured Bing result bodies were empty,
+including on successful calls. Only two low/8 answers exposed citation
+annotations. A tool call or URL is not proof that the answer is supported.
+Stable public claims were therefore verified against primary publications;
+a web pass here means independently verified factual adequacy, **not proof of
+the per-turn grounding chain**.
+
+- **CFO:** all 12 answers correctly identified Tsholofelo Molefe.
+- **FY2025 revenue:** none of the 12 answers supplied the correct total.
+  Eleven gave **R218.5bn explicitly labelled service revenue** but omitted the
+  requested total; those are incomplete, not service/total mislabelling.
+  None/8 round 2 instead gave approximately **R233bn total revenue**, an error.
+  The primary income statement reports **R226,707 million = R226.707bn**
+  total revenue; service revenue is **R218,500 million**. The broad source
+  improvement measured previously in model mode did **not** establish that
+  hosted Bing in this environment retrieves and uses the right table.
+- **Share price:** all 12 were **unverified**, not declared false. Answers gave
+  plausible rand-denominated prices, but the saved evidence lacked timestamped
+  quote snapshots. An independently observed intraday price is not a fixed gold
+  value for another minute. Even a citation to MTN's changing investor page
+  cannot retrospectively establish the price at answer time.
+- **Vodacom fintech:** low/5 passed all three. Other configurations introduced
+  stale customer targets (120m instead of the announced 130m), widened or
+  narrowed the scope of transaction metrics, or added an unsupported strategy
+  claim. None/5 had two narrower verification holds over calling Vodafone Cash
+  specifically a super-app; the rest of those summaries was supported.
+- **Ambition 2025:** low/8 passed all three. Other misses replaced the original
+  four strategic priorities with platform categories, or changed the
+  "Own the Home" customer objective into a fibre-homes-passed target. A thematic
+  summary was allowed; a wrong explicit four-priority enumeration was not.
+
+Separate web speakability faults: low/5 had one bold-markdown answer; low/8
+had two citation leaks. No web answer exceeded 70 whitespace-delimited words.
+
+Primary references used for this review:
+
+- [MTN leadership](https://www.mtn.com/leadership/?tablink=executive).
+- [FY2025 Group income statement](https://mtn-investor.com/reporting/annuals-2025/summary-group-income-statement.php)
+  and [results overview / revenue analysis](https://mtn-investor.com/reporting/annuals-2025/results-overview.php).
+- [MTN investor quote](https://www.mtn.com/investors/) and its
+  [ProfileData feed](https://irhosted.profiledata.co.za/mtngroup/2019_feeds/t02_intraday.htm).
+- [Vodacom FY2026 results](https://vodacom.com/news-article.php?articleID=16836)
+  and [June 2026 quarterly update](https://www.vodacom.com/news-article.php?articleID=16942).
+- [MTN's four strategic priorities](https://www.mtn.ng/about/),
+  [Ambition 2025 target dashboard](https://www.mtn-investor.com/mtn-ir2024/our-strategic-performance-dashboard.php),
+  and [Ambition 2030](https://www.mtn-investor.com/mtn-ir2025/our-ambition-2030-strategy.php).
+
+## Comparison with the recorded winner
+
+| Configuration | Question set / repeats | Routing | Mean completion |
+|---|---|---|---|
+| Historical GPT-5.4 full / none / 8/8 | Historical 10 x 3 | 30/30 | 5.2s |
+| Luna / none / 8/8, this run | Same 10 x 3 | 30/30 | 5.98s |
+| Luna / low / 8/8, this run | Same 10 x 3 | 30/30 | 14.14s; median 7.21s |
+
+The question set and repeat count now match, but this is **not a controlled,
+contemporaneous model-only A/B**. The deployment, date, live web results,
+prompt/context history, and cache/network conditions can differ from the old
+run. GPT-5.4 was not rerun in this experiment. Its historical answer-quality
+finding was qualitative, not a per-answer scored rubric, so it cannot be
+converted retrospectively into an invented percentage. The existing tables also
+do not contain a numerical GPT-4.1-full result; none is reconstructed here.
+
+**Conclusion:** Luna's routing is reliable on this set, but this run does not
+establish it as a quality replacement for the recorded GPT-5.4 winner. Within
+Luna, low/5 offered the best reviewed answers, at a median first-token cost of
+5.69s versus 4.49s for none/5. None/8 is the lower-latency alternative with
+18/30 reviewed passes. Low/8 did not improve on low/5. The major remaining
+gaps are meeting-specific retrieval, the total-revenue table, and evidence for
+time-sensitive quotes; increasing reasoning alone is not a demonstrated fix.
+**Medium was not tested.** No production model, reasoning setting, or retrieval
+breadth was changed based on this experiment.
+
+Raw responses, passages, citations, exact definitions, and per-turn timing are
+retained privately in the session artifacts under `luna-matrix-20260918`.
+They are not committed because they contain internal meeting text. The reusable
+matrix command and pacing mechanics are documented above.
+
+---
+
+# Terra vs fresh GPT-5.4 baseline — 18 September 2026
+
+This follow-up runs **the same ten minutes + web questions**, three rounds per
+configuration, with policies excluded throughout. Terra has four configurations
+(none/low x 5/5 and 8/8), **120 turns**. GPT-5.4 is rerun at its recorded
+winning configuration (none / 8/8), **30 turns**, rather than comparing solely
+with the old qualitative winner narrative.
+
+| Deployment | Version | SKU | Observed quota |
+|---|---|---|---|
+| `gpt-5.6-terra` | `2026-07-09` | GlobalStandard | 501,000 TPM / 501 RPM |
+| `gpt-5.4` | `2026-03-05` | GlobalStandard | 250,000 TPM / 2,500 RPM |
+
+Both use the same Foundry resource and copies of `AvatarAgent` version 5.
+The live agent was **not switched**: `--model` overrides only the isolated
+benchmark copy. Prompt and catalogue hashes match each other **and the Luna
+run**. A read-only check confirmed the same 110-chunk index and byte-for-byte
+equivalent reference passages for all three tested meetings. The selected
+model, reasoning effort, and retrieval breadth are the only definition changes.
+
+The fresh GPT-5.4 baseline ran concurrently with the first part of Terra's
+matrix, under separate per-deployment pacing budgets. This is a substantially
+better controlled comparison than the historical one, but still a small,
+non-randomised run against changing live web results and shared hosted tools.
+Terra used the same 240,000-token rolling budget as Luna; GPT-5.4 used
+180,000, with 30,000 reserved per attempt and at least eight seconds between
+starts for both.
+
+## Routing and latency
+
+**150/150 turns completed and routed correctly**. Each configuration is 30/30,
+split into 15/15 minutes and 15/15 web. There were **zero recorded API errors,
+zero retries, and no observed 429s** in either run.
+
+| Model / configuration | Routing | Client first token mean / median | Client completion mean / median | Server window mean / median |
+|---|---|---|---|---|
+| GPT-5.4 none, 8/8 | 30/30 | 5.05s / 4.80s | 6.47s / 6.07s | 5.53s / 5s |
+| Terra none, 5/5 | 30/30 | 4.97s / 4.88s | 6.27s / 6.40s | 5.47s / 5s |
+| Terra none, 8/8 | 30/30 | 28.16s / 5.74s | 29.31s / 6.88s | 6.00s / 6s |
+| Terra low, 5/5 | 30/30 | 7.09s / 6.29s | 8.31s / 7.58s | 7.53s / 7s |
+| Terra low, 8/8 | 30/30 | 6.56s / 6.28s | 7.92s / 7.36s | 7.27s / 7s |
+
+**Do not read the Terra none/8 mean as model inference time.** Round 1's
+share-price response took **686.37s client-observed**, but its server
+`completed_at - created_at` was only **4 seconds**. The response and Bing tool
+both completed without an API error or client retry. The excess time is outside
+that recorded server window; its transport/client/queue cause was not isolated.
+The outlier remains in the client mean, while the median and server window
+make the distinction visible. Server timestamps are integer-resolution and
+do not measure first-token latency or replace end-to-end client measurements.
+
+On the directly matched none/8 setting, Terra's median first token was **5.74s**
+versus **4.80s** for the fresh GPT-5.4 run. Terra none/5 was roughly comparable
+at **4.88s**, but that changes retrieval breadth as well as the model.
+
+## Answer quality
+
+**Terra low/5 and low/8 tied for the strongest result: 23/30 source-review
+passes (76.7%), versus 15/30 (50.0%) for the fresh GPT-5.4 baseline.** At the
+directly matched none/8 setting, Terra passed 18/30 versus GPT-5.4's 15/30.
+The larger 23/30 improvement changes reasoning effort as well as the model;
+it is a configuration comparison, not a model-only causal estimate.
+
+| Model / configuration | Minutes pass | Web pass | Overall pass | Incomplete | Factual/unsupported error | Unverified |
+|---|---|---|---|---|---|---|
+| GPT-5.4 none, 8/8 (fresh) | 7/15 | 8/15 | 15/30 (50.0%) | 7 | 5 | 3 |
+| Terra none, 5/5 | 9/15 | 9/15 | 18/30 (60.0%) | 9 | 0 | 3 |
+| Terra none, 8/8 | 9/15 | 9/15 | 18/30 (60.0%) | 9 | 0 | 3 |
+| Terra low, 5/5 | 12/15 | 11/15 | **23/30 (76.7%)** | 4 | 0 | 3 |
+| Terra low, 8/8 | 12/15 | 11/15 | **23/30 (76.7%)** | 4 | 0 | 3 |
+| Luna low, 5/5 (earlier same day) | 13/15 | 7/15 | 20/30 (66.7%) | 5 | 2 | 3 |
+
+Use the same cautions as the Luna review: an unverified quote is not a proven
+wrong answer; a supported but incomplete answer does not pass; style faults
+are separate. Qualified revenue approximations count as adequate in this
+table, with exact-figure sensitivity reported below. These are fixed-set
+review results, not calibrated model-wide accuracy estimates.
+
+### Minutes answers
+
+| Model / configuration | Pass / 15 | Incomplete | Factual/unsupported error | Q1 / Q2 / Q3 / Q4 / Q5 passes, each out of 3 |
+|---|---|---|---|---|
+| GPT-5.4 none, 8/8 | 7/15 | 5 | 3 | 3 / 1 / 0 / 3 / 0 |
+| Terra none, 5/5 | 9/15 | 6 | 0 | 3 / 3 / 0 / 3 / 0 |
+| Terra none, 8/8 | 9/15 | 6 | 0 | 3 / 3 / 0 / 3 / 0 |
+| Terra low, 5/5 | 12/15 | 3 | 0 | 3 / 3 / 2 / 3 / 1 |
+| Terra low, 8/8 | 12/15 | 3 | 0 | 3 / 3 / 2 / 3 / 1 |
+
+- **Terra none:** all six attendance answers were cautious retrieval-limited
+  nonanswers. Strategy answers either lacked the relevant meeting or provided
+  broad themes without the distinctive agreed decisions. Neither increasing
+  breadth alone nor correct routing fixed these gaps.
+- **Terra low:** attendance improved to 2/3 and strategy to 1/3 at both
+  breadths. Remaining nonanswers and incomplete summaries were not counted
+  as passes. No cross-meeting attribution errors were found.
+- **Fresh GPT-5.4:** two attendance answers substituted another meeting's
+  roster; one strategy answer attributed other meetings' decisions to the
+  requested date. Other misses omitted key action-owner groups or the specific
+  strategy decisions. These errors occurred despite correct tool routing.
+- **Style:** no requested minutes style faults were found in Terra. GPT-5.4's
+  three customer-experience summaries exceeded 70 words (81/82/91) while
+  still passing factual evaluation.
+
+### Web answers
+
+The same source-based rubric used for Luna was applied to all 75 web answers.
+Stable claims were checked against the primary references above. All captured
+Bing result bodies were empty and no citation annotations were present in these
+runs, so the same per-turn grounding limitation applies. No web answer had a
+listed URL, citation-token, markdown, or over-70-word style violation.
+
+| Model / configuration | Pass / 15 | Incomplete | Factual/unsupported error | Unverified | Q11 / Q12 / Q13 / Q14 / Q15 passes, each out of 3 |
+|---|---|---|---|---|---|---|
+| GPT-5.4 none, 8/8 | 8/15 | 2 | 2 | 3 | 3 / 1 / 0 / 3 / 1 |
+| Terra none, 5/5 | 9/15 | 3 | 0 | 3 | 3 / 0 / 0 / 3 / 3 |
+| Terra none, 8/8 | 9/15 | 3 | 0 | 3 | 3 / 0 / 0 / 3 / 3 |
+| Terra low, 5/5 | 11/15 | 1 | 0 | 3 | 3 / 2 / 0 / 3 / 3 |
+| Terra low, 8/8 | 11/15 | 1 | 0 | 3 | 3 / 2 / 0 / 3 / 3 |
+
+- **Revenue improves with low reasoning, but is not solved.** Terra none
+  supplied only service revenue in all six turns. Each low configuration
+  supplied the total twice and omitted it once. GPT-5.4 supplied the total
+  once out of three. Of these five adequate total-revenue answers, **two**
+  correctly rounded it to R226.7bn; three were explicitly qualified
+  approximations (Terra about R226.5bn twice, GPT-5.4 about R226bn once).
+  Approximate-answer tolerance was applied consistently, but those three
+  answers should **not** be represented as exact financial-figure accuracy.
+  Requiring the correctly rounded reported total instead would reduce each
+  Terra low score by one and the baseline score by one.
+- **CFO and fintech:** all 15 answers to each question passed. Terra avoided
+  the unsupported or stale fintech specifics seen in parts of the Luna run.
+- **Strategy:** all 12 Terra answers passed; they provided acceptable thematic
+  summaries without falsely enumerating platform categories as the four formal
+  priorities. GPT-5.4 passed once; two answers substituted narrower
+  infrastructure/fintech objectives into an explicit four-priority list.
+- **Share prices:** all 15 remain **unverified**, not proven false. No captured
+  timestamped quote established the price at answer time. Price variation,
+  delay disclaimers and the latency outlier were not used as evidence of error.
+
+All five temporary benchmark agents were deleted. Both runs verified that
+the live agent's version and full definition remained unchanged; no Container
+App or azd settings were edited. Private evidence is retained under
+`terra-matrix-20260918` and `gpt54-baseline-20260918` in session artifacts.
+
+## Decision from this run
+
+**Terra low/5 is the best next candidate from this comparison**, tied in reviewed
+quality with low/8 but using fewer retrieved passages and fewer reported tokens
+(303,422 versus 354,016 across 30 turns). Median first-token latency is effectively
+the same for the two low settings, 6.29s versus 6.28s; this is not evidence of a
+meaningful speed difference. Terra low is slower than the fresh GPT-5.4 none/8
+baseline's 4.80s median, in exchange for stronger reviewed answers in this sample.
+
+This revises the **historical winner narrative**, not the historical measurements:
+the fresh GPT-5.4 baseline did not reproduce a near-perfect quality result under
+today's source-based rubric and retrieval conditions. Terra reduced unsupported
+cross-meeting and strategy assertions, but neither model solved the common
+retrieval and evidence gaps. In particular, **23/30 is not 100%**: the best Terra
+configurations still had four incomplete answers and three unverified quotes.
+Requiring correctly rounded reported revenue rather than accepting qualified
+approximations would reduce Terra low to **22/30** and the fresh baseline to
+**14/30**; it would not reverse the ranking.
+
+No model or configuration was promoted automatically. Medium reasoning was not
+tested. The evidence supports a follow-up candidate, not a claim of universal
+superiority or production readiness.
+
+Reproduction commands, using new private output directories:
+
+```powershell
+uv run python scripts\bench_routing_matrix.py `
+  --env-file .azure\avatar-agent-env\.env `
+  --output-dir "$env:TEMP\avatar-terra-benchmark-20260918" `
+  --model gpt-5.6-terra --runs 3 --groups minutes web `
+  --interval 8 --token-budget 240000 --reserve-tokens 30000
+
+uv run python scripts\bench_routing_matrix.py `
+  --env-file .azure\avatar-agent-env\.env `
+  --output-dir "$env:TEMP\avatar-gpt54-baseline-20260918" `
+  --model gpt-5.4 --efforts none --breadths 8 --runs 3 `
+  --groups minutes web --interval 8 --token-budget 180000 --reserve-tokens 30000
+```

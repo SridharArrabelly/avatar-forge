@@ -170,6 +170,12 @@ Leaving all of these unset is exactly today's behaviour.
 | `VOICE_BINDING` | `agent` | `agent` binds the Foundry agent; `model` binds a realtime model directly and moves the tools in-process. Any unrecognised value falls back to `agent`. |
 | `VOICELIVE_MODEL` | `gpt-realtime-2` | Realtime model bound when `VOICE_BINDING=model`. Voice Live manages it — no model deployment and no quota request. Ignored in agent mode. Verified to bind in swedencentral: `gpt-realtime-2`, `gpt-realtime-1.5`, `gpt-realtime`. |
 
+The deployment emits `VOICELIVE_MODEL` explicitly in model-mode containers,
+including its default when unset or empty. It emits `AGENT_MODEL` only in
+agent-mode containers. `AGENT_MODEL` remains an azd output for the host-side
+Foundry setup script; its presence in the azd environment does not select the
+model-mode runtime model.
+
 Model mode takes the agent out of the picture, and its managed `azure_ai_search`
 and `bing_grounding` tools go with it — the tool surface becomes in-process Python
 (`backend/voice/tools.py`). The historically named `search_minutes` tool queries
@@ -183,8 +189,21 @@ startup can obtain a Web IQ token.
 | `WEBIQ_API_KEY` | — | Enables the `search_web` tool in model mode without a startup check. Passed to the container app as a **secret**, never as a plain environment variable. Leave it unset and the app authenticates with its managed identity instead, enabling the tool only if a token comes back — but a token is not the same as being authorised, see the notes under the table. Required, in Azure as well as locally, when the identity cannot be bound with Web IQ. If neither route works the web tool stays off and the assistant answers from the internal minutes-and-policies corpus alone. |
 | `WEBIQ_BASE_URL` | `https://api.microsoft.ai/v3` | Web IQ endpoint. |
 | `WEBIQ_ALLOWED_DOMAINS` | *derived from `bingAllowedDomains`* | Comma-separated hosts that scope the search, e.g. `jse.co.za,mtn.com`. Web IQ has no server-side allow-list — its request model exposes no `site` field — so [`build_query()`](../backend/voice/tools.py) compiles these into `site:a OR site:b` operators on the query, which is the mechanism the Web IQ API documents. Same intent as `bingAllowedDomains`, and by default the **same sources**: leave this empty and `main.bicep` derives the bare hosts from `bingAllowedDomains`, so the two bindings cannot drift apart. Set it only to make model mode diverge deliberately. **Write bare hosts, not URLs and not `www.`** — see the two notes below. It is emitted **unconditionally**, whether or not a key is set, because the app can enable `search_web` on its own — so an enabled `search_web` is never an unscoped open-web search. |
-| `WEBIQ_LANGUAGE` | `en` | Result language hint. |
-| `WEBIQ_REGION` | `ZA` | Result region hint. |
+| `WEBIQ_LANGUAGE` | `en` | Result language hint. Configurable through `azd env set` and passed to the model-mode container. |
+| `WEBIQ_REGION` | `ZA` | Result region hint. Configurable through `azd env set` and passed to the model-mode container. |
+
+Web IQ settings are emitted only in model-mode containers. The base URL, language,
+and region are explicit even when unset or empty; the domain list is emitted
+independently of authentication. Agent-mode containers receive neither Web IQ
+settings nor its API-key secret.
+
+Manage these settings in the selected **azd environment**, not only in the Azure
+portal. Manual container changes are not imported into azd and may be overwritten
+by the next infrastructure deployment. Before redeploying an environment with
+manual Web IQ settings, transfer the intended values to azd, including
+`WEBIQ_API_KEY` when used. The template stores that key as a Container Apps secret
+and injects a `secretRef`, not a plain-text container variable. Do not commit the
+environment file or paste the key into logs or chat.
 
 > **There is no enable flag, and `WEBIQ_USE_ENTRA` is gone.** With no key,
 > [`web_search_available()`](../backend/voice/tools.py) asks for a Web IQ token
