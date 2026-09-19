@@ -294,7 +294,7 @@ def main() -> int:
 
     model = settings(agentModel="chat-deployment")
     expected_defaults = {
-        "VOICELIVE_MODEL": "gpt-realtime-2",
+        "VOICELIVE_MODEL": "gpt-realtime-2.1",
         "WEBIQ_BASE_URL": "https://api.microsoft.ai/v3",
         "WEBIQ_LANGUAGE": "en",
         "WEBIQ_REGION": "ZA",
@@ -308,6 +308,15 @@ def main() -> int:
     empty = settings(voiceLiveModel="", webIqBaseUrl="", webIqLanguage="", webIqRegion="")
     for name, value in expected_defaults.items():
         check(f"empty input preserves {name} default", empty.get(name), {"name": name, "value": value})
+
+    for selected_model in ("gpt-realtime-2", "gpt-realtime-2.1", "gpt-realtime-2.1-mini"):
+        selected = settings(voiceLiveModel=selected_model, agentModel="unrelated-chat-model")
+        check(
+            f"model selection {selected_model} reaches the container unchanged",
+            selected.get("VOICELIVE_MODEL"),
+            {"name": "VOICELIVE_MODEL", "value": selected_model},
+        )
+        check(f"{selected_model} omits unrelated AGENT_MODEL", "AGENT_MODEL" in selected, False)
 
     custom = settings(
         voiceLiveModel="gpt-realtime", webIqBaseUrl="https://example.invalid/v3",

@@ -204,7 +204,7 @@ azd up
 These two variables are the only avatar-selection settings. See
 [configuration.md](configuration.md#selecting-an-avatar) for the four modes.
 
-For **model mode**, provisioning explicitly sets `VOICELIVE_MODEL=gpt-realtime-2`
+For **model mode**, provisioning explicitly sets `VOICELIVE_MODEL=gpt-realtime-2.1`
 and Web IQ's endpoint, language (`en`), region (`ZA`), and derived domain list in
 the container. Override these through `azd env set VOICELIVE_MODEL`,
 `WEBIQ_BASE_URL`, `WEBIQ_LANGUAGE`, `WEBIQ_REGION`, and `WEBIQ_ALLOWED_DOMAINS`
@@ -215,6 +215,24 @@ See [Web IQ authentication](auth.md#the-keyless-web-iq-route-needs-one-thing-azu
 Settings added manually in the portal are not imported into azd: preserve them in
 the intended azd environment before redeploying. `AGENT_MODEL` is omitted from
 model-mode containers, and agent-mode containers omit the realtime and Web IQ settings.
+
+For example, to select a model for an **existing model-mode environment**
+(replace `my-model-env` with its azd environment name):
+
+```powershell
+# Choose gpt-realtime-2, gpt-realtime-2.1, or gpt-realtime-2.1-mini.
+# gpt-realtime-2.1 is already the default; this overrides it to gpt-realtime-2.
+azd env set VOICELIVE_MODEL gpt-realtime-2 --environment my-model-env
+azd up --environment my-model-env
+```
+
+The selected value is written explicitly to the container environment on
+provisioning and retained on subsequent `azd up` runs. Leaving it unset or
+empty emits `gpt-realtime-2.1`; it does not omit the container setting.
+`azd env set` alone only saves configuration, and `azd deploy` alone does not
+apply infrastructure parameter changes. Use the provisioning stage of
+`azd up` or `azd provision` to apply the environment-variable change.
+No `azd down` is needed.
 
 Preflight also runs automatically as the `preprovision` hook, so a doomed `azd up`
 stops in seconds instead of failing twenty minutes in — skipping step 5 only means you

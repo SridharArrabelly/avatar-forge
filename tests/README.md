@@ -46,6 +46,7 @@ wrong reason. Open a fresh terminal rather than debugging it.
 | [`test_agent_evaluation.py`](test_agent_evaluation.py) | Fixed-evidence/live requests, frozen settings, pacing, telemetry, narrow retries, owned cleanup and continuation without repeating successful inference. |
 | [`test_evaluation_review.py`](test_evaluation_review.py) | Blinding hides model/effort/timing while preserving evidence; denominators and tail latency stay explicit. |
 | [`test_avatar_identity.py`](test_avatar_identity.py) | That every surface resolves the assistant's name the same way, and that [`rename_avatar.py`](../scripts/rename_avatar.py) still writes enough variables to actually change it. |
+| [`test_suggested_prompts.py`](test_suggested_prompts.py) | Meeting-minutes/web starter questions, environment overrides and opt-out in both voice bindings, and matching configuration examples. |
 | [`test_agent_model_binding.py`](test_agent_model_binding.py) | That the agent binds to a model deployment that actually exists — evaluated against the generated ARM, not restated in Python. |
 | [`test_webiq_binding.py`](test_webiq_binding.py) | Mode-specific container settings, explicit realtime/Web IQ defaults, azd parameter forwarding, and a credential-independent domain list with secret-backed API keys. Run `az bicep build --file infra\main.bicep` first to refresh the generated ARM. |
 | [`test_agent_tool_wiring.py`](test_agent_tool_wiring.py) | That a missing **optional** tool degrades gracefully while a missing **required** one fails loudly. |

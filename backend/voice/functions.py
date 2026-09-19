@@ -32,7 +32,7 @@ async def execute_function(name: str, arguments: str) -> dict:
         args = {}
 
     if name == "search_minutes":
-        return await search_minutes(query=args.get("query", ""))
+        return await search_minutes(query=args.get("query", ""), top=args.get("top"))
     if name == "search_web":
         return await search_web(query=args.get("query", ""))
 

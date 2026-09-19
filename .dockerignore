@@ -7,6 +7,8 @@
 .env
 .env.*
 !.env.example
+.azure
+.azure/**
 .vscode
 .idea
 node_modules

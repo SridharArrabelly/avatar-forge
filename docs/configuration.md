@@ -196,13 +196,21 @@ Leaving all of these unset is exactly today's behaviour.
 | Variable | Default | Purpose |
 |---|---|---|
 | `VOICE_BINDING` | `agent` | `agent` binds the Foundry agent; `model` binds a realtime model directly and moves the tools in-process. Any unrecognised value falls back to `agent`. |
-| `VOICELIVE_MODEL` | `gpt-realtime-2` | Realtime model bound when `VOICE_BINDING=model`. Voice Live manages it — no model deployment and no quota request. Ignored in agent mode. Verified to bind in swedencentral: `gpt-realtime-2`, `gpt-realtime-1.5`, `gpt-realtime`. |
+| `VOICELIVE_MODEL` | `gpt-realtime-2.1` | Realtime model bound when `VOICE_BINDING=model`. Voice Live manages it — no model deployment and no quota request. Ignored in agent mode. Verified to bind in swedencentral: `gpt-realtime-2.1`, `gpt-realtime-2.1-mini`, `gpt-realtime-2`, `gpt-realtime-1.5`, `gpt-realtime`. `gpt-realtime-2.1` is the default based on measured fact-coverage results (see [`evaluation-model-mode.md`](evaluation-model-mode.md)); `gpt-realtime-2` and `gpt-realtime-2.1-mini` remain available as explicit overrides. |
 
 The deployment emits `VOICELIVE_MODEL` explicitly in model-mode containers,
 including its default when unset or empty. It emits `AGENT_MODEL` only in
 agent-mode containers. `AGENT_MODEL` remains an azd output for the host-side
 Foundry setup script; its presence in the azd environment does not select the
 model-mode runtime model.
+
+To select `gpt-realtime-2`, `gpt-realtime-2.1`, or `gpt-realtime-2.1-mini`,
+set `VOICELIVE_MODEL` in the intended azd environment before `azd up`.
+An explicit selection passes through unchanged; an unset or empty value
+still produces a visible `VOICELIVE_MODEL=gpt-realtime-2.1` container setting.
+No portal-only setting is required. For local development, set the same
+variable in `.env` and restart the backend instead. See the
+[deployment example](deployment.md#fresh-deployment-steps).
 
 Model mode takes the agent out of the picture, and its managed `azure_ai_search`
 and `bing_grounding` tools go with it — the tool surface becomes in-process Python
@@ -541,7 +549,7 @@ mode. Captions are **off** by default; suggested prompts, the on-stage composer
 | `CAPTIONS_SHOW_USER` | `false` | Also briefly show the user's last utterance in the caption band (only when `ENABLE_CAPTIONS=true`). |
 | `ENABLE_SUGGESTED_PROMPTS` | `true` | Show the first-load onboarding hint + 2–3 tappable example chips. |
 | `ONBOARDING_HINT` | *(derived)* | The one-line hint above the chips. By default the **frontend** derives it from the *effective* composer state: `Tap the mic or type to ask me anything` when the composer is shown, otherwise `Tap the mic to ask me anything` (e.g. inside Teams). Set explicitly to override everywhere. |
-| `SUGGESTED_PROMPTS` | *(3 generic)* | Pipe-separated example questions, e.g. `What can you help me with?\|Tell me about your services\|How do I get started?`. |
+| `SUGGESTED_PROMPTS` | *(3 minutes/web questions)* | Pipe-separated starter questions: `Summarise the latest board meeting\|What actions were agreed at the latest meeting?\|What is MTN's latest share price?`. These cover meeting minutes, action items, and public web information without suggesting policy documents are available. An explicit value overrides these defaults in either voice binding. |
 | `ENABLE_TEXT_INPUT` | `true` | **Host-aware.** Shows the on-stage text composer on the standalone **web** app; **always hidden inside the Microsoft Teams client** (the bot chat tab has Teams' native compose box; the avatar tab is voice-first — type via the chat tab, or in a call via the meeting chat with an `@mention`). This var is an optional **web-only** override (set `false` to hide on web too) and can **never** force the composer on in Teams. Developer mode keeps its own text input. |
 | `ENABLE_STOP_BUTTON` | `true` | Show a small Stop control next to the mic so the user can cut the avatar off mid-answer. Always visible while the avatar is on screen (greyed when idle, red while speaking); reuses the barge-in interrupt path. Teams bot chat is text-only and unaffected. |
 

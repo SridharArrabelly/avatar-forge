@@ -96,13 +96,37 @@ from backend.document_titles import display_document_title
 from backend.document_sections import SECTION_FIELDS, build_evidence_chunks, section_document
 from docx import Document
 from pypdf import PdfReader
-from dotenv import load_dotenv
+from dotenv import dotenv_values, load_dotenv
 
 from rbac_propagation import wait_for_data_plane
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-7s %(message)s")
 log = logging.getLogger("setup-aisearch")
+
+
+def load_explicit_environment(path: Path) -> dict[str, str | None]:
+    """Load an explicit ``--env-file``, bypassing ``PYTHON_DOTENV_DISABLED``.
+
+    ``load_dotenv`` silently no-ops when ``PYTHON_DOTENV_DISABLED`` is set —
+    even for an explicit path — because that flag exists to keep an ambient
+    ``.env`` out of tests and benchmark runs, not to make an operator-supplied
+    ``--env-file`` disappear. ``dotenv_values`` does not check the flag, so it
+    is used here and applied to ``os.environ`` directly, matching the same
+    idiom already used by ``scripts/setup_foundry_agent.py``.
+
+    A bare key (``FOO`` with no ``=``) overlays as an empty string rather than
+    being skipped, so an operator who meant to blank a setting gets that
+    behaviour instead of silently inheriting whatever the ambient environment
+    happened to hold.
+    """
+    if not path.is_file():
+        raise FileNotFoundError(f"Explicit --env-file does not exist or is not a file: {path}")
+    with path.open(encoding="utf-8") as stream:
+        values = dotenv_values(stream=stream)
+    os.environ.update({key: value if value is not None else "" for key, value in values.items()})
+    return values
+
 
 EMBED_DIM_DEFAULT = 1536  # text-embedding-3-small; auto-detected at runtime
 # Internal search-index structural identifiers. These are arbitrary names
@@ -663,9 +687,10 @@ def main() -> None:
     parser.add_argument("--manifest", type=Path, help="Optional ingestion receipt; contains hashes, not source text.")
     args = parser.parse_args()
     if args.env_file:
-        if not args.env_file.is_file():
+        try:
+            load_explicit_environment(args.env_file)
+        except FileNotFoundError:
             parser.error("Explicit --env-file does not exist")
-        load_dotenv(args.env_file, override=True)
     s = load_settings()
     if s["chunking_mode"] == "section":
         s["section_documents"] = prepare_section_documents(s)

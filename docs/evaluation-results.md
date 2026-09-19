@@ -289,6 +289,12 @@ The latest requested model-mode shortlist is `realtime-2.1`, `2.1-mini`, and
 identifiers and regional/model/tool/avatar compatibility remain to be verified
 before that separate track. No model-mode runs are part of this agent evaluation.
 
+The realtime model-mode track that followed (candidate shortlisting, capability
+preflight, restored runtime-Search parity and Web IQ metadata fixes, and the
+oracle/live benchmark itself) is documented separately in
+[evaluation-model-mode.md](evaluation-model-mode.md); it does not rewrite the
+agent-mode history recorded on this page.
+
 ### Reproduction tooling
 
 - [`bench_retrieval.py`](../scripts/bench_retrieval.py): read-only original-source
