@@ -23,9 +23,9 @@ rather than re-implementing it here:
 
 * explicit ``AGENT_MODEL`` always wins, greenfield or BYO
 * greenfield with ``AGENT_MODEL`` unset follows ``modelDeploymentName``
-* BYO with ``AGENT_MODEL`` unset keeps the historical ``gpt-5.4`` default, since
-  the deployment lives in an account this template did not create
-* the default-everything case is byte-identical to the old behaviour
+* BYO with ``AGENT_MODEL`` unset uses the current ``gpt-5.6-terra`` default;
+  a differently named existing deployment needs an explicit override
+* model/version/SKU defaults agree between Bicep and azd parameters
 
 Run from the repo root:
 
@@ -170,14 +170,14 @@ def main() -> int:
         "chat-prod",
     )
     check(
-        "greenfield, defaults -> unchanged from the old literal",
+        "greenfield, defaults -> Terra deployment",
         resolve(variables, defaults),
-        "gpt-5.4",
+        "gpt-5.6-terra",
     )
     check(
         "greenfield, custom model but default deployment name",
         resolve(variables, defaults, modelName="gpt-4.1"),
-        "gpt-5.4",
+        "gpt-5.6-terra",
     )
 
     # An explicit value always wins, so nobody loses control.
@@ -194,9 +194,9 @@ def main() -> int:
 
     # BYO cannot derive: this template did not name that deployment.
     check(
-        "BYO, AGENT_MODEL unset -> historical default, not the greenfield name",
+        "BYO, AGENT_MODEL unset -> current default, not the greenfield name",
         resolve(variables, defaults, modelDeploymentName="chat-prod", **BYO),
-        "gpt-5.4",
+        "gpt-5.6-terra",
     )
 
     # Guard the distinction that started all this.
@@ -215,6 +215,15 @@ def main() -> int:
         "parameters('modelName')" in blob,
         True,
     )
+    parameters = json.loads((ROOT / "infra" / "main.parameters.json").read_text(encoding="utf-8"))["parameters"]
+    for name, variable, expected in (
+        ("modelName", "MODEL_NAME", "gpt-5.6-terra"),
+        ("modelDeploymentName", "MODEL_DEPLOYMENT_NAME", "gpt-5.6-terra"),
+        ("modelVersion", "MODEL_VERSION", "2026-07-09"),
+        ("modelSkuName", "MODEL_SKU_NAME", "DataZoneStandard"),
+    ):
+        check(f"Bicep default {name}", defaults[name], expected)
+        check(f"azd default {name}", parameters[name]["value"], "${" + variable + "=" + expected + "}")
 
     print()
     if FAILURES:

@@ -37,6 +37,14 @@ wrong reason. Open a fresh terminal rather than debugging it.
 | [`test_preflight.py`](test_preflight.py) | The helpers that settle subscription / location / resource group — including the no-TTY cases, where a stray prompt would hang a deploy forever with no visible question. |
 | [`test_voice_binding.py`](test_voice_binding.py) | The agent/model switch, and every kwarg handed to the SDK's `connect()` — checked against the **installed** signature, so an SDK bump that silently drops an argument is caught. |
 | [`test_routing_matrix.py`](test_routing_matrix.py) | Benchmark pacing, explicit stream failure handling, retry eligibility, and score denominators; mocked responses only, no Azure calls. |
+| [`test_retrieval_evaluation.py`](test_retrieval_evaluation.py) | Original XML evidence offsets, complete span coverage, overlap deduplication, wrong-meeting rejection, and truncated native tool passages. Synthetic sources only. |
+| [`test_evaluation_index.py`](test_evaluation_index.py) | Evaluation-only index guards and bounded readback after indexing; mocked Search responses and no Azure calls. |
+| [`test_section_ingestion.py`](test_section_ingestion.py) | Normal section ingestion, excluded policy files, immutable index versions, embedding order and per-document upload failures. |
+| [`test_agent_retrieval.py`](test_agent_retrieval.py) | Validated retrieval settings, isolated agent clones, exact readback and source-agent preservation. |
+| [`test_evaluation_scoring.py`](test_evaluation_scoring.py) | Required original quotes must be delivered from the right source; hidden Bing evidence and negative cases are not invented recall scores. |
+| [`test_agent_audio.py`](test_agent_audio.py) | Received-audio timing stays distinct from microphone/playback timing; failed or empty audio streams cannot pass. |
+| [`test_agent_evaluation.py`](test_agent_evaluation.py) | Fixed-evidence/live requests, frozen settings, pacing, telemetry, narrow retries, owned cleanup and continuation without repeating successful inference. |
+| [`test_evaluation_review.py`](test_evaluation_review.py) | Blinding hides model/effort/timing while preserving evidence; denominators and tail latency stay explicit. |
 | [`test_avatar_identity.py`](test_avatar_identity.py) | That every surface resolves the assistant's name the same way, and that [`rename_avatar.py`](../scripts/rename_avatar.py) still writes enough variables to actually change it. |
 | [`test_agent_model_binding.py`](test_agent_model_binding.py) | That the agent binds to a model deployment that actually exists — evaluated against the generated ARM, not restated in Python. |
 | [`test_webiq_binding.py`](test_webiq_binding.py) | Mode-specific container settings, explicit realtime/Web IQ defaults, azd parameter forwarding, and a credential-independent domain list with secret-backed API keys. Run `az bicep build --file infra\main.bicep` first to refresh the generated ARM. |

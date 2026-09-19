@@ -23,6 +23,10 @@ from __future__ import annotations
 import os
 import sys
 from datetime import datetime
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from backend.document_sections import catalogue_title
 
 from azure.core.credentials import AzureKeyCredential
 from azure.identity import DefaultAzureCredential
@@ -81,7 +85,7 @@ def _fetch_catalog(*, credential=None) -> str | None:
         by_date: dict[str, str] = {}
         for r in results:
             date_iso = r.get("meeting_date")
-            title = r.get("title") or ""
+            title = catalogue_title(r.get("title") or "")
             if not date_iso:
                 continue
             if date_iso not in by_date:

@@ -3,6 +3,10 @@
 Runs LIVE paid inference and hosted Search/Bing calls. Never updates the source
 agent. Saves every answer and response privately; pass an output directory outside
 the repository. Temporary benchmark agents are deleted after each configuration.
+
+By default sweeps Search top_k and Bing count together over --breadths (5 and 8).
+Use --fixed-retrieval to keep every source tool setting unchanged and vary only
+model/reasoning. This cannot be combined with an explicit --breadths.
 """
 from __future__ import annotations
 
@@ -147,10 +151,13 @@ def summarize(records: list[dict]) -> dict:
     }
 
 
-def benchmark_definition(source: dict, model: str, effort: str, breadth: int) -> dict:
+def benchmark_definition(source: dict, model: str, effort: str, breadth: int | None) -> dict:
+    """Use breadth=None to preserve all source tools, including optional ones."""
     modified = copy.deepcopy(source)
     modified["model"] = model
     modified["reasoning"] = {"effort": effort}
+    if breadth is None:
+        return modified
     types = {tool["type"] for tool in modified["tools"]}
     if not {"azure_ai_search", "bing_custom_search_preview"} <= types:
         raise RuntimeError("Both hosted Search and Bing tools are required")
@@ -164,36 +171,74 @@ def benchmark_definition(source: dict, model: str, effort: str, breadth: int) ->
     return modified
 
 
-def main() -> int:
+def configuration_label(effort: str, breadth: int | None) -> str:
+    return f"{effort}_fixed" if breadth is None else f"{effort}_k{breadth}"
+
+
+def validate_resume(
+    previous_manifest: dict, previous_definition: dict, definition: dict, *,
+    model: str, fixed_retrieval: bool, project_endpoint: str, source_agent: str,
+) -> None:
+    if previous_manifest["model"] != model:
+        raise RuntimeError("Benchmark model changed: use a new output directory")
+    mode = "fixed" if fixed_retrieval else "swept"
+    # Manifests written before fixed retrieval existed always used breadth sweeps.
+    if previous_manifest.get("retrieval_mode", "swept") != mode:
+        raise RuntimeError("Retrieval mode changed: cannot mix fixed and swept results; use a new output directory")
+    if (
+        previous_manifest["project_endpoint"] != project_endpoint
+        or previous_manifest["source_agent"] != source_agent
+    ):
+        raise RuntimeError("Source agent or project changed: use a new output directory")
+    fingerprint = hashlib.sha256(json.dumps(definition, sort_keys=True).encode()).hexdigest()
+    if previous_definition != definition or previous_manifest["source_definition_sha256"] != fingerprint:
+        raise RuntimeError("Source definition changed: cannot combine this run with previous results")
+
+
+def argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--env-file", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--model", required=True, help="Existing model deployment for benchmark copies; does not change the live agent.")
     parser.add_argument("--efforts", nargs="+", choices=("none", "low", "medium"), default=["none", "low"])
-    parser.add_argument("--breadths", nargs="+", type=int, choices=(5, 8), default=[5, 8])
+    retrieval = parser.add_mutually_exclusive_group()
+    retrieval.add_argument("--breadths", nargs="+", type=int, choices=(5, 8), help="Sweep Search top_k and Bing count together (default: 5 8).")
+    retrieval.add_argument("--fixed-retrieval", action="store_true", help="Preserve all source tool settings; vary only model/reasoning.")
     parser.add_argument("--runs", type=int, default=3)
     parser.add_argument("--interval", type=float, default=15)
     parser.add_argument("--token-budget", type=int, default=240000)
     parser.add_argument("--reserve-tokens", type=int, default=60000)
     parser.add_argument("--question-limit", type=int, default=15, help="Use 1 for a pilot; 15 for the scored core suite.")
     parser.add_argument("--groups", nargs="+", choices=("minutes", "policies", "web"), default=["minutes", "policies", "web"])
-    parser.add_argument("--resume", action="store_true", help="Reuse completed turns with the same source definition; allows narrowing groups.")
-    args = parser.parse_args()
+    parser.add_argument("--resume", action="store_true", help="Reuse completed turns with the same source definition and retrieval mode; allows narrowing groups.")
+    return parser
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argument_parser()
+    args = parser.parse_args(argv)
+    if not args.fixed_retrieval and args.breadths is None:
+        args.breadths = [5, 8]
     if args.runs < 1 or not 1 <= args.question_limit <= 15:
         parser.error("runs must be positive and question-limit must be between 1 and 15")
     if args.interval < 0 or not 0 < args.reserve_tokens <= args.token_budget:
         parser.error("interval must be nonnegative and reserve must fit the positive token budget")
+    return args
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
     output = args.output_dir.resolve()
     if output.is_relative_to(bench.ROOT.resolve()):
-        parser.error("output-dir must be outside the repository (answers may contain private corpus text)")
+        argument_parser().error("output-dir must be outside the repository (answers may contain private corpus text)")
     output.mkdir(parents=True, exist_ok=True)
     if any(output.iterdir()) and not args.resume:
-        parser.error("output-dir must be empty; existing benchmark evidence will not be overwritten")
+        argument_parser().error("output-dir must be empty; existing benchmark evidence will not be overwritten")
     cfg = dotenv_values(args.env_file)
     required = ("PROJECT_ENDPOINT", "AGENT_NAME", "AZURE_SEARCH_ENDPOINT", "SEARCH_INDEX_NAME")
     for key in required:
         if not cfg.get(key):
-            parser.error(f"Missing {key} in env-file")
+            argument_parser().error(f"Missing {key} in env-file")
         os.environ[key] = cfg[key]
     questions = [entry for entry in bench.CORE if bench.group_of(entry[0]) in args.groups][:args.question_limit]
     pacer = Pacer(args.interval, args.token_budget, args.reserve_tokens)
@@ -208,11 +253,12 @@ def main() -> int:
         source_fingerprint = hashlib.sha256(json.dumps(definition, sort_keys=True).encode()).hexdigest()
         if args.resume:
             previous_manifest = json.loads((output / "manifest.json").read_text(encoding="utf-8"))
-            if previous_manifest["model"] != args.model:
-                raise RuntimeError("Benchmark model changed: use a new output directory")
             previous = json.loads((output / "source-definition.json").read_text(encoding="utf-8"))
-            if previous != definition:
-                raise RuntimeError("Source definition changed: cannot combine this run with previous results")
+            validate_resume(
+                previous_manifest, previous, definition, model=args.model,
+                fixed_retrieval=args.fixed_retrieval,
+                project_endpoint=cfg["PROJECT_ENDPOINT"], source_agent=cfg["AGENT_NAME"],
+            )
         catalog = bench.tfa._fetch_catalog(credential=credential)
         if not catalog:
             raise RuntimeError("No meeting catalogue: refusing a non-comparable benchmark")
@@ -227,6 +273,8 @@ def main() -> int:
             "source_version": version.version, "source_definition_sha256": source_fingerprint,
             "instructions_sha256": hashlib.sha256(definition["instructions"].encode()).hexdigest(),
             "model": args.model, "runs": args.runs, "questions": questions,
+            "retrieval_mode": "fixed" if args.fixed_retrieval else "swept",
+            "efforts": args.efforts, "breadths": args.breadths,
             "interval_s": args.interval, "token_budget_per_61s": args.token_budget,
             "reserved_tokens_per_attempt": args.reserve_tokens,
         }
@@ -242,8 +290,8 @@ def main() -> int:
         (output / "catalog.txt").write_text(catalog, encoding="utf-8")
         provider = get_bearer_token_provider(credential, "https://ai.azure.com/.default")
         for effort in args.efforts:
-            for breadth in args.breadths:
-                label = f"{effort}_k{breadth}"
+            for breadth in ([None] if args.fixed_retrieval else args.breadths):
+                label = configuration_label(effort, breadth)
                 name = f"bench-routing-{label.replace('_', '-')}-{uuid.uuid4().hex[:8]}"
                 modified = benchmark_definition(definition, args.model, effort, breadth)
                 (output / f"{label}-definition.json").write_text(json.dumps(modified, indent=2), encoding="utf-8")
@@ -289,6 +337,7 @@ def main() -> int:
                                 number = bench.CORE.index((question, expected)) + 1
                                 record = {
                                     "label": label, "model": args.model, "effort": effort, "breadth": breadth,
+                                    "retrieval_mode": manifest["retrieval_mode"],
                                     "run": run, "question_number": number, "question": question,
                                     "expected": expected, "group": bench.group_of(question),
                                     "attempt_errors": [], "status": "error",

@@ -77,9 +77,10 @@ agent-creation time; the runtime backend never talks to Bing directly.
 | `BING_SKU_NAME` | `G2` | **Optional, infra-only.** Bing pricing tier when `DEPLOY_BING_GROUNDING=true`. `G2` is the tier this project has run on; `G1` is the lower tier. |
 | `BING_CONNECTION_NAME` | *(unset — web tool disabled)* | **Optional.** Foundry connection for Grounding with Bing Custom Search (the agent's only external tool). Set for you when `DEPLOY_BING_GROUNDING=true`; otherwise name an existing connection. Leave unset for a search-only agent; naming a connection that doesn't exist skips the tool with a warning rather than failing. |
 | `BING_CUSTOM_CONFIG_NAME` | *(unset — web tool disabled)* | **Optional.** Bing Custom Search configuration name — the curated domain allow-list the web tool is restricted to. Set for you when `DEPLOY_BING_GROUNDING=true`; otherwise required alongside `BING_CONNECTION_NAME`. |
-| `AGENT_MODEL` | `gpt-5.4` | Foundry model deployment the agent runs on. Recommended: `gpt-5.4` + `AGENT_REASONING_EFFORT=none` (best tool routing; 30/30 on the harness). `gpt-5.4-mini` is a cheaper fallback; `gpt-4.1-mini` is the documented baseline. See [architecture.md](architecture.md#tool-calling-accuracy). |
-| `AGENT_REASONING_EFFORT` | `none` | Reasoning effort. **Model-dependent:** `gpt-4.x`/`gpt-4o` reject it (leave **unset** — they 400, manifesting as a silently non-speaking avatar); `gpt-5.x` accept `none\|low\|medium\|high\|xhigh`; o-series accept `low\|medium\|high`. For voice latency the validated value is `none` (real reasoning adds 4–5s to first token). Left unset on a `gpt-5.x` model the script defaults it to `none` rather than let the service default (`medium`) apply. It does **not** select a prompt — there is one agent prompt. |
-| `AI_SEARCH_TOP_K` | `8` | Chunks pulled from the meeting-minutes index per turn. |
+| `AGENT_MODEL` | `gpt-5.6-terra` | Foundry model deployment the agent runs on. Greenfield derives it from the deployment name; standalone setup uses this default when unset. Override for a differently named BYO deployment, which must already exist. See the current [evaluation results](evaluation-results.md). |
+| `AGENT_REASONING_EFFORT` | `none` | Reasoning effort. **Model-dependent:** `gpt-4.x`/`gpt-4o` reject it; leave unset for those models. GPT-5 models use explicit `none` by default; supported alternatives depend on the deployed model. Latency and tool-call changes are measured in the evaluation report, not assumed to be a fixed delay. This does **not** select a different prompt. |
+| `AI_SEARCH_TOP_K` | `5` | Positive integer: maximum Search chunks per turn. Does not change Bing count. Explicit `8` remains available for the legacy profile. |
+| `AI_SEARCH_QUERY_TYPE` | `semantic` | Agent setup only: lexical/BM25 candidates plus semantic reranking, **without vector retrieval**. Also accepts `simple`, `vector`, `vector_simple_hybrid`, `vector_semantic_hybrid`. Invalid or explicitly blank values fail before publication. The index needs a compatible semantic configuration. |
 | `BING_COUNT` | `8` | Snippets returned from the Bing Custom Search allow-list per turn. |
 
 > **The curated site allow-list is not an environment variable.** It is the
@@ -103,13 +104,40 @@ Read by [`scripts/setup_aisearch_index.py`](../scripts/setup_aisearch_index.py) 
 | `SEARCH_CONNECTION_NAME` | `aisearch-connection` | **Required.** AI Search connection name in the Foundry project. |
 | `SEARCH_INDEX_NAME` | `knowledge-index` | **Required.** Index name to create/update and query. |
 | `AZURE_SEARCH_API_KEY` | — | Optional; if unset, AI Search uses `DefaultAzureCredential`. |
-| `EMBEDDING_DEPLOYMENT` | `text-embedding-3-small` | Foundry-deployed embedding model (1536 dims). Changing it requires a one-off `RECREATE_INDEX=true` rebuild (vector dims are immutable). |
+| `EMBEDDING_DEPLOYMENT` | `text-embedding-3-small` | Foundry-deployed embedding model (1536 dims). Changed dimensions require a new section-index version; the legacy window path retains its explicit rebuild option. |
 | `AZURE_OPENAI_API_VERSION` | `2024-10-21` | API version for the embedding calls. |
 | `DATA_DIR` | `./data` | Corpus directory ingested into the index. |
-| `CHUNK_SIZE` / `CHUNK_OVERLAP` | `1200` / `200` | Chunking window (chars) and overlap. |
-| `RECREATE_INDEX` | `false` | `true` drops and recreates the index. |
+| `CHUNKING_MODE` | `section` | Whole sections of structured, dated meeting DOCX files. Use a new versioned index when migrating. Explicit `window` retains character-window ingestion for the supported general formats. |
+| `DOCUMENT_SCOPE` | `minutes` | Index-build inclusion filter. Excludes designated `data/policies/` subdirectories before opening files; it is directory-based, not a content classifier. Explicit `all` includes all supported corpus files and requires `CHUNKING_MODE=window`. It does not delete existing indexed records. |
+| `CHUNK_SIZE` / `CHUNK_OVERLAP` | `1200` / `200` | Character-window sizing in `window` mode. Section mode preserves whole sections instead. |
+| `RECREATE_INDEX` | `false` | Legacy window mode only: `true` drops and recreates the index. Section mode rejects it; changed corpora/layouts need a new versioned index. |
 | `SEARCH_VECTOR_PROFILE` / `SEARCH_HNSW_ALGO` / `SEARCH_SEMANTIC_CONFIG` / `SEARCH_VECTORIZER` | `default-*` | Internal structural names; override only to stay compatible with an index built with different names. |
 | `SEARCH_VECTOR_FIELD` | `content_vector` | Name of the vector field queried at **runtime** by `search_minutes` in model mode ([`backend/voice/tools.py`](../backend/voice/tools.py)). Unlike the row above it is read on every query, not only at build time, so it must match the field the index was actually built with. |
+
+Section indexes include source hashes, section metadata and an explicit default
+semantic configuration. Rerunning setup against a section index verifies an
+identical corpus instead of overwriting it; mismatched content or an in-place
+window/section migration fails. Tables, tracked changes, notes, unsupported
+structure, and oversized evidence blocks require review rather than silent
+text loss. Merging defaults does not edit a running deployment. Before rerunning
+setup on an existing window index, explicitly select `CHUNKING_MODE=window` and
+`DOCUMENT_SCOPE=all`, or choose a new index name for the section migration.
+An in-place layout change is rejected rather than silently rebuilding data.
+
+Both setup commands accept `--env-file FILE`, which overlays keys explicitly
+present in that file and rejects a missing file. Index setup additionally accepts
+`--manifest FILE` for a receipt with source hashes. Keep private environment files
+and receipts out of git.
+
+To preserve an existing agent's exact prompt, model, reasoning and Bing settings,
+use `setup_foundry_agent.py --env-file FILE --clone-from SOURCE_AGENT` with a
+different target `AGENT_NAME`. Only Search index, query type and top-k change.
+An existing target with a different definition is rejected. Model and connection
+names are inherited in this mode; the source is verified unchanged.
+
+These are **setup settings**, not additional container environment variables.
+`AI_SEARCH_QUERY_TYPE` does not automatically alter model-mode `search_minutes`;
+that separate path must be configured and verified before a parity comparison.
 
 ---
 
@@ -122,11 +150,11 @@ deployment.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `MODEL_NAME` | `gpt-5.4` | **Which** model to pull from the catalogue. |
-| `MODEL_VERSION` | `2026-03-05` | Model version (must match `MODEL_NAME`). |
-| `MODEL_DEPLOYMENT_NAME` | `gpt-5.4` | What to **call** that deployment. |
-| `MODEL_SKU_NAME` | `GlobalStandard` | Deployment SKU. |
-| `MODEL_CAPACITY` | `250` | TPM (thousands) capacity, so `250` is 250K tokens/minute. On `GlobalStandard` this is a **rate ceiling, not a reservation** — billing is per token consumed, so raising it costs nothing and only buys headroom against 429s. Every turn resends the full agent prompt plus retrieved chunks, so the old `50` was easy to trip under demo load. Your regional ceiling: `az cognitiveservices usage list -l <region>`. |
+| `MODEL_NAME` | `gpt-5.6-terra` | **Which** model to pull from the catalogue. Requires availability/access/quota in the target region. |
+| `MODEL_VERSION` | `2026-07-09` | Model version (must match `MODEL_NAME`). |
+| `MODEL_DEPLOYMENT_NAME` | `gpt-5.6-terra` | What to **call** that deployment. |
+| `MODEL_SKU_NAME` | `DataZoneStandard` | Deployment SKU; processing stays within the selected data zone, not necessarily the resource's exact region. Embedding SKU and semantic-ranker billing are separate and unchanged. |
+| `MODEL_CAPACITY` | `250` | TPM allocation for the selected model/SKU; verify the model-specific unit conversion and available quota. Standard/DataZoneStandard are pay-per-token, not reserved processing capacity. Explicit environment allocations remain unchanged. Inspect live deployment rate limits rather than treating the setting as a latency guarantee. |
 
 ### Why `MODEL_NAME` and `MODEL_DEPLOYMENT_NAME` are both needed
 
