@@ -284,11 +284,11 @@ param meetingBotVmSize string = 'Standard_D4s_v5'
 param meetingBotIconUrl string = ''
 
 // ───────── Model deployment (used only when creating Foundry) ─────────
-param modelName string = 'gpt-5.4'
-param modelVersion string = '2026-03-05'
-param modelDeploymentName string = 'gpt-5.4'
+param modelName string = 'gpt-5.6-terra'
+param modelVersion string = '2026-07-09'
+param modelDeploymentName string = 'gpt-5.6-terra'
 @allowed([ 'GlobalStandard', 'Standard', 'DataZoneStandard' ])
-param modelSkuName string = 'GlobalStandard'
+param modelSkuName string = 'DataZoneStandard'
 // TPM capacity in thousands, so '250' is 250K tokens/minute. Typed as a string,
 // not an int, because azd substitutes MODEL_CAPACITY textually and ARM refuses a
 // JSON string for an int parameter -- the same reason enableAcs is a string.
@@ -310,9 +310,9 @@ var createSearch  = empty(searchServiceName) || empty(searchResourceGroup)
 // AGENT_MODEL is a *deployment* name, not a catalogue model name — the agent binds to
 // whatever `modelDeploymentName` called the deployment. Keeping them as two independent
 // literals made customising MODEL_DEPLOYMENT_NAME silently create a deployment the agent
-// could never find, so greenfield derives it. BYO keeps the old default because the
-// deployment lives in an account this template did not create and cannot inspect.
-var resolvedAgentModel = !empty(agentModel) ? agentModel : (createFoundry ? modelDeploymentName : 'gpt-5.4')
+// could never find, so greenfield derives it. BYO uses the current default;
+// override it when an existing account uses a differently named deployment.
+var resolvedAgentModel = !empty(agentModel) ? agentModel : (createFoundry ? modelDeploymentName : 'gpt-5.6-terra')
 
 // Guard the empty case: `azd env set MODEL_CAPACITY ""` reaches the template as an
 // empty string, and int('') fails at deploy time rather than falling back.

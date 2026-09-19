@@ -30,6 +30,14 @@ Voice Live binds to a Foundry agent, which owns the prompt, model and tool routi
 The agent is text-only, so Voice Live's transcription sits on the answer path — the
 agent cannot start until the words exist.
 
+New agent configurations default to **GPT-5.6-Terra / reasoning `none`** and
+**BM25 + semantic reranking, top-k 5**, over whole sections of the supplied
+meeting DOCX files. The ingestion defaults are `CHUNKING_MODE=section` and
+`DOCUMENT_SCOPE=minutes`; explicit `window` / `all` options retain the older
+general-document path. Existing indexes are not rebuilt automatically.
+See [configuration](docs/configuration.md) and the
+[source-grounded evaluation results](docs/evaluation-results.md).
+
 ```mermaid
 flowchart LR
     subgraph Doors["Front doors — how people reach the avatar"]
