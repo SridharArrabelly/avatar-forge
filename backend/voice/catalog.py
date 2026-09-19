@@ -20,7 +20,6 @@ from datetime import datetime
 from typing import Optional
 
 from azure.core.credentials import AzureKeyCredential
-from ..document_sections import catalogue_title
 from azure.search.documents.aio import SearchClient
 
 from .auth import create_credential
@@ -102,7 +101,7 @@ async def _fetch_catalog() -> Optional[str]:
         by_date: dict[str, str] = {}
         async for r in results:
             date_iso = r.get("meeting_date")
-            title = catalogue_title(r.get("title") or "")
+            title = r.get("title") or ""
             if not date_iso:
                 continue
             # First title wins per date — they should all be the same anyway.

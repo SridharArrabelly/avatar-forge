@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.43.8.12551",
-      "templateHash": "17467588526967789251"
+      "templateHash": "3295111750421932464"
     }
   },
   "parameters": {
@@ -514,19 +514,19 @@
     },
     "modelName": {
       "type": "string",
-      "defaultValue": "gpt-5.6-terra"
+      "defaultValue": "gpt-5.4"
     },
     "modelVersion": {
       "type": "string",
-      "defaultValue": "2026-07-09"
+      "defaultValue": "2026-03-05"
     },
     "modelDeploymentName": {
       "type": "string",
-      "defaultValue": "gpt-5.6-terra"
+      "defaultValue": "gpt-5.4"
     },
     "modelSkuName": {
       "type": "string",
-      "defaultValue": "DataZoneStandard",
+      "defaultValue": "GlobalStandard",
       "allowedValues": [
         "GlobalStandard",
         "Standard",
@@ -551,7 +551,7 @@
     },
     "createFoundry": "[or(or(empty(parameters('foundryAccountName')), empty(parameters('foundryResourceGroup'))), empty(parameters('foundryProjectEndpoint')))]",
     "createSearch": "[or(empty(parameters('searchServiceName')), empty(parameters('searchResourceGroup')))]",
-    "resolvedAgentModel": "[if(not(empty(parameters('agentModel'))), parameters('agentModel'), if(variables('createFoundry'), parameters('modelDeploymentName'), 'gpt-5.6-terra'))]",
+    "resolvedAgentModel": "[if(not(empty(parameters('agentModel'))), parameters('agentModel'), if(variables('createFoundry'), parameters('modelDeploymentName'), 'gpt-5.4'))]",
     "resolvedModelCapacity": "[int(if(not(empty(parameters('modelCapacity'))), parameters('modelCapacity'), '250'))]",
     "profileInCall": "[equals(toLower(parameters('deployProfile')), 'in-call')]",
     "wantMeetingBotBridge": "[or(variables('profileInCall'), equals(toLower(parameters('meetingBotEnabled')), 'true'))]",

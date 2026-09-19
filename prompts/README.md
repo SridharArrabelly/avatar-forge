@@ -18,10 +18,8 @@ prompts/
 
 Everything here is sent somewhere. The whole folder is copied into the container
 image (`Dockerfile`), so anything that is *not* a prompt does not belong — the
-historical routing regression checklist that used to sit here now lives in
-[evaluation history](../docs/evaluation-history.md). The
-[assistant evaluation guide](../docs/assistant-evaluation.md) defines the approved
-retrieval-first scope for new work.
+routing regression checklist that used to sit here now lives in
+[`../docs/testing-routing.md`](../docs/testing-routing.md).
 
 ## Which prompt is used, and when
 
@@ -45,7 +43,7 @@ In model mode the container reads the file directly and there is no agent.
 
 There used to be two agent prompts, `instructions-reasoning.md` and
 `instructions-nonreasoning.md`, chosen from `AGENT_MODEL` by
-`_model_supports_reasoning()`. With the then-shipped `AGENT_MODEL=gpt-5.4` only the
+`_model_supports_reasoning()`. With the shipped `AGENT_MODEL=gpt-5.4` only the
 reasoning one was ever loaded, so the other drifted untested while every
 measurement in this repo was taken against the file that shipped. **The selector
 made an unmaintained path look supported**, which is worse than having one prompt.
@@ -56,9 +54,8 @@ no fallback. Change the model and you get the same prompt; if that ever stops
 working, re-tune the prompt rather than reintroduce a branch.
 
 **The old name was also misleading.** It described the *model family*, not the
-runtime setting — the original production agent ran `gpt-5.4` with
-`reasoning.effort="none"`. The current repository default is Terra with that same
-explicit effort (see `AGENT_REASONING_EFFORT` in
+runtime setting — the production agent runs `gpt-5.4` with `reasoning.effort="none"`
+(the deliberate default for conversational latency; see `AGENT_REASONING_EFFORT` in
 [configuration.md](../docs/configuration.md)). So the "reasoning" prompt was always
 running with reasoning switched **off**. `_model_supports_reasoning()` still exists,
 but now only gates the `reasoning.effort` parameter, which is all it ever really
@@ -178,8 +175,5 @@ uv run python scripts/setup_foundry_agent.py
 > creates a new agent *version*, which is the supported update path.
 
 Commit the prompt change in the same PR as any code that depends on it (tool
-wiring, routing rules), and follow the
-[assistant evaluation guide](../docs/assistant-evaluation.md) for validation.
-Customer policy tests are excluded from all new evaluation; historical checklist
-defaults are not the new-run plan. Model/voice comparisons require the explicit
-retrieval-results review gate first.
+wiring, routing rules), and run the routing checklist in
+[`../docs/testing-routing.md`](../docs/testing-routing.md) afterwards.

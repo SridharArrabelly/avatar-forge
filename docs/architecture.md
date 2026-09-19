@@ -33,7 +33,7 @@ flowchart LR
     end
 
     VLS["Azure Voice Live<br/>STT · TTS · avatar synthesis"]
-    AGENT["Foundry agent<br/>instructions · gpt-5.6-terra · tool routing"]
+    AGENT["Foundry agent<br/>instructions · gpt-5.4 · tool routing"]
     SEARCH["Azure AI Search<br/>document corpus"]
     NEWS["Grounding with<br/>Bing Custom Search"]
 
@@ -106,14 +106,11 @@ first-tool accuracy, frequently **fanning out** multiple external web calls (≈
 web turns), inflating latency and token cost. Adopting **Grounding with Bing Custom
 Search** (a single hosted Bing call instead of an open-ended web tool) and pinning
 the model lifted first-tool accuracy to **~93.5%** on the original `gpt-4.1-mini`
-baseline and cut fan-out to ≈3%. The historical **`gpt-5.4` with
-`AGENT_REASONING_EFFORT=none`** configuration scored **30/30** on that routing set
-([evaluation history](evaluation-history.md))
-with cleaner numeric synthesis; `gpt-5.4-mini` was the faster, cheaper fallback
-candidate and `gpt-4.1-mini` the baseline. These are exploratory end-to-end
-configuration results, not isolated model ability or a current production
-recommendation. Follow the [assistant evaluation guide](assistant-evaluation.md)
-for the current retrieval-only focus and the review gate before model/voice tests.
+baseline and cut fan-out to ≈3%. The **current production model is `gpt-5.4` with
+`AGENT_REASONING_EFFORT=none`**, which scores **30/30** on the routing harness
+([`docs/testing-routing.md`](testing-routing.md))
+with cleaner numeric synthesis; `gpt-5.4-mini` is a faster, cheaper fallback and
+`gpt-4.1-mini` remains the documented baseline.
 
 **The web tool.** The agent's only external tool is **`bing_custom_search`** — a
 single grounded round-trip that returns curated snippets restricted to a server-side
@@ -272,7 +269,7 @@ avatar-forge/
 │   │   ├── queue.py               # Bounded queue + background writer (the latency guarantee)
 │   │   ├── sinks.py               # AuditSink protocol, NullSink, FileSink (JSONL)
 │   │   ├── cosmos.py              # Cosmos DB for NoSQL sink, Entra RBAC, warmed at startup
-│   │   └── foundry.py             # Agent-mode reconciler: exposed tool I/O, not raw Bing grounding
+│   │   └── foundry.py             # Agent-mode reconciler: recovers tool I/O after the turn
 │   └── acs/                       # Channels C/D — in-call media bridge (opt-in)
 │       ├── client.py              # ACS Call Automation + Identity clients (browser-joiner path)
 │       ├── bridge.py              # AcsVoiceBridge / BrowserVoiceBridge <-> VoiceSessionHandler

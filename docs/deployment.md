@@ -110,44 +110,12 @@ azd env set FOUNDRY_LOCATION eastus2
 
 ## Deploy (greenfield)
 
-> **Load your documents first.** The default `postprovision` index build uses
-> whole sections of structured, dated meeting DOCX files and excludes policy folders.
-> Put your minutes in [`data/`](../data/) **before** `azd up`; section mode fails
-> explicitly on an empty or incompatible corpus. To use the legacy/general
-> DOCX/PDF/text path, explicitly select `CHUNKING_MODE=window` and
-> `DOCUMENT_SCOPE=all`. When Foundry is
+> **Load your documents first.** The `postprovision` hook indexes every `data/*.docx`
+> into the freshly-created AI Search service. Drop your documents into
+> [`data/`](../data/) **before** `azd up`; otherwise the index is created empty and you
+> must rerun `scripts/setup_aisearch_index.py` after adding documents. When Foundry is
 > new, this also creates/populates the configured index on a BYO Search service and
 > wires its Foundry project connection automatically.
-
-Fresh agent deployments default to **Terra (`2026-07-09`) / reasoning none /
-DataZoneStandard**, with native Search `semantic` and top-k 5. Bing count remains
-8. Confirm Terra availability and quota for your subscription/region; existing
-explicit environment values override defaults. Embedding deployment SKU and
-semantic-ranker billing are separate and are not changed by these defaults.
-
-### Existing deployments: choose a migration, not an in-place rebuild
-
-Changing repository defaults does not update a running agent or container.
-Before rerunning provisioning/setup against an existing window index, either
-pin the legacy profile explicitly or select a **new versioned index name**.
-Section mode refuses to overwrite a window index or an existing differing corpus.
-
-The legacy choices remain available:
-
-```dotenv
-CHUNKING_MODE=window
-DOCUMENT_SCOPE=all
-AI_SEARCH_QUERY_TYPE=vector_simple_hybrid
-AI_SEARCH_TOP_K=8
-```
-
-Retain your explicit model/deployment/version/SKU values too when preserving
-an existing environment. To adopt the new profile, build the section index
-under a new name, test an isolated agent, then separately approve updating
-the live agent/index references. Do not copy session-specific `eval-*` names
-into general repository defaults. See [configuration.md](configuration.md).
-
-### Fresh deployment steps
 
 Steps 4 and 5 are what make the rest predictable — they are not optional extras. Some
 steps Bicep performs and some only an administrator can, and they interleave, so the
@@ -419,10 +387,9 @@ for every variable; the sections that apply at provisioning time are:
 For **greenfield** (template provisions Foundry + Search) the `postprovision` hook in
 [`azure.yaml`](../azure.yaml) runs both setup scripts automatically:
 
-- `scripts/setup_aisearch_index.py` — builds the default minutes-only section
-  index, or the explicitly selected legacy window path. **Prepare documents in
-  `data/` BEFORE `azd up`**; section mode rejects an empty/incompatible corpus
-  and existing indexes with a different layout.
+- `scripts/setup_aisearch_index.py` — chunks + embeds every `data/*.docx` and builds
+  the AI Search index. **Drop documents into `data/` BEFORE `azd up`** — otherwise the
+  hook prints a warning and you must run it manually after adding files.
 - `scripts/setup_foundry_agent.py` — registers the Foundry agent (`AGENT_NAME`) with the
   AI Search tool, plus the Grounding-with-Bing-Custom-Search tool **if** it is configured.
 

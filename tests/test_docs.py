@@ -117,16 +117,15 @@ EXAMPLE_REGIONS = {"southafricanorth"}
 failures: list[str] = []
 
 
-def _working_markdown() -> list[str]:
+def _tracked_markdown() -> list[str]:
     out = subprocess.run(
-        ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z", "--", "*.md"],
+        ["git", "ls-files", "*.md"],
         cwd=ROOT,
         capture_output=True,
         text=True,
-        encoding="utf-8",
         check=True,
     )
-    return sorted({path for path in out.stdout.split("\0") if path and (ROOT / path).is_file()})
+    return out.stdout.splitlines()
 
 
 def check_links(files: list[str]) -> int:
@@ -281,7 +280,7 @@ def check_bing_allowlist(files: list[str]) -> int:
 
 
 def main() -> int:
-    files = _working_markdown()
+    files = _tracked_markdown()
     links = check_links(files)
     blocks = check_mermaid(files)
     regions = check_regions(files)

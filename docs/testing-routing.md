@@ -1,20 +1,3 @@
-# Evaluation history
-
-> **Historical record — exploratory end-to-end configuration results, not
-> isolated model ability or a current production recommendation.** The original
-> measurements, question sets, commands, deployment snapshots and conclusions
-> below are preserved for provenance, not as the plan for new runs. Historical
-> first-token timings are not measurements of meaningful first audible speech.
->
-> **Customer policy tests are excluded from all new evaluation.** Their presence
-> below, or in old harness defaults, does not authorize running them. Follow the
-> [assistant evaluation guide](assistant-evaluation.md) instead: current work is
-> **retrieval only**, with an explicit retrieval-results review gate before any
-> model or voice bakeoff. Keep all new source text, gold answers, traces and
-> customer material in private artifacts, not in this repository.
-
----
-
 # Tool-routing test questions
 
 A quick checklist to verify each turn routes to the correct tool, shared by

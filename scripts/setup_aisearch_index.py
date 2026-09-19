@@ -1,10 +1,10 @@
 """Create (or update) the Azure AI Search index used by the Foundry agent.
 
-Defaults to whole sections of structured, dated meeting DOCX files under
-``data/``, excluding designated policy folders. Explicit ``CHUNKING_MODE=window``
-and ``DOCUMENT_SCOPE=all`` retain general DOCX/PDF/Markdown/text ingestion.
-The index stores both text and embeddings and has a semantic configuration;
-the agent query mode defaults to lexical/BM25 with semantic reranking.
+Reads .docx, .pdf, .md, .txt files from ``data/`` (recursively), chunks them, embeds each chunk with the
+embedding model deployed on the Foundry project (``text-embedding-3-small`` by
+default), and uploads the chunks to an Azure AI Search index configured for
+**hybrid search** (BM25 + vector) with a **semantic configuration** for
+re-ranking.
 
 Each chunk is enriched with date metadata extracted from the document filename
 (pattern: ``Board Meeting – DD Month YYYY``). A ``meeting_date`` field enables
@@ -19,9 +19,9 @@ Embeddings are generated against the Foundry resource's Azure OpenAI route
 
 The vector dimension is **auto-detected** from the deployment at runtime, so
 switching between ``text-embedding-3-small`` (1536) and ``text-embedding-3-large``
-(3072) — or any other embedding model — is configurable. Section mode requires
-a new index version for changed documents/layout/dimensions. The legacy window
-path retains explicit ``RECREATE_INDEX=true``; section mode rejects it.
+(3072) — or any other embedding model — is a one-env-var change. After switching
+embedding models you MUST also set ``RECREATE_INDEX=true`` for one run, because
+``vector_search_dimensions`` is immutable on an existing index.
 
 Required environment variables (see ``.env.example``):
     AZURE_SEARCH_ENDPOINT      https://<svc>.search.windows.net
@@ -34,11 +34,9 @@ Optional:
     AZURE_OPENAI_API_VERSION   default: 2024-10-21
     AZURE_SEARCH_API_KEY       if unset, uses DefaultAzureCredential
     DATA_DIR                   default: ./data
-    CHUNKING_MODE              section (default), or window
-    DOCUMENT_SCOPE            minutes (default), or all with window mode
-    CHUNK_SIZE                 window mode chars per chunk, default: 1200
-    CHUNK_OVERLAP              window mode char overlap, default: 200
-    RECREATE_INDEX             window-only drop+recreate, default: false
+    CHUNK_SIZE                 chars per chunk, default: 1200
+    CHUNK_OVERLAP              char overlap, default: 200
+    RECREATE_INDEX             "true" to drop+recreate, default: false
 
 Auth: ``az login``. Signed-in user needs:
   - "Search Index Data Contributor" + "Search Service Contributor" on the search service
@@ -54,16 +52,12 @@ Usage:
 
 from __future__ import annotations
 
-import argparse
-import hashlib
-import json
 import logging
 import os
 import re
 import sys
-import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Iterable, Optional
 from urllib.parse import urlparse
@@ -91,9 +85,7 @@ from azure.search.documents.indexes.models import (
     VectorSearchAlgorithmMetric,
     VectorSearchProfile,
 )
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from backend.document_titles import display_document_title
-from backend.document_sections import SECTION_FIELDS, build_evidence_chunks, section_document
 from docx import Document
 from pypdf import PdfReader
 from dotenv import load_dotenv
@@ -127,15 +119,7 @@ def _require(name: str) -> str:
 
 
 def load_settings() -> dict:
-    mode = os.getenv("CHUNKING_MODE", "section").strip().lower()
-    scope = os.getenv("DOCUMENT_SCOPE", "minutes").strip().lower()
-    if mode not in ("window", "section"):
-        raise ValueError("CHUNKING_MODE must be 'window' or 'section'")
-    if scope not in ("all", "minutes"):
-        raise ValueError("DOCUMENT_SCOPE must be 'all' or 'minutes'")
-    if mode == "section" and scope != "minutes":
-        raise ValueError("Section mode requires DOCUMENT_SCOPE=minutes; policy material is not included")
-    settings = {
+    return {
         "search_endpoint": _require("AZURE_SEARCH_ENDPOINT").rstrip("/"),
         "index_name": _require("SEARCH_INDEX_NAME"),
         "search_key": os.getenv("AZURE_SEARCH_API_KEY", "").strip(),
@@ -146,20 +130,9 @@ def load_settings() -> dict:
         "chunk_size": int(os.getenv("CHUNK_SIZE", "1200")),
         "chunk_overlap": int(os.getenv("CHUNK_OVERLAP", "200")),
         "recreate": os.getenv("RECREATE_INDEX", "false").lower() == "true",
-        "chunking_mode": mode,
-        "document_scope": scope,
-        "vector_profile": os.getenv("SEARCH_VECTOR_PROFILE", "default-vector-profile"),
-        "hnsw_algo": os.getenv("SEARCH_HNSW_ALGO", "default-hnsw"),
-        "semantic_config": os.getenv("SEARCH_SEMANTIC_CONFIG", "default-semantic"),
-        "vectorizer": os.getenv("SEARCH_VECTORIZER", "default-vectorizer"),
         # Filled in by detect_embed_dim() before ensure_index() runs.
         "embed_dim": None,
     }
-    if mode == "section" and settings["recreate"]:
-        raise ValueError("Section indexes are versioned: choose a new SEARCH_INDEX_NAME instead of RECREATE_INDEX")
-    if settings["chunk_size"] <= 0 or not 0 <= settings["chunk_overlap"] < settings["chunk_size"]:
-        raise ValueError("CHUNK_SIZE must be positive and CHUNK_OVERLAP must be smaller than it")
-    return settings
 
 
 # ---------- date extraction ----------
@@ -196,7 +169,7 @@ def _month_number(name: str) -> int:
 # ---------- clients ----------
 
 def _aad():
-    return DefaultAzureCredential(process_timeout=90)
+    return DefaultAzureCredential()
 
 
 def make_index_client(s: dict) -> SearchIndexClient:
@@ -230,10 +203,6 @@ def make_embeddings_client(s: dict):
 
 def build_index(name: str, s: dict) -> SearchIndex:
     embed_dim = s.get("embed_dim") or EMBED_DIM_DEFAULT
-    vector_profile = s.get("vector_profile", VECTOR_PROFILE)
-    hnsw_algo = s.get("hnsw_algo", HNSW_ALGO)
-    vectorizer_name = s.get("vectorizer", VECTORIZER_NAME)
-    semantic_config = s.get("semantic_config", SEMANTIC_CONFIG)
     fields = [
         SimpleField(name="id", type=SearchFieldDataType.String, key=True, filterable=True),
         SearchableField(name="title", type=SearchFieldDataType.String, filterable=True, sortable=True),
@@ -253,22 +222,16 @@ def build_index(name: str, s: dict) -> SearchIndex:
             type=SearchFieldDataType.Collection(SearchFieldDataType.Single),
             searchable=True,
             vector_search_dimensions=embed_dim,
-            vector_search_profile_name=vector_profile,
+            vector_search_profile_name=VECTOR_PROFILE,
         ),
     ]
-    if s.get("chunking_mode", "section") == "section":
-        fields.extend([
-            SimpleField(name="section", type=SearchFieldDataType.String, filterable=True),
-            SimpleField(name="source_sha256", type=SearchFieldDataType.String, filterable=True),
-            SimpleField(name="source_paragraph", type=SearchFieldDataType.Int32, filterable=True),
-        ])
 
     # Build the Azure OpenAI vectorizer so AI Search can auto-vectorize text queries
     parsed = urlparse(s["project_endpoint"])
     azure_endpoint = f"{parsed.scheme}://{parsed.netloc}"
 
     vectorizer = AzureOpenAIVectorizer(
-        vectorizer_name=vectorizer_name,
+        vectorizer_name=VECTORIZER_NAME,
         parameters=AzureOpenAIVectorizerParameters(
             resource_url=azure_endpoint,
             deployment_name=s["embed_deployment"],
@@ -279,25 +242,24 @@ def build_index(name: str, s: dict) -> SearchIndex:
     vector_search = VectorSearch(
         algorithms=[
             HnswAlgorithmConfiguration(
-                name=hnsw_algo,
+                name=HNSW_ALGO,
                 parameters=HnswParameters(metric=VectorSearchAlgorithmMetric.COSINE),
             )
         ],
         profiles=[
             VectorSearchProfile(
-                name=vector_profile,
-                algorithm_configuration_name=hnsw_algo,
-                vectorizer_name=vectorizer_name,
+                name=VECTOR_PROFILE,
+                algorithm_configuration_name=HNSW_ALGO,
+                vectorizer_name=VECTORIZER_NAME,
             )
         ],
         vectorizers=[vectorizer],
     )
 
     semantic_search = SemanticSearch(
-        default_configuration_name=semantic_config if s.get("chunking_mode", "section") == "section" else None,
         configurations=[
             SemanticConfiguration(
-                name=semantic_config,
+                name=SEMANTIC_CONFIG,
                 prioritized_fields=SemanticPrioritizedFields(
                     title_field=SemanticField(field_name="title"),
                     content_fields=[SemanticField(field_name="content")],
@@ -325,26 +287,6 @@ def build_index(name: str, s: dict) -> SearchIndex:
 def ensure_index(s: dict) -> None:
     client = make_index_client(s)
     existing_indexes = {i.name: i for i in client.list_indexes()}
-    mode = s.get("chunking_mode", "section")
-    if s["index_name"] in existing_indexes:
-        existing = existing_indexes[s["index_name"]]
-        fields = {field.name for field in existing.fields}
-        has_section_fields = bool(fields & SECTION_FIELDS)
-        if (mode == "section") != has_section_fields:
-            raise ValueError("Chunking layout cannot be changed in place. Choose a new versioned SEARCH_INDEX_NAME; the existing index is retained.")
-        if mode == "section":
-            if not SECTION_FIELDS <= fields:
-                raise ValueError("Existing section index schema is incomplete; use a new index version")
-            expected_semantic = s.get("semantic_config", SEMANTIC_CONFIG)
-            if not existing.semantic_search or existing.semantic_search.default_configuration_name != expected_semantic:
-                raise ValueError("Existing semantic configuration differs; use a new index version")
-            if existing.scoring_profiles or existing.default_scoring_profile:
-                raise ValueError("Existing index has a different scoring profile; use a new index version")
-            s["section_index_exists"] = True
-        else:
-            s["section_index_exists"] = False
-    else:
-        s["section_index_exists"] = False
 
     # Vector dimensions are immutable on an existing index. If the user
     # switched embedding models without setting RECREATE_INDEX=true, the
@@ -369,11 +311,6 @@ def ensure_index(s: dict) -> None:
             )
             sys.exit(2)
 
-    if mode == "section" and s.get("recreate"):
-        raise ValueError("Section indexes are immutable versions; RECREATE_INDEX is not allowed")
-    if s.get("section_index_exists"):
-        log.info("Retaining existing section index '%s'; exact corpus verification follows.", s["index_name"])
-        return
     if s["index_name"] in existing_indexes and s["recreate"]:
         log.info("Deleting existing index '%s'", s["index_name"])
         client.delete_index(s["index_name"])
@@ -448,9 +385,7 @@ def chunk_text(text: str, size: int, overlap: int) -> list[str]:
 
 def embed_batch(client, deployment: str, texts: list[str]) -> list[list[float]]:
     resp = client.embeddings.create(model=deployment, input=texts)
-    if len(resp.data) != len(texts) or {item.index for item in resp.data} != set(range(len(texts))):
-        raise RuntimeError("Embedding response does not map one-to-one to input chunks")
-    return [item.embedding for item in sorted(resp.data, key=lambda item: item.index)]
+    return [d.embedding for d in resp.data]
 
 
 def detect_embed_dim(client, deployment: str) -> int:
@@ -492,55 +427,13 @@ def classify_document(path: Path, data_dir: Path) -> str:
     return DOC_TYPE_POLICY if parents & POLICY_DIRS else DOC_TYPE_MINUTES
 
 
-def document_files(s: dict) -> list[Path]:
-    return sorted(
+def iter_documents(s: dict, aoai) -> Iterable[dict]:
+    files = sorted(
         f for f in s["data_dir"].rglob("*")
         if f.is_file()
         and f.suffix.lower() in READERS
         and f.stem.lower() not in EXCLUDED_STEMS
-        and (s.get("document_scope", "minutes") == "all" or classify_document(f, s["data_dir"]) == DOC_TYPE_MINUTES)
     )
-
-
-def prepare_section_documents(s: dict) -> list[dict]:
-    files = document_files(s)
-    if not files:
-        raise ValueError("Section mode requires original meeting documents")
-    if len({path.name for path in files}) != len(files):
-        raise ValueError("Section mode requires unique source filenames across DATA_DIR")
-    documents = []
-    for path in files:
-        if path.suffix.lower() != ".docx" or classify_document(path, s["data_dir"]) != DOC_TYPE_MINUTES:
-            raise ValueError(f"{path.name}: section mode supports structured meeting DOCX files only")
-        meeting_dt = parse_meeting_date(path.stem)
-        if meeting_dt is None:
-            raise ValueError(f"{path.name}: a meeting date is required for section mode")
-        doc = Document(str(path))
-        if doc.tables:
-            raise ValueError(f"{path.name}: table-bearing minutes need an explicitly reviewed section layout")
-        namespace = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
-        for tag in ("ins", "del", "footnoteReference", "endnoteReference", "drawing", "pict"):
-            if next(doc.element.iter(f"{namespace}{tag}"), None) is not None:
-                raise ValueError(f"{path.name}: {tag} needs review before section ingestion")
-        documents.append(section_document(
-            path.name, hashlib.sha256(path.read_bytes()).hexdigest(),
-            meeting_dt, (paragraph.text for paragraph in doc.paragraphs),
-        ))
-    return build_evidence_chunks(documents, "section")
-
-
-def iter_documents(s: dict, aoai) -> Iterable[dict]:
-    if s.get("chunking_mode", "section") == "section":
-        documents = s.get("section_documents")
-        if documents is None:
-            documents = prepare_section_documents(s)
-        for offset in range(0, len(documents), 16):
-            batch = documents[offset:offset + 16]
-            vectors = embed_batch(aoai, s["embed_deployment"], [doc["content"] for doc in batch])
-            for doc, vector in zip(batch, vectors):
-                yield {**doc, "content_vector": vector}
-        return
-    files = document_files(s)
     if not files:
         log.warning("No supported files (%s) found in %s",
                     ", ".join(sorted(READERS)), s["data_dir"])
@@ -606,69 +499,24 @@ def upload(s: dict, docs: Iterable[dict]) -> int:
     BATCH = 100
     buf: list[dict] = []
     total = 0
-
-    def upload_batch(batch: list[dict]) -> None:
-        expected = {doc["id"] for doc in batch}
-        if len(expected) != len(batch):
-            raise ValueError("Duplicate document IDs in upload batch")
-        results = search.upload_documents(documents=batch)
-        failures = [f"{result.key}: {result.error_message}" for result in results if not result.succeeded]
-        if failures or len(results) != len(batch) or {result.key for result in results} != expected:
-            raise RuntimeError(f"Search upload failed or returned incomplete results: {failures}")
-
     for d in docs:
         buf.append(d)
         if len(buf) >= BATCH:
-            upload_batch(buf)
+            search.upload_documents(documents=buf)
             total += len(buf)
             log.info("  uploaded %d (running total %d)", len(buf), total)
             buf.clear()
     if buf:
-        upload_batch(buf)
+        search.upload_documents(documents=buf)
         total += len(buf)
         log.info("  uploaded %d (running total %d)", len(buf), total)
     return total
 
 
-def verify_section_documents(s: dict, *, timeout_s: float = 120) -> None:
-    expected = {doc["id"]: doc for doc in s["section_documents"]}
-    deadline = time.monotonic() + timeout_s
-    with make_search_client(s) as search:
-        while True:
-            fields = list(next(iter(expected.values())))
-            rows = list(search.search(search_text="*", select=fields))
-            for row in rows:
-                if row["id"] not in expected:
-                    raise ValueError("Versioned index contains extra documents; choose a new index version")
-                for key, value in expected[row["id"]].items():
-                    actual = row.get(key)
-                    if key == "meeting_date":
-                        actual = datetime.fromisoformat(str(actual).replace("Z", "+00:00")).astimezone(timezone.utc)
-                        value = datetime.fromisoformat(value.replace("Z", "+00:00"))
-                    if actual != value:
-                        raise ValueError(f"Versioned index differs at {row['id']} field {key}; choose a new index version")
-            if len(rows) == len(expected):
-                return
-            if time.monotonic() >= deadline:
-                raise RuntimeError(f"Index readback incomplete: {len(rows)}/{len(expected)} documents. No existing documents were overwritten.")
-            log.info("Waiting for index visibility: %d/%d", len(rows), len(expected))
-            time.sleep(2)
-
-
 # ---------- main ----------
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--env-file", type=Path)
-    parser.add_argument("--manifest", type=Path, help="Optional ingestion receipt; contains hashes, not source text.")
-    args = parser.parse_args()
-    if args.env_file:
-        if not args.env_file.is_file():
-            parser.error("Explicit --env-file does not exist")
-        load_dotenv(args.env_file, override=True)
     s = load_settings()
-    if s["chunking_mode"] == "section":
-        s["section_documents"] = prepare_section_documents(s)
     log.info("Search:    %s  /  index=%s", s["search_endpoint"], s["index_name"])
     log.info("Foundry:   %s  /  embed=%s", s["project_endpoint"], s["embed_deployment"])
     log.info("Data dir:  %s", s["data_dir"])
@@ -700,28 +548,7 @@ def main() -> None:
         what=f"accessing documents in Search index '{s['index_name']}'",
         log=log.info,
     )
-    if s.get("section_index_exists"):
-        verify_section_documents(s, timeout_s=0)
-        n = len(s["section_documents"])
-        log.info("Existing version matches exactly; no document embeddings or uploads were repeated.")
-    else:
-        n = upload(s, iter_documents(s, aoai))
-        if s["chunking_mode"] == "section":
-            verify_section_documents(s)
-    if args.manifest:
-        receipt = {
-            "index": s["index_name"], "chunking_mode": s["chunking_mode"],
-            "document_scope": s["document_scope"], "documents": n,
-            "semantic_config": s["semantic_config"],
-            "embedding_deployment": s["embed_deployment"], "embedding_dimensions": s["embed_dim"],
-        }
-        if s["chunking_mode"] == "section":
-            receipt["corpus_sha256"] = hashlib.sha256(
-                json.dumps(s["section_documents"], sort_keys=True, ensure_ascii=False).encode()
-            ).hexdigest()
-            receipt["source_hashes"] = {doc["source"]: doc["source_sha256"] for doc in s["section_documents"]}
-        args.manifest.parent.mkdir(parents=True, exist_ok=True)
-        args.manifest.write_text(json.dumps(receipt, indent=2), encoding="utf-8")
+    n = upload(s, iter_documents(s, aoai))
     log.info("Done. Indexed %d chunks into '%s'.", n, s["index_name"])
 
 

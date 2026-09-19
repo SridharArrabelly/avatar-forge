@@ -16,12 +16,9 @@ exec that whole module — and transitively ``smoke_foundry_agent.py``, pulling 
 ``azure.identity``, ``azure.search.documents`` and ``openai`` — just to read a list
 of strings. Keep it dependency-free so importing the questions stays free.
 
-The historical prose rationale for *why* each question is in the set lives in
-``docs/evaluation-history.md``. This routing-only set is not an independent
-required-fact gold reference. ``docs/assistant-evaluation.md`` defines the current
-retrieval-only scope and the review gate before model/voice comparisons.
-Customer policy questions remain here for historical reproducibility but are
-excluded from ALL new evaluation; do not run policy-inclusive defaults for it.
+The prose rationale for *why* each question is in the set lives in
+``docs/testing-routing.md``. That file is the commentary; this file is the data.
+Update both together.
 """
 from __future__ import annotations
 
@@ -74,7 +71,7 @@ CORE = MINUTES + POLICIES + WEB
 # rule from one that merely lists examples. The core set above is saturated at
 # 30/30, so it can only catch a regression - improvement has to show up here.
 #
-# Sourced from "Boundary / edge cases" in docs/evaluation-history.md, where they
+# Sourced from "Boundary / edge cases" in docs/testing-routing.md, where they
 # were recorded as manual-only.
 BOUNDARY = [
     # Public governance facts, despite the word "board".
@@ -102,7 +99,7 @@ _GROUP_OF = {q: name for name, qs in GROUPS.items() for q, _ in qs}
 
 # Retrieval-quality questions are deliberately NOT here. They route to the web
 # tool unambiguously, so scoring them would award a guaranteed pass and inflate
-# the routing number. Their historical record is in docs/evaluation-history.md.
+# the routing number. They are manual, and live in docs/testing-routing.md.
 
 
 def group_of(question: str) -> str:
