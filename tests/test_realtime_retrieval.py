@@ -81,6 +81,7 @@ class QueryTypeMatrixTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("vector_queries", client.kwargs)
         self.assertEqual(client.kwargs.get("query_type"), "simple")
         self.assertNotIn("semantic_configuration_name", client.kwargs)
+        self.assertEqual(client.kwargs.get("search_text"), "what was decided")
         self.assertIn("passages", result)
 
     async def test_semantic_is_the_default_and_uses_no_vector(self):
@@ -91,6 +92,7 @@ class QueryTypeMatrixTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("vector_queries", client.kwargs)
         self.assertEqual(client.kwargs.get("query_type"), "semantic")
         self.assertEqual(client.kwargs.get("semantic_configuration_name"), tools.SEMANTIC_CONFIG)
+        self.assertEqual(client.kwargs.get("search_text"), "what was decided")
 
     async def test_vector_uses_vector_query_and_simple_ranking(self):
         with patch.dict(os.environ, {"AI_SEARCH_QUERY_TYPE": "vector"}):
@@ -99,6 +101,9 @@ class QueryTypeMatrixTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("vector_queries", client.kwargs)
         self.assertEqual(client.kwargs.get("query_type"), "simple")
         self.assertNotIn("semantic_configuration_name", client.kwargs)
+        # Pure vector mode must NOT also send a lexical query -- that would
+        # silently make it identical to vector_simple_hybrid.
+        self.assertIsNone(client.kwargs.get("search_text"))
 
     async def test_vector_simple_hybrid_uses_both_without_semantic_config(self):
         with patch.dict(os.environ, {"AI_SEARCH_QUERY_TYPE": "vector_simple_hybrid"}):
@@ -107,6 +112,7 @@ class QueryTypeMatrixTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("vector_queries", client.kwargs)
         self.assertEqual(client.kwargs.get("query_type"), "simple")
         self.assertNotIn("semantic_configuration_name", client.kwargs)
+        self.assertEqual(client.kwargs.get("search_text"), "what was decided")
 
     async def test_vector_semantic_hybrid_uses_both_with_semantic_config(self):
         with patch.dict(os.environ, {"AI_SEARCH_QUERY_TYPE": "vector_semantic_hybrid"}):
@@ -115,6 +121,17 @@ class QueryTypeMatrixTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("vector_queries", client.kwargs)
         self.assertEqual(client.kwargs.get("query_type"), "semantic")
         self.assertEqual(client.kwargs.get("semantic_configuration_name"), tools.SEMANTIC_CONFIG)
+        self.assertEqual(client.kwargs.get("search_text"), "what was decided")
+
+    async def test_vector_only_still_embeds_the_query_text_for_the_vector_query(self):
+        """Omitting the lexical search_text must not also drop the text the
+        vectorizer embeds -- vector_queries still carries the real query."""
+        with patch.dict(os.environ, {"AI_SEARCH_QUERY_TYPE": "vector"}):
+            client = FakeSearchClient([_row()])
+            await _run(client, query="what was decided")
+        vector_queries = client.kwargs.get("vector_queries")
+        self.assertEqual(len(vector_queries), 1)
+        self.assertEqual(vector_queries[0].text, "what was decided")
 
 
 class SettingsValidationTests(unittest.IsolatedAsyncioTestCase):

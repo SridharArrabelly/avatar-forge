@@ -864,8 +864,13 @@ async def search_minutes(query: str, top: int | None = None) -> dict[str, Any]:
     uses_vector = query_type in _VECTOR_QUERY_TYPES
     uses_semantic = query_type in _SEMANTIC_QUERY_TYPES
 
+    is_vector_only = query_type == AzureAISearchQueryType.VECTOR.value
     search_kwargs: dict[str, Any] = {
-        "search_text": query,
+        # Pure "vector" mode must omit the lexical query entirely: passing
+        # search_text alongside vector_queries makes the service also rank on
+        # BM25 text, which is exactly what vector_simple_hybrid already does.
+        # Sending it here would silently collapse "vector" into a hybrid mode.
+        "search_text": None if is_vector_only else query,
         "top": top,
         "select": ["id", "title", "documentType", "meeting_date", "content", "source"],
     }
