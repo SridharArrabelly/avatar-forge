@@ -141,7 +141,7 @@ var modelBinding = toLower(voiceBinding) == 'model'
 var voiceBindingEnv = concat([
   { name: 'VOICE_BINDING', value: voiceBinding }
 ], modelBinding ? [
-  { name: 'VOICELIVE_MODEL', value: empty(voiceLiveModel) ? 'gpt-realtime-2' : voiceLiveModel }
+  { name: 'VOICELIVE_MODEL', value: empty(voiceLiveModel) ? 'gpt-realtime-2.1' : voiceLiveModel }
 ] : [
   { name: 'AGENT_MODEL', value: agentModel }
 ])

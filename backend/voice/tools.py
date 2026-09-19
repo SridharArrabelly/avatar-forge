@@ -34,6 +34,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 import httpx
+from azure.ai.projects.models import AzureAISearchQueryType
 from azure.search.documents.models import VectorizableTextQuery
 
 from ..document_titles import display_document_title
@@ -45,11 +46,36 @@ logger = logging.getLogger(__name__)
 SEMANTIC_CONFIG = os.getenv("SEARCH_SEMANTIC_CONFIG", "default-semantic")
 VECTOR_FIELD = os.getenv("SEARCH_VECTOR_FIELD", "content_vector")
 
-# Passages returned to the model. Four is enough to answer from and short
-# enough that the model starts speaking sooner: every extra passage is more
-# prompt to read before the first token.
-DEFAULT_TOP = 4
+# Passages returned to the model. Five matches the agent-mode default
+# (AI_SEARCH_TOP_K) so the two modes are evidence-comparable; the model may
+# still ask for fewer/more per call, up to MAX_TOP.
+DEFAULT_TOP = 5
+MIN_TOP = 1
 MAX_TOP = 8
+
+# Retrieval mode. Mirrors setup_foundry_agent.py's AI_SEARCH_QUERY_TYPE so the
+# two run modes are the same knob: "semantic" is BM25 lexical candidates
+# reranked semantically, with no vector query at all. That is the default now
+# (it used to always run vector+semantic hybrid) because it is the mode the
+# agent-mode study was measured against; vector recall is opt-in via
+# AI_SEARCH_QUERY_TYPE=vector / vector_simple_hybrid / vector_semantic_hybrid.
+DEFAULT_QUERY_TYPE = AzureAISearchQueryType.SEMANTIC.value
+VALID_QUERY_TYPES = frozenset(item.value for item in AzureAISearchQueryType)
+_VECTOR_QUERY_TYPES = frozenset({
+    AzureAISearchQueryType.VECTOR.value,
+    AzureAISearchQueryType.VECTOR_SIMPLE_HYBRID.value,
+    AzureAISearchQueryType.VECTOR_SEMANTIC_HYBRID.value,
+})
+_SEMANTIC_QUERY_TYPES = frozenset({
+    AzureAISearchQueryType.SEMANTIC.value,
+    AzureAISearchQueryType.VECTOR_SEMANTIC_HYBRID.value,
+})
+
+# Legacy explicit profile, preserved only for reference/comparison against the
+# earlier always-vector+semantic behaviour; no longer the default.
+LEGACY_QUERY_TYPE = AzureAISearchQueryType.VECTOR_SEMANTIC_HYBRID.value
+LEGACY_TOP = 4
+LEGACY_SNIPPET_CHARS = 1200
 
 # Repeated back to the model with every tool result. The session instructions
 # are prefilled once at the top of a long context; a tool result is the last
@@ -62,13 +88,18 @@ BREVITY_NOTE = (
     "three points that mattered most; do not walk through everything above."
 )
 
-# Characters of each passage handed back. The chunks are larger than this, but
-# the tail is rarely what answers the question and it is paid for twice — once
-# on the wire, once in the model's prefill.
-SNIPPET_CHARS = 1200
+# Characters of each passage handed back. The indexed sections run up to
+# 12,000 characters (backend/document_sections.py's versioned layout cap), so
+# the default now lets a whole section through untouched; the old 1200-char
+# cut sliced a section mid-thought before the model ever saw the rest of it.
+# Anything genuinely larger is truncated explicitly (passage["truncated"]) and
+# `original_chars` records what was cut, rather than silently shrinking a
+# passage with no signal to the model that content is missing.
+SNIPPET_CHARS = 12000
 
 # Vector recall before reranking. The reranker only ever sees candidates the
-# retrieval stage surfaced, so this is the real recall knob.
+# retrieval stage surfaced, so this is the real recall knob. Only spent when
+# the query type actually uses a vector query.
 K_NEAREST = 40
 
 
@@ -92,6 +123,15 @@ SEARCH_MINUTES_TOOL: dict[str, Any] = {
                     "the exact meeting date when known. For policies, include the "
                     "policy topic and the rule, limit, duty or eligibility being "
                     "asked about."
+                ),
+            },
+            "top": {
+                "type": "integer",
+                "minimum": MIN_TOP,
+                "maximum": MAX_TOP,
+                "description": (
+                    f"Optional number of passages to return ({MIN_TOP}-{MAX_TOP}). "
+                    "Omit to use the configured default."
                 ),
             },
         },
@@ -629,6 +669,16 @@ async def search_web(query: str) -> dict[str, Any]:
     # carries a clean `source` ("Moneyweb") so the model can attribute a claim
     # without parsing a hostname. `clickUrl` is a redirect tracker; `url` is the
     # real link. `thumbnail`/`isAdult` are dropped as noise.
+    #
+    # `lastUpdatedAt`/`crawledAt` are index-maintenance timestamps, not
+    # evidence of when a page was published or of a live quote's as-of time; a
+    # crawl date only proves the crawler visited on that day. Labelling them
+    # `published` claimed a fact Web IQ never asserted. `published` is now
+    # populated only from `datePublished` when the API actually returns one,
+    # and stays empty otherwise rather than being backfilled from a crawl
+    # timestamp. The crawl/update timestamps are still returned, under their
+    # own names, in full (not date-truncated) — they are useful for recency
+    # ranking, just not for "when was this published".
     results: list[dict[str, Any]] = []
     dropped: list[str] = []
     for i in raw:
@@ -642,9 +692,9 @@ async def search_web(query: str) -> dict[str, Any]:
                 "title": _pick(i, ("title", "name")),
                 "source": _pick(i, ("source",)),
                 "url": url,
-                "published": _pick(
-                    i, ("lastUpdatedAt", "crawledAt", "datePublished")
-                )[:10],
+                "published": _pick(i, ("datePublished",))[:10],
+                "last_updated": _pick(i, ("lastUpdatedAt",)),
+                "crawled_at": _pick(i, ("crawledAt",)),
                 "extract": _pick(i, ("content", "snippet", "description"))[
                     :WEB_MAX_LENGTH
                 ],
@@ -663,7 +713,16 @@ async def search_web(query: str) -> dict[str, Any]:
     )
     if not results:
         return {"results": [], "note": "No results found on the web for that."}
-    return {"results": results, "note": BREVITY_NOTE}
+    return {
+        "results": results,
+        "note": (
+            f"{BREVITY_NOTE} last_updated and crawled_at are index-maintenance "
+            "timestamps, not proof of when a page was published or of a live "
+            "quote's as-of time; treat published (when present) as the "
+            "publication date and do not infer a current price/date from a "
+            "crawl or update timestamp alone."
+        ),
+    }
 
 
 async def build_realtime_tools() -> list[dict[str, Any]]:
@@ -696,12 +755,75 @@ def _format_date(raw: Any) -> str:
         return str(raw or "")
 
 
-async def search_minutes(query: str, top: int = DEFAULT_TOP) -> dict[str, Any]:
-    """Search the mixed internal corpus with hybrid retrieval and reranking.
+def _read_query_type() -> str:
+    """AI_SEARCH_QUERY_TYPE, read per call so a running process picks up a
+    changed environment the same way it would a changed .env at next launch.
 
-    The index carries an integrated vectorizer, so the search service embeds the
-    query itself. That matters on the answer path: it keeps this to a single
-    call instead of an embedding round trip followed by a search round trip.
+    An explicitly-set but blank or unrecognised value is a configuration
+    mistake, not permission to fall back to the default silently — it is
+    surfaced as a ``ValueError`` so the caller can turn it into a safe tool
+    error instead of quietly searching in the wrong mode.
+    """
+    raw = os.getenv("AI_SEARCH_QUERY_TYPE", DEFAULT_QUERY_TYPE)
+    value = (raw or "").strip()
+    if not value:
+        raise ValueError("AI_SEARCH_QUERY_TYPE is set but empty")
+    if value not in VALID_QUERY_TYPES:
+        raise ValueError(
+            f"AI_SEARCH_QUERY_TYPE must be one of: {', '.join(sorted(VALID_QUERY_TYPES))}; "
+            f"got {value!r}"
+        )
+    return value
+
+
+def _read_snippet_chars() -> int:
+    """AI_SEARCH_SNIPPET_CHARS, read per call; same explicit-failure contract
+    as `_read_query_type`."""
+    raw = os.getenv("AI_SEARCH_SNIPPET_CHARS")
+    if raw is None:
+        return SNIPPET_CHARS
+    value = raw.strip()
+    if not value:
+        raise ValueError("AI_SEARCH_SNIPPET_CHARS is set but empty")
+    try:
+        parsed = int(value)
+    except ValueError:
+        raise ValueError(f"AI_SEARCH_SNIPPET_CHARS must be a positive integer; got {value!r}") from None
+    if parsed <= 0:
+        raise ValueError(f"AI_SEARCH_SNIPPET_CHARS must be a positive integer; got {value!r}")
+    return parsed
+
+
+def _read_default_top() -> int:
+    """AI_SEARCH_TOP_K, read per call; same explicit-failure contract as
+    `_read_query_type`. Independent of the model's own per-call `top`."""
+    raw = os.getenv("AI_SEARCH_TOP_K")
+    if raw is None:
+        return DEFAULT_TOP
+    value = raw.strip()
+    if not value:
+        raise ValueError("AI_SEARCH_TOP_K is set but empty")
+    try:
+        parsed = int(value)
+    except ValueError:
+        raise ValueError(f"AI_SEARCH_TOP_K must be a positive integer; got {value!r}") from None
+    if not (MIN_TOP <= parsed <= MAX_TOP):
+        raise ValueError(
+            f"AI_SEARCH_TOP_K must be between {MIN_TOP} and {MAX_TOP}; got {value!r}"
+        )
+    return parsed
+
+
+async def search_minutes(query: str, top: int | None = None) -> dict[str, Any]:
+    """Search the mixed internal corpus.
+
+    The retrieval mode is AI_SEARCH_QUERY_TYPE (default: ``semantic`` — BM25
+    lexical candidates reranked semantically, no vector query). Vector recall
+    is opt-in: ``vector``, ``vector_simple_hybrid`` and ``vector_semantic_hybrid``
+    all issue the integrated-vectorizer query, so the search service embeds
+    the query itself and this stays a single round trip rather than an
+    embedding call followed by a search call.
+
     The public function name is retained for compatibility, but the index now
     contains both MeetingMinutes and Policy documents.
     """
@@ -711,6 +833,9 @@ async def search_minutes(query: str, top: int = DEFAULT_TOP) -> dict[str, Any]:
 
     client = get_search_client()
     if client is None:
+        # Unconfigured is a distinct outcome from "searched and found
+        # nothing" — it must not be reported as an empty result set, which
+        # would read to the model (and the user) as "no such passages exist".
         return {
             "error": (
                 "The internal document index is not configured on this deployment "
@@ -718,32 +843,73 @@ async def search_minutes(query: str, top: int = DEFAULT_TOP) -> dict[str, Any]:
             )
         }
 
-    top = max(1, min(int(top or DEFAULT_TOP), MAX_TOP))
+    try:
+        query_type = _read_query_type()
+        snippet_chars = _read_snippet_chars()
+        default_top = _read_default_top()
+    except ValueError as e:
+        logger.warning(f"search_minutes configuration error: {e}")
+        return {"error": f"Search is misconfigured: {e}"}
+
+    if top is None:
+        top = default_top
+    else:
+        try:
+            top = int(top)
+        except (TypeError, ValueError):
+            return {"error": f"top must be an integer between {MIN_TOP} and {MAX_TOP}; got {top!r}"}
+        if not (MIN_TOP <= top <= MAX_TOP):
+            return {"error": f"top must be between {MIN_TOP} and {MAX_TOP}; got {top}"}
+
+    uses_vector = query_type in _VECTOR_QUERY_TYPES
+    uses_semantic = query_type in _SEMANTIC_QUERY_TYPES
+
+    is_vector_only = query_type == AzureAISearchQueryType.VECTOR.value
+    search_kwargs: dict[str, Any] = {
+        # Pure "vector" mode must omit the lexical query entirely: passing
+        # search_text alongside vector_queries makes the service also rank on
+        # BM25 text, which is exactly what vector_simple_hybrid already does.
+        # Sending it here would silently collapse "vector" into a hybrid mode.
+        "search_text": None if is_vector_only else query,
+        "top": top,
+        "select": ["id", "title", "documentType", "meeting_date", "content", "source"],
+    }
+    if uses_vector:
+        search_kwargs["vector_queries"] = [
+            VectorizableTextQuery(
+                text=query, k_nearest_neighbors=K_NEAREST, fields=VECTOR_FIELD
+            )
+        ]
+    if uses_semantic:
+        # Semantic configuration only applies to modes that actually rerank
+        # semantically; sending it otherwise is a request the service ignores
+        # at best and rejects at worst depending on index configuration.
+        search_kwargs["query_type"] = "semantic"
+        search_kwargs["semantic_configuration_name"] = SEMANTIC_CONFIG
+    else:
+        search_kwargs["query_type"] = "simple"
+
     started = time.monotonic()
     try:
-        results = await client.search(
-            search_text=query,
-            vector_queries=[
-                VectorizableTextQuery(
-                    text=query, k_nearest_neighbors=K_NEAREST, fields=VECTOR_FIELD
-                )
-            ],
-            query_type="semantic",
-            semantic_configuration_name=SEMANTIC_CONFIG,
-            top=top,
-            select=["title", "documentType", "meeting_date", "content"],
-        )
-        passages = [
-            {
+        results = await client.search(**search_kwargs)
+        passages = []
+        async for doc in results:
+            content = doc.get("content") or ""
+            truncated = len(content) > snippet_chars
+            passage: dict[str, Any] = {
+                "id": doc.get("id") or "",
+                "source": doc.get("source") or "",
                 "title": display_document_title(
                     doc.get("title") or "", doc.get("documentType") or ""
                 ),
                 "type": doc.get("documentType") or "",
                 "date": _format_date(doc.get("meeting_date")),
-                "extract": (doc.get("content") or "")[:SNIPPET_CHARS],
+                "extract": content[:snippet_chars],
             }
-            async for doc in results
-        ]
+            if truncated:
+                passage["truncated"] = True
+                passage["original_chars"] = len(content)
+            passages.append(passage)
     except Exception as e:
         # Never raise into the tool loop: the model handles "nothing found"
         # gracefully and can say so, but an exception strands the turn with the
@@ -755,11 +921,15 @@ async def search_minutes(query: str, top: int = DEFAULT_TOP) -> dict[str, Any]:
 
     elapsed_ms = (time.monotonic() - started) * 1000
     logger.info(
-        f"[TOOL] search_minutes {elapsed_ms:.0f}ms  n={len(passages)}  [{fingerprint(query)}]"
+        f"[TOOL] search_minutes {elapsed_ms:.0f}ms  n={len(passages)}  "
+        f"mode={query_type}  top={top}  [{fingerprint(query)}]"
     )
     if not passages:
         return {
             "passages": [],
             "note": "No matching passages in the internal minutes or policies.",
         }
-    return {"passages": passages, "note": BREVITY_NOTE}
+    note = BREVITY_NOTE
+    if any(p.get("truncated") for p in passages):
+        note = f"{BREVITY_NOTE} Some passages were truncated; original_chars records the full length."
+    return {"passages": passages, "note": note}

@@ -34,6 +34,23 @@ def rejects(call, expected):
 
 
 def main() -> int:
+    with TemporaryDirectory() as directory:
+        env_path = Path(directory) / "explicit.env"
+        env_path.write_text("AZURE_SEARCH_ENDPOINT=https://explicit.invalid\nBARE_KEY\n", encoding="utf-8")
+        with patch.dict(os.environ, {"PYTHON_DOTENV_DISABLED": "1", "AZURE_SEARCH_ENDPOINT": "https://ambient.invalid"}):
+            loaded = setup.load_explicit_environment(env_path)
+            assert loaded["AZURE_SEARCH_ENDPOINT"] == "https://explicit.invalid"
+            assert os.environ["AZURE_SEARCH_ENDPOINT"] == "https://explicit.invalid"
+            assert os.environ["BARE_KEY"] == ""
+        missing = Path(directory) / "missing.env"
+        try:
+            setup.load_explicit_environment(missing)
+        except FileNotFoundError:
+            pass
+        else:
+            raise AssertionError("Expected FileNotFoundError for a missing --env-file")
+    print("PASS explicit --env-file loads even under PYTHON_DOTENV_DISABLED, bare keys blank, missing file rejected")
+
     assert catalogue_title("Board Meeting 15 March 2006 | Header") == "Board Meeting 15 March 2006"
     assert catalogue_title("Board Meeting 15 March 2006") == "Board Meeting 15 March 2006"
     assert catalogue_title("Strategy | Risk Review") == "Strategy | Risk Review"

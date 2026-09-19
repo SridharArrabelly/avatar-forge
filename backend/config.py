@@ -84,8 +84,12 @@ PROJECT_ENDPOINT = os.getenv("PROJECT_ENDPOINT", "")
 # Defaults to `agent`, so an unconfigured deploy behaves exactly as before.
 VOICE_BINDING = os.getenv("VOICE_BINDING", "agent").strip().lower()
 # Realtime model used when VOICE_BINDING=model. Verified to bind (with avatar
-# and tools) in swedencentral: gpt-realtime-2, gpt-realtime-1.5, gpt-realtime.
-VOICELIVE_MODEL = os.getenv("VOICELIVE_MODEL", "gpt-realtime-2").strip()
+# and tools) in swedencentral: gpt-realtime-2.1, gpt-realtime-2.1-mini,
+# gpt-realtime-2, gpt-realtime-1.5, gpt-realtime. gpt-realtime-2.1 is the
+# default: benchmark data (docs/evaluation-model-mode.md) showed the best
+# measured fact coverage of the candidates evaluated. gpt-realtime-2 and
+# gpt-realtime-2.1-mini remain available as explicit overrides.
+VOICELIVE_MODEL = os.getenv("VOICELIVE_MODEL", "gpt-realtime-2.1").strip()
 
 # Resolved once so every module agrees on which binding is active.
 MODEL_BINDING = VOICE_BINDING == "model"
@@ -401,9 +405,9 @@ def get_ui_defaults() -> dict:
         "suggestedPrompts": _list(
             "SUGGESTED_PROMPTS",
             [
-                "What can you help me with?",
-                "Tell me about your services",
-                "How do I get started?",
+                "Summarise the latest board meeting",
+                "What actions were agreed at the latest meeting?",
+                "What is MTN's latest share price?",
             ],
         ),
     }
