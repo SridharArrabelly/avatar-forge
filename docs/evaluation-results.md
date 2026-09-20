@@ -3,6 +3,21 @@
 Protocol: [assistant-evaluation.md](assistant-evaluation.md).
 Earlier exploratory model comparisons: [evaluation-history.md](evaluation-history.md).
 
+This page covers **agent mode**. The **realtime/model-mode** comparison is in
+[evaluation-model-mode.md](evaluation-model-mode.md); its separate
+[latency attribution and measurement correction](realtime-latency-investigation.md)
+explains the old runner's within-turn waiting. Do not assume a defect in one
+harness applies to another without checking its timing path.
+
+> **Measurement audit, 20 September 2026:** the 792-turn agent text harness
+> paces/retries before each successful stream timer, and the 72-sample agent
+> audio harness spaces calls after completion. Neither has the realtime
+> runner's token-based tool-followup wait. Their numerical results below are
+> retained, not adjusted by subtracting waits. These remain client-observed
+> timings with SDK/observer/network costs; received PCM is not audible playback
+> or a verified first answer-bearing audio boundary. See the
+> [cross-harness audit](realtime-latency-investigation.md#agent-mode-measurement-audit).
+
 This page reports measured stages separately. A retrieval pass is not an answer
 quality pass, and a direct Search API timing is not voice response latency.
 Private original text, evidence labels, queries and result bodies are retained
@@ -56,7 +71,9 @@ All **792 text turns and 72 agent-mode audio samples** completed and have
 reconciled per-response grades. Grading was AI-assisted and source-based, not a
 human-panel certification. Original grades, blinded packets, supplemental
 public-fact adjudication and the single provider-error recovery remain available
-privately. Production was not switched, and no realtime-model-mode run started.
+privately. At completion of this agent study, production had not been switched
+and the realtime study had not started; the later realtime results are linked
+above rather than folded into this historical agent-mode cohort.
 
 ### Defaults approved after the user's manual test
 

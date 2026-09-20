@@ -1,5 +1,16 @@
 # Realtime model-mode evaluation
 
+> **Latency attribution update, 20 September 2026:** the historical local runner
+> inserted token-based waits before tool-followup responses. The production
+> handler does not contain that wait. Raw timings below remain measured values
+> for that client path, but are not clean production timings or pure model-speed
+> rankings. See [the latency investigation](realtime-latency-investigation.md)
+> for the 51-turn reconstruction, four instrumented probes and token audit.
+> The harness is now corrected to pace between complete attempts and buffer
+> event writes until attempt completion. **No new unpaced live cohort has been
+> run, so there is no replacement end-to-end TTFA statistic yet.** Historical
+> values have not been altered by subtracting a median or presented as new data.
+
 > **Post-evaluation scope update, 20 September 2026:** active instructions now
 > advertise meeting minutes and public web information only, and the original
 > onboarding tiles have shared spoken-answer guidance. This prompt change is
@@ -140,6 +151,14 @@ limits (120k TPM / 30 new connections per minute), not observed quota
 telemetry, since no `rate_limits.updated` events were observed in small
 preflight probes.
 
+The corrected runner applies discretionary token smoothing only between
+complete attempts. A real service-directed reset/backoff is still honored and
+marked in `latency_trace.service_wait_observed`. Event snapshots are bounded
+in memory and redacted/fsynced after an attempt, outside measured answer
+arrival. Completed attempts remain durable; an unclean exit can lose the
+in-flight event buffer. The historical runs below used the older policy and
+are labelled accordingly.
+
 ## Status of this evaluation
 
 Runtime Search parity, the Web IQ metadata fix, and the explicit-`--env-file`
@@ -177,6 +196,12 @@ mistakes described above.
 
 ## Corrected results
 
+**Timing-column status:** the earlier transcript/PCM naming correction is
+reflected below, but these remain **legacy client-path observations including
+obsolete continuation pacing**. They are retained for provenance, not as clean
+production latency or isolated model-speed rankings. Quality/routing grades
+are unaffected by this measurement interpretation.
+
 The run contains 48 oracle and 51 live turns per model: three repetitions of
 16 fixed-evidence oracle cases and 17 live-tool cases. The live-price case
 has no oracle counterpart. These are repeated observations of a small,
@@ -188,8 +213,8 @@ grading is AI-assisted and source-grounded, not a human-panel certification.
 | Factually correct answers | 51/51 | 50/51 |
 | Strictly complete answers | 39/51 (76.5%) | 31/51 (60.8%) |
 | Correct tool routing | 51/51 | 48/51 |
-| Final-answer transcript receipt, median / p95 | 2.610 / 3.045 s | 2.676 / 3.986 s |
-| Final-answer PCM receipt, median / p95 | 3.144 / 3.749 s | 3.084 / 4.419 s |
+| Legacy transcript receipt, median / p95 (client pacing included) | 2.610 / 3.045 s | 2.676 / 3.986 s |
+| Legacy PCM receipt, median / p95 (client pacing included) | 3.144 / 3.749 s | 3.084 / 4.419 s |
 | Turns with pre-tool spoken preambles | 0/51 | 10/51 |
 
 Timing starts immediately before user-turn submission, excludes connection
@@ -242,9 +267,10 @@ counts do not imply similar cost; model pricing, audio/text usage, and
 caching require separate accounting.
 
 **Candidate for application acceptance testing:** `gpt-realtime-2.1`.
-It had better observed live completeness/routing and a 0.671 s lower PCM
-p95, while Mini's PCM median was only 0.059 s lower. No statistical
-significance or broad accuracy guarantee is claimed. This comparison
+It had better observed live completeness/routing. Its legacy client-path PCM
+p95 was 0.671 s lower, while Mini's median was 0.059 s lower, but those
+differences include benchmark pacing and must not be read as production
+speedups. No statistical significance or broad accuracy guarantee is claimed. This comparison
 used text input and locally executed tools, excluding microphone/ASR/VAD,
 playback, and avatar latency. Cross-mode comparisons also differ in prompt,
 web provider, voice, and execution path. No default change, production
@@ -261,8 +287,8 @@ not compare the new single pass against their 51-turn aggregates.
 
 | Metric | gpt-realtime-2 | gpt-realtime-2.1 | gpt-realtime-2.1-mini |
 |---|---:|---:|---:|
-| TTFT (answer transcript), median / p95 | 3.245 / 3.680 s | 2.619 / 3.045 s | 2.508 / 3.793 s |
-| TTFA (answer PCM), median / p95 | 3.817 / 4.331 s | 3.136 / 3.891 s | 2.981 / 4.001 s |
+| Legacy TTFT, median / p95 (client pacing included) | 3.245 / 3.680 s | 2.619 / 3.045 s | 2.508 / 3.793 s |
+| Legacy TTFA, median / p95 (client pacing included) | 3.817 / 4.331 s | 3.136 / 3.891 s | 2.981 / 4.001 s |
 | Factually correct answers | 17/17 | 17/17 | 17/17 |
 | Strictly complete answers | 12/17 | 12/17 | 10/17 |
 | Required facts covered | 36/46 (78.3%) | 39/46 (84.8%) | 36/46 (78.3%) |
@@ -274,8 +300,9 @@ TTFA means receipt of the first PCM audio chunk, not completion of the
 answer or audible playback. No turn in these three run-1 groups had a
 pre-tool spoken preamble, so first-any PCM timing equals answer PCM timing.
 
-The quick sample strengthens the case for 2.1: its median answer audio
-arrived 0.681 s earlier than 2.0 and it covered more required facts. It did
+The quick sample showed greater required-fact coverage for 2.1. Its recorded
+client-path median audio arrived 0.681 s earlier than 2.0, but the
+token-dependent benchmark waits confound that latency comparison. It did
 **not** have more strictly complete answers than 2.0 in this sample.
 Mini had the lowest median, but lower strict completeness and one misroute.
 The existing three-pass Mini findings remain as reported above.
@@ -302,8 +329,10 @@ Following this evaluation, `gpt-realtime-2.1` has been promoted to the
 default `VOICELIVE_MODEL` for model-mode deployments (backend fallback,
 infra/Bicep fallback and compiled ARM, `.env.example`, and the
 configuration/deployment/voice-binding docs), based on its better observed
-live fact coverage and lower answer-audio latency versus the other two
-measured candidates above. `gpt-realtime-2` and `gpt-realtime-2.1-mini`
+live fact coverage/routing and the observations available at the time.
+The subsequent pacing audit means the historical latency rankings are not
+independent evidence of production speed superiority. The default has not
+been changed by this audit. `gpt-realtime-2` and `gpt-realtime-2.1-mini`
 remain available as explicit `VOICELIVE_MODEL` overrides. Agent mode is
 unaffected (still Terra/none, and still omits `VOICELIVE_MODEL`). This
 benchmark's own default two-model roster (`gpt-realtime-2.1`,

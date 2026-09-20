@@ -281,6 +281,9 @@ def _list(name: str, default: list[str]) -> list[str]:
     return items or default
 
 
+# Content-free, per-turn latency summaries. Independent of the content audit.
+ENABLE_LATENCY_TRACE = _bool("ENABLE_LATENCY_TRACE", False)
+
 # --- Audit logging (issue #30) ------------------------------------------------
 # A durable record of every conversation turn: the user's question, what the
 # tools returned, and the answer the model gave. Off by default — when disabled

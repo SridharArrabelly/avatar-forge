@@ -263,14 +263,16 @@ serves both harnesses. Prompts must not hardcode either set: they use
   lets relative dates ("last meeting", "February 2026") resolve.
 - **Throttling (agent mode).** 4-attempt retry with `5s * attempt` backoff plus
   1.5s spacing. Without it, bursts surface as `ERR` and tank the score — one early
-  un-retried run showed 18/30, almost all transient errors. A single very large
-  `max` latency is usually one turn stuck in backoff, **not** real inference; read
-  the per-question average.
+  un-retried run showed 18/30, almost all transient errors. The inspected legacy
+  helper resets its timer for each attempt, so those explicit backoffs are
+  outside successful-attempt latency. Do not attribute a large maximum to
+  backoff without per-attempt evidence. SDK-internal retry contributions in
+  the early runs were not separately recorded.
 - **A fresh session per question (model mode)**, so conversation history cannot
   contaminate later answers.
-- **Latency reports two different figures.** `first token` is the useful proxy
-  for first audible word; `completion` includes the full answer and tool
-  round-trips. Never quote completion as perceived avatar latency.
+- **Latency reports different boundaries.** `first token` is a text-stream
+  observation, not first audible speech. `completion` includes the full answer
+  and tool round-trips. Neither is a measurement of perceived avatar latency.
 - **Encoding.** Agent answers contain `【...†source】` citation characters that
   crash the Windows cp1252 console — set `$env:PYTHONIOENCODING='utf-8'`.
   Transcripts are written UTF-8 and are gitignored.
@@ -387,7 +389,7 @@ uv run python scripts/bench_routing_model.py --runs 3 --tier core
 | questions | core 15 × 3 rounds = **45 turns**, catalogue injected |
 | web tool | **LIVE** Web IQ, 21-host allow-list (post-#124) |
 | **routing** | **45/45** (15/15 every round, all three groups) |
-| **first token** | **2.97s** avg (n=45, 0 missing) — the perceived-latency figure |
+| **first token** | **2.97s** avg (n=45, 0 missing) — historical text-stream latency, not audible speech |
 | completion | 3.40s avg |
 
 Round-to-round variance was negligible: first token 2.9 / 3.0 / 3.0s,
@@ -441,8 +443,8 @@ publishes them as an **HTML table**, and the model picks the right row from it.
 - **Latency here is not a model-vs-model result.** Agent mode calls **hosted**
   tools server-side; model mode calls **in-process** tools over the Web IQ REST
   API. A delta measures the whole path, not the model.
-- `first token` is the perceived-latency proxy. Never quote `completion`
-  (3.40s) as time-to-first-word.
+- `first token` is a text-stream measurement, not a playback measurement.
+  Never quote `completion` (3.40s) as time-to-first-word.
 - Single run of `n=3`, one region, one time of day.
 - Routing is **saturated** at 45/45 on the core tier — it can now only detect a
   regression, not an improvement. Use `--tier boundary` to discriminate.

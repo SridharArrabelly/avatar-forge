@@ -26,6 +26,7 @@ from azure.ai.voicelive.models import (
 from ..config import (
     AGENT_NAME,
     AGENT_PROJECT_NAME,
+    ENABLE_LATENCY_TRACE,
     MODEL_BINDING,
     PROACTIVE_GREETING,
     REALTIME_MAX_TOKENS,
@@ -42,6 +43,7 @@ from .builders import (
 from .catalog import get_meeting_catalog
 from .event_handlers import handle_event
 from .instructions import load_realtime_instructions
+from .latency_trace import LatencyTrace, create_response
 from .tools import build_realtime_tools
 
 logger = logging.getLogger(__name__)
@@ -124,6 +126,7 @@ class VoiceSessionHandler:
         # which keeps one brain live at a time and leaves no runtime switch to
         # misconfigure.
         self.model_binding = MODEL_BINDING
+        self._latency_trace = LatencyTrace(self.model_binding) if ENABLE_LATENCY_TRACE else None
 
         self.connection = None
         self.is_running = False
@@ -199,8 +202,12 @@ class VoiceSessionHandler:
                 await self._process_events(connection)
 
         except asyncio.CancelledError:
+            if self._latency_trace is not None:
+                self._latency_trace.finish(self._latency_trace.current, "cancelled", "session_cancelled")
             logger.info(f"Session cancelled for client {self.client_id}")
         except Exception as e:
+            if self._latency_trace is not None:
+                self._latency_trace.finish(self._latency_trace.current, "error", "connection_error")
             error_message = describe_session_start_error(e, self.config)
             logger.error(
                 "Voice session error for %s: %s: %s",
@@ -214,6 +221,8 @@ class VoiceSessionHandler:
                 "error": error_message,
             })
         finally:
+            if self._latency_trace is not None:
+                self._latency_trace.finish(self._latency_trace.current, "cancelled", "session_closed")
             self.is_running = False
             self.connection = None
 
@@ -310,6 +319,8 @@ class VoiceSessionHandler:
 
         logger.debug("[SEND] session.update")
         await connection.session.update(session=session_config)
+        if self._latency_trace is not None:
+            self._latency_trace.session_config(session_config)
 
         # Wait for SESSION_UPDATED
         session_updated = await self._wait_for_event(
@@ -343,11 +354,15 @@ class VoiceSessionHandler:
                     content=[InputTextContentPart(text=catalog)]
                 )
                 await connection.conversation.item.create(item=catalog_item)
+                if self._latency_trace is not None:
+                    self._latency_trace.catalogue_chars(len(catalog))
                 logger.info(
                     f"Injected meeting catalogue ({len(catalog)} chars) "
                     f"for client {self.client_id}"
                 )
             else:
+                if self._latency_trace is not None:
+                    self._latency_trace.catalogue_chars(0)
                 logger.info(
                     f"No meeting catalogue available; agent will fall back "
                     f"to direct search for client {self.client_id}"
@@ -412,7 +427,8 @@ class VoiceSessionHandler:
             if config.get("enableProactive", True):
                 try:
                     logger.info("[SEND] response.create (proactive greeting, no avatar)")
-                    await connection.response.create(
+                    await create_response(
+                        self, connection,
                         additional_instructions=PROACTIVE_GREETING_INSTRUCTIONS
                     )
                     logger.info("Proactive greeting sent")
@@ -423,7 +439,8 @@ class VoiceSessionHandler:
             if config.get("enableProactive", True):
                 try:
                     logger.info("[SEND] response.create (proactive greeting, websocket avatar)")
-                    await connection.response.create(
+                    await create_response(
+                        self, connection,
                         additional_instructions=PROACTIVE_GREETING_INSTRUCTIONS
                     )
                     logger.info("Proactive greeting sent (websocket avatar)")
@@ -450,6 +467,11 @@ class VoiceSessionHandler:
                 raise
             except Exception as e:
                 # Connection closed or fatal error
+                if self._latency_trace is not None:
+                    self._latency_trace.finish(
+                        self._latency_trace.current, "cancelled" if self._stopping else "error",
+                        "session_closed" if self._stopping else "connection_error",
+                    )
                 if self._stopping:
                     logger.info(f"Voice Live connection closed for {self.client_id}")
                 else:
@@ -470,6 +492,8 @@ class VoiceSessionHandler:
             except asyncio.CancelledError:
                 raise
             except Exception as e:
+                if self._latency_trace is not None:
+                    self._latency_trace.finish(self._latency_trace.current, "error", "handler_error")
                 logger.error(f"Error handling event {getattr(event, 'type', 'unknown')}: {e}", exc_info=True)
                 # Continue processing — don't let one bad event kill the loop
 
@@ -513,13 +537,21 @@ class VoiceSessionHandler:
     async def send_text_message(self, text: str):
         """Send a text message to the conversation."""
         if self.connection:
+            trace = self._latency_trace
+            turn = trace.begin("text_submission_received") if trace is not None else None
             try:
                 item = UserMessageItem(
                     content=[InputTextContentPart(text=text)]
                 )
                 await self.connection.conversation.item.create(item=item)
-                await self.connection.response.create()
+                await create_response(self, self.connection, turn=turn, reason="text")
+            except asyncio.CancelledError:
+                if trace is not None:
+                    trace.finish(turn, "cancelled", "session_cancelled")
+                raise
             except Exception as e:
+                if trace is not None:
+                    trace.finish(turn, "error", "text_send_error")
                 logger.error(f"Error sending text: {e}")
 
     async def send_avatar_sdp_offer(self, client_sdp: str):
@@ -554,6 +586,8 @@ class VoiceSessionHandler:
         """
         if not self.connection:
             return
+        if self._latency_trace is not None:
+            self._latency_trace.finish(self._latency_trace.current, "cancelled", "manual_interrupt")
         logger.info(
             "Manual interrupt requested (response_active=%s, avatar_enabled=%s)",
             self._response_active,
@@ -621,6 +655,8 @@ class VoiceSessionHandler:
 
     async def stop(self):
         """Stop the session."""
+        if self._latency_trace is not None:
+            self._latency_trace.finish(self._latency_trace.current, "cancelled", "session_closed")
         self._stopping = True
         self.is_running = False
         conn = self.connection
@@ -640,6 +676,8 @@ class VoiceSessionHandler:
                 if etype != ServerEventType.RESPONSE_AUDIO_DELTA:
                     logger.debug(f"[RECV-WAIT] {etype}")
                 if event.type == ServerEventType.ERROR:
+                    if self._latency_trace is not None:
+                        self._latency_trace.observe(event)
                     raise RuntimeError(
                         describe_error(
                             event,
@@ -647,6 +685,8 @@ class VoiceSessionHandler:
                         )
                     )
                 if event.type in wanted_types:
+                    if self._latency_trace is not None:
+                        self._latency_trace.observe(event)
                     if event.type == ServerEventType.RESPONSE_DONE:
                         self._response_active = False
                     return event

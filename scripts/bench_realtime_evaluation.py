@@ -29,8 +29,9 @@ client window. --reserve-tokens 15000 reserves EACH attempt; reported usage from
 ALL response.done events, including tool rounds and audio output, raises actual
 charges and subsequent same-stage reservations. Charges remain for 61s after
 attempt completion. Missing usage retains reservations, not fabricated usage.
-Reported token totals also pace response continuations (tokens * 60 / budget).
-Reported exhausted rate-limit resets/Retry-After override both kinds of start.
+Reported token totals smooth admission BETWEEN complete attempts (tokens * 60 /
+budget), never the normal tool-followup inside a measured turn. Genuine reported
+rate-limit resets/Retry-After remain enforced and their waits are explicitly traced.
 These are conservative client admission estimates, NOT observed service quotas
 or guaranteed token bounds. Overruns are charged, never fitted by truncating data.
 
@@ -46,7 +47,11 @@ explicitly permits a partial matrix. There is no resume.
 
 Output must be NEW/EMPTY and outside Git checkouts. Schema v1 artifacts:
 manifest.json, availability.json, prompt.txt, catalogue.txt, tools.json, cases.json,
-schedule.json; fsynced events.jsonl, attempts.jsonl, turns.jsonl, summary.json.
+schedule.json; events.jsonl, attempts.jsonl, turns.jsonl, summary.json.
+Events are snapshotted into a bounded in-memory buffer, then redacted and fsynced
+at attempt boundaries, outside TTFA. An unclean process exit can lose in-flight
+events; completed attempt/turn records remain durable. Buffer overflow fails the
+attempt rather than silently losing evidence.
 Run-observed unavailable bindings also have availability.jsonl entries. All
 evidence is secret-redacted; full source/tool results remain private. PCM is
 retained as decoded byte counts/chunk hashes, not playback files.
@@ -58,9 +63,16 @@ preambles and MUST NOT be used as useful-answer latency. Each response retains
 its channels, first timestamps, audio count and function/tool calls. TEXT and
 AUDIO_TRANSCRIPT are never concatenated; answer_text prefers the final transcript.
 Connection setup and response.create origins are separate. Client throttling is
-traced and included in end-to-end observations. No playback/first-audible or
+traced; service-directed waits remain visible in end-to-end observations, while
+discretionary admission pacing is outside the turn. No playback/first-audible or
 container or deployed-app end-to-end latency is measured. Absent usage/rate
 observations remain absent.
+
+Diagnostic records additionally retain T0-T5, function-announcement/argument
+readiness, response-create send boundaries, actual client pacing waits, and
+in-memory trace-capture costs. Tool payloads, prompts and production behavior
+are unchanged. Component sizes are characters/UTF-8 bytes, not claimed provider
+token attribution.
 """
 from __future__ import annotations
 
@@ -97,6 +109,7 @@ MODELS = ("gpt-realtime-2.1", "gpt-realtime-2.1-mini")
 MODEL_CHOICES = (*MODELS, "gpt-realtime-2", "mai-mm-realtime", "phi4-mm-realtime")
 STAGES = ("oracle", "live")
 MAX_ATTEMPTS, MAX_TOOL_CALLS, MAX_RESPONSE_ROUNDS = 4, 3, 4
+MAX_BUFFERED_EVENTS = 20000
 DOCUMENTED_GLOBAL_TPM, DOCUMENTED_CONNECTIONS_PER_MINUTE = 120000, 30
 TOKEN_WINDOW_SECONDS = 61.0
 UNAVAILABLE_CODES = {"invalid_model", "model_not_found", "deployment_not_found"}
@@ -367,6 +380,8 @@ def input_messages(catalogue, case, stage):
 class Evidence:
     def __init__(self, directory, redact):
         self.root, self.redact, self.logs = directory.resolve(), redact, {}
+        self.pending_events = []
+        self.closed = False
         if self.root.is_relative_to(ROOT.resolve()) or any(
             (parent / ".git").exists() for parent in (self.root, *self.root.parents)
         ):
@@ -388,17 +403,42 @@ class Evidence:
     def write_json(self, name, value):
         self._write(name, json.dumps(self.redact(value), indent=2, ensure_ascii=False, allow_nan=False) + "\n")
 
-    def emit(self, kind, value):
+    def _append(self, kind, value):
         if kind not in self.logs:
             self.logs[kind] = (self.root / f"{kind}.jsonl").open("x", encoding="utf-8")
         stream = self.logs[kind]
         stream.write(json.dumps(self.redact(value), ensure_ascii=False, allow_nan=False) + "\n")
+        return stream
+
+    def flush_events(self):
+        if not self.pending_events:
+            return
+        pending, self.pending_events = self.pending_events, []
+        for value in pending:
+            stream = self._append("events", value)
+        stream.flush()
+        os.fsync(stream.fileno())
+
+    def emit(self, kind, value):
+        if self.closed:
+            raise RuntimeError("Evidence capture is closed")
+        if kind == "events":
+            if len(self.pending_events) >= MAX_BUFFERED_EVENTS:
+                raise RuntimeError("Event buffer limit exceeded; this attempt has incomplete evidence")
+            self.pending_events.append(copy.deepcopy(value))
+            return
+        self.flush_events()
+        stream = self._append(kind, value)
         stream.flush()
         os.fsync(stream.fileno())
 
     def close(self):
-        for stream in self.logs.values():
-            stream.close()
+        try:
+            self.flush_events()
+        finally:
+            for stream in self.logs.values():
+                stream.close()
+            self.closed = True
 
 
 def nonnegative_seconds(value):
@@ -490,7 +530,8 @@ class Pacer:
         delay = total * 60 / self.budget
         self.token_due = max(self.token_due, time.monotonic()) + delay
         return {"reported_total_tokens": total, "reported_turn_tokens_so_far": self.active.reported_tokens,
-                "client_delay_seconds": delay, "client_token_budget": self.budget}
+                "client_delay_seconds": delay, "client_delay_scope": "between_attempts",
+                "client_token_budget": self.budget}
 
     def reservation_snapshot(self):
         if self.active is None:
@@ -518,10 +559,12 @@ class Pacer:
         return note
 
     def response_delay(self):
-        return max(0.0, max(self.blocked_until, self.token_due) - time.monotonic())
+        return max(0.0, self.blocked_until - time.monotonic())
 
     async def wait_response(self):
-        await asyncio.sleep(self.response_delay())
+        delay = self.response_delay()
+        if delay:
+            await asyncio.sleep(delay)
 
     async def wait(self, stage="live"):
         if self.active is not None:
@@ -677,6 +720,12 @@ class Channels:
                 "first_received_ms": dict(self.first), "audio_bytes": self.audio_bytes}
 
 
+def text_size(text):
+    if not isinstance(text, str):
+        return {"characters": None, "utf8_bytes": None}
+    return {"characters": len(text), "utf8_bytes": len(text.encode("utf-8"))}
+
+
 async def run_turn(runtime, settings, args, case, scheduled, attempt, emit, pacer):
     started, submitted, response_create_at = time.monotonic(), None, None
     first_any = {"TEXT": None, "AUDIO_TRANSCRIPT": None, "PCM": None}
@@ -690,6 +739,11 @@ async def run_turn(runtime, settings, args, case, scheduled, attempt, emit, pace
         "channels": {"TEXT": "", "AUDIO_TRANSCRIPT": ""}, "final_response_id": None,
         "preamble_response_ids": [], "final_answer_audio_bytes": 0,
         "token_reservation": pacer.reservation_snapshot(),
+        "latency_trace": {
+            "measurement_policy_version": 2,
+            "T0_ms": 0.0, "T4_ms": None, "T5_ms": None,
+            "function_events": [], "response_requests": [], "trace_capture_spans": [],
+        },
     }
     config = session_config(runtime, scheduled["stage"], args)
     record["session_config"] = copy.deepcopy(config)
@@ -700,11 +754,17 @@ async def run_turn(runtime, settings, args, case, scheduled, attempt, emit, pace
 
     def trace(kind, value, *, observed=None, observed_utc=None):
         observed = time.monotonic() if observed is None else observed
+        capture_started = time.monotonic()
         emit("events", {"schema_version": 1, "attempt_id": record["attempt_id"], "kind": kind,
                         "received_at": observed_utc or utc_now(),
                         "attempt_elapsed_ms": (observed - started) * 1000,
                         "turn_elapsed_ms": (observed - submitted) * 1000 if submitted is not None else None,
                         "data": value})
+        if submitted is not None:
+            record["latency_trace"]["trace_capture_spans"].append({
+                "kind": kind, "start_ms": (capture_started - submitted) * 1000,
+                "end_ms": (time.monotonic() - submitted) * 1000,
+            })
 
     async def receive(connection):
         try:
@@ -734,19 +794,47 @@ async def run_turn(runtime, settings, args, case, scheduled, attempt, emit, pace
         trace("conversation.item.create", plain(item))
         if user_submission:
             submitted, record["submitted_at"] = time.monotonic(), utc_now()
+        send_started = time.monotonic()
         await connection.conversation.item.create(item=item)
+        sent = time.monotonic()
+        timing = {
+            "send_started_ms": (send_started - submitted) * 1000,
+            "send_completed_ms": (sent - submitted) * 1000,
+        } if submitted is not None else None
+        if user_submission:
+            record["latency_trace"]["user_item_send"] = timing
+        return timing
 
     async def create_response(connection):
         nonlocal response_create_at
+        requested = time.monotonic()
         delay = pacer.response_delay()
+        request = {
+            "round": len(record["responses"]) + 1,
+            "requested_ms": (requested - submitted) * 1000,
+            "planned_wait_ms": delay * 1000,
+            "token_due_ms": max(0.0, pacer.token_due - requested) * 1000,
+            "service_defer_due_ms": max(0.0, pacer.blocked_until - requested) * 1000,
+        }
         if delay:
-            trace("client_pacing", {"before": "response.create", "wait_seconds": delay})
+            trace("client_pacing", {
+                "before": "response.create", "wait_seconds": delay,
+                "reason": "service_directed",
+            })
+        wait_started = time.monotonic()
         await pacer.wait_response()
+        request.update(
+            wait_started_ms=(wait_started - submitted) * 1000,
+            wait_completed_ms=(time.monotonic() - submitted) * 1000,
+        )
         trace("response.create", {})
         response_create_at = time.monotonic()
         record["timings"].setdefault("initial_response_create_ms", (response_create_at - submitted) * 1000)
         pacer.response_started()
+        request["send_started_ms"] = (response_create_at - submitted) * 1000
         await connection.response.create()
+        request["send_completed_ms"] = (time.monotonic() - submitted) * 1000
+        record["latency_trace"]["response_requests"].append(request)
 
     try:
         sdk_session = runtime.models.RequestSession(**config)
@@ -813,9 +901,18 @@ async def run_turn(runtime, settings, args, case, scheduled, attempt, emit, pace
                         if item.get("type") == "function_call" and not (
                             kind == "conversation.item.created" and item.get("call_id") in seen_calls
                         ):
+                            record["latency_trace"]["function_events"].append({
+                                "round": round_number, "event": kind, "received_ms": at,
+                                "item_id": item.get("id"), "call_id": item.get("call_id"),
+                            })
                             identity = item.get("id") or item.get("call_id")
                             pending[identity] = {**pending.get(identity, {}), **item}
                     if kind in ("response.function_call_arguments.delta", "response.function_call_arguments.done"):
+                        if kind.endswith(".done"):
+                            record["latency_trace"]["function_events"].append({
+                                "round": round_number, "event": kind, "received_ms": at,
+                                "item_id": event.get("item_id"), "call_id": event.get("call_id"),
+                            })
                         identity = event.get("item_id") or event.get("call_id")
                         item = pending.setdefault(identity, {})
                         for field in ("call_id", "name"):
@@ -824,6 +921,7 @@ async def run_turn(runtime, settings, args, case, scheduled, attempt, emit, pace
                         item["arguments"] = (event.get("arguments", "") if kind.endswith(".done")
                                              else item.get("arguments", "") + event.get("delta", ""))
                     if kind == "response.done":
+                        current["response_done_ms"] = at
                         response = event.get("response", {})
                         record["response_done"].append(response)
                         current["status"] = response.get("status")
@@ -879,11 +977,30 @@ async def run_turn(runtime, settings, args, case, scheduled, attempt, emit, pace
                         seen_calls.add(call_id)
                         call = {"call_id": call_id, "name": item["name"], "arguments": item.get("arguments", ""),
                                 "response_id": current["response_id"], "status": "running",
-                                "execution_location": "local"}
+                                "execution_location": "local", "response_round": round_number}
+                        markers = [
+                            marker for marker in record["latency_trace"]["function_events"]
+                            if marker["round"] == round_number and (
+                                marker["call_id"] == call_id
+                                or (item.get("id") and marker["item_id"] == item["id"])
+                            )
+                        ]
+                        call["timing_stages"] = {
+                            "function_announced_ms": next((
+                                marker["received_ms"] for marker in markers
+                                if marker["event"] in ("response.output_item.added", "conversation.item.created")
+                            ), None),
+                            "arguments_ready_ms": next((
+                                marker["received_ms"] for marker in markers
+                                if marker["event"] == "response.function_call_arguments.done"
+                            ), None),
+                            "call_response_done_ms": current["response_done_ms"],
+                        }
                         record["tool_calls"].append(call)
                         current["tool_calls"].append(call)
                         trace("tool_start", call)
                         tool_started = time.monotonic()
+                        call["timing_stages"]["T1_ms"] = (tool_started - submitted) * 1000
                         try:
                             arguments = json.loads(call["arguments"])
                             if not isinstance(arguments, dict) or not isinstance(arguments.get("query"), str) or not arguments["query"].strip():
@@ -908,13 +1025,17 @@ async def run_turn(runtime, settings, args, case, scheduled, attempt, emit, pace
                             pacer.defer(call["error"]["retry_after_seconds"])
                             call["result"] = {"error": f"{type(exc).__name__}: {exc}"}
                         finally:
-                            call["duration_ms"] = (time.monotonic() - tool_started) * 1000
+                            tool_finished = time.monotonic()
+                            call["duration_ms"] = (tool_finished - tool_started) * 1000
+                            call["timing_stages"]["T2_ms"] = (tool_finished - submitted) * 1000
                             if call["status"] == "running":
                                 call["status"] = "cancelled"
                             trace("tool_result", call)
-                        await send_item(connection, runtime.models.FunctionCallOutputItem(
+                        sent = await send_item(connection, runtime.models.FunctionCallOutputItem(
                             call_id=call_id, output=json.dumps(call["result"], ensure_ascii=False)
                         ))
+                        call["timing_stages"]["result_send_started_ms"] = sent["send_started_ms"]
+                        call["timing_stages"]["T3_ms"] = sent["send_completed_ms"]
                     await create_response(connection)
                     continue
                 if not response.get("output"):
@@ -932,6 +1053,8 @@ async def run_turn(runtime, settings, args, case, scheduled, attempt, emit, pace
                 record["timings"]["final_answer_first_received_ms"] = dict(current["first_received_ms"])
                 record["timings"]["final_first_received_ms"] = dict(current["first_received_ms"])
                 record["timings"]["final_first_from_response_create_ms"] = dict(current["first_from_response_create_ms"])
+                record["latency_trace"]["T4_ms"] = current["first_received_ms"]["AUDIO_TRANSCRIPT"]
+                record["latency_trace"]["T5_ms"] = current["first_received_ms"]["PCM"]
                 record["status"] = ("completed_with_tool_error" if any(
                     call["status"] != "completed" for call in record["tool_calls"]
                 ) else "completed")
@@ -959,6 +1082,25 @@ async def run_turn(runtime, settings, args, case, scheduled, attempt, emit, pace
         }
         record["timings"]["attempt_total_ms"] = (time.monotonic() - started) * 1000
         record["finished_at"], record["token_accounting"] = utc_now(), pacer.finish_turn()
+        record["latency_trace"]["service_wait_observed"] = any(
+            request["planned_wait_ms"] > 0
+            for request in record["latency_trace"]["response_requests"]
+        )
+        record["context_sizes"] = {
+            "measurement": "Observed text sizes, not exact provider token attribution",
+            "prior_user_turns": 0,
+            "system_prompt": text_size(runtime.prompt),
+            "catalogue": text_size(runtime.catalogue),
+            "tool_schemas_json": text_size(json.dumps(record["session_config"]["tools"], ensure_ascii=False)),
+            "user_question": text_size(case["question"]),
+            "oracle_context": text_size(case.get("oracle_context", "") if scheduled["stage"] == "oracle" else ""),
+            "tool_calls": [
+                {"call_id": call["call_id"], "name": call["name"],
+                 "arguments": text_size(call["arguments"]),
+                 "result_json": text_size(json.dumps(call.get("result"), ensure_ascii=False))}
+                for call in record["tool_calls"]
+            ],
+        }
         emit("attempts", record)
         if record.get("error", {}).get("code") in UNAVAILABLE_CODES:
             emit("availability", {"schema_version": 1, "source": "run_observed", "status": "unavailable",
@@ -972,10 +1114,12 @@ def freeze(evidence, settings, args, cases, raw_hash, schedule, runtime):
     source_paths = [
         "scripts\\bench_realtime_evaluation.py", "backend\\voice\\instructions.py",
         "backend\\voice\\tools.py", "backend\\voice\\functions.py", "backend\\voice\\catalog.py",
-        "backend\\voice\\auth.py", "backend\\avatar_identity.py", "prompts\\realtime\\instructions.md",
+        "backend\\voice\\auth.py", "backend\\avatar_identity.py", "backend\\onboarding.py",
+        "prompts\\realtime\\instructions.md",
     ]
     manifest = {
-        "schema_version": 1, "created_at": utc_now(), "binding": "model",
+        "schema_version": 1, "measurement_policy_version": 2,
+        "created_at": utc_now(), "binding": "model",
         "execution_location": "local", "tool_execution_location": "local",
         "measurement_scope": "Local checkout benchmark calling remote Voice Live/Search/WebIQ; not the deployed application",
         "web_result_date_policy": "Preserve publication/update/crawl fields and notes verbatim; infer no currentness or live-quote timestamp",
@@ -995,7 +1139,8 @@ def freeze(evidence, settings, args, cases, raw_hash, schedule, runtime):
             "accounting": "Sum ALL response.done usage including tool rounds; charge at least reservation",
             "adaptive": "Raise next same-stage reservation to largest reported turn total, capped at budget",
             "missing_usage": "Retain one reservation per unreported/unfinished response; not observed tokens",
-            "response_pacing": "Reported response total_tokens * 60 / client budget, plus reported resets",
+            "response_pacing": "Only genuine reported service resets/Retry-After; no token smoothing inside a turn",
+            "admission_pacing": "Reported total_tokens * 60 / client budget applied between complete attempts",
             "overruns": "Charge excess and wait; never truncate data, change profile, or substitute models",
         },
         "max_attempts": MAX_ATTEMPTS, "max_tool_calls": MAX_TOOL_CALLS, "max_response_rounds": MAX_RESPONSE_ROUNDS,
@@ -1017,10 +1162,25 @@ def freeze(evidence, settings, args, cases, raw_hash, schedule, runtime):
             "first_any_received_ms": "May contain tool preamble; NOT useful-answer latency",
             "response_origins": "Each response also records first_from_response_create_ms",
             "preambles": "Kept in responses and preamble_response_ids; not in answer_text",
+            "latency_trace": {
+                "T0": "Immediately before user item send; zero origin",
+                "T1": "Tool execution begins after arguments and response.done; includes argument validation",
+                "T2": "Tool execution and result validation end",
+                "T3": "SDK await for function output send completes; not a server acknowledgement",
+                "T4": "First terminal answer AUDIO_TRANSCRIPT observed by SDK client",
+                "T5": "First terminal answer PCM observed by SDK client",
+                "client_waits": "response_requests labels service waits; discretionary smoothing is between attempts",
+                "observer_overhead": "trace_capture_spans measures in-memory event snapshot cost; file flush is after the attempt",
+            },
             "not_measured": ["playback", "first audible latency", "avatar", "microphone", "SR",
                              "container latency", "deployed-app end-to-end latency"],
         },
         "audio_storage": "Decoded byte counts and chunk SHA256, no playback files",
+        "evidence_capture": {
+            "mode": "buffered_per_attempt", "max_buffered_events": MAX_BUFFERED_EVENTS,
+            "durability": "Events and attempt record fsynced after each attempt; unclean exit may lose in-flight events",
+            "overflow": "Fail the attempt; never silently drop and count it as complete",
+        },
     }
     evidence.write_json("manifest.json", manifest)
     for name, text in (("prompt.txt", runtime.prompt), ("catalogue.txt", runtime.catalogue)):

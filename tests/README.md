@@ -9,7 +9,8 @@ prefix that says what it costs you (`setup_`, `grant_`, `smoke_`, `bench_`).
 
 ## Running them
 
-Each file is standalone — plain `assert`s and a `main()`, no pytest, no config. Run one:
+Each file is standalone — plain `assert`s and a `main()` or `unittest`, no pytest
+or test-runner config. Run one:
 
 ```powershell
 uv run python tests\test_docs.py
@@ -49,6 +50,9 @@ wrong reason. Open a fresh terminal rather than debugging it.
 | [`test_suggested_prompts.py`](test_suggested_prompts.py) | Original onboarding questions, shared spoken replies in both prompts/fallback, environment overrides, opt-out, and matching examples. |
 | [`test_realtime_scope.py`](test_realtime_scope.py) | Minutes/web capabilities, honest unavailable-source boundaries, and legacy document formatting without advertising that legacy corpus. |
 | [`test_agent_instructions.py`](test_agent_instructions.py) | Instruction-only updates preserve the existing model/tools/settings, are idempotent, and reject concurrent changes or unexpected readback. |
+| [`test_realtime_latency.py`](test_realtime_latency.py) | T0-T5, argument readiness and output-send boundaries stay distinct; token smoothing no longer delays a tool-followup. |
+| [`test_realtime_evidence.py`](test_realtime_evidence.py) | Bounded event capture keeps disk/redaction work outside measured turns, preserves snapshots and redaction, and fails explicitly on overflow or write errors. |
+| [`test_production_latency_trace.py`](test_production_latency_trace.py) | Default-off tracing preserves legacy diagnostics and inference payloads/overlap; opt-in content-free timing distinguishes preambles, missing PCM, usage and explicit instrumentation failures. |
 | [`test_agent_model_binding.py`](test_agent_model_binding.py) | That the agent binds to a model deployment that actually exists — evaluated against the generated ARM, not restated in Python. |
 | [`test_webiq_binding.py`](test_webiq_binding.py) | Mode-specific container settings, explicit realtime/Web IQ defaults, azd parameter forwarding, and a credential-independent domain list with secret-backed API keys. Run `az bicep build --file infra\main.bicep` first to refresh the generated ARM. |
 | [`test_agent_tool_wiring.py`](test_agent_tool_wiring.py) | That a missing **optional** tool degrades gracefully while a missing **required** one fails loudly. |

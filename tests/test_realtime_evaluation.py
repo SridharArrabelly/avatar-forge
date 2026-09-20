@@ -330,6 +330,8 @@ class ConfigurationTests(unittest.TestCase):
         stream = StringIO()
         evidence = evaluation.Evidence.__new__(evaluation.Evidence)
         evidence.logs, evidence.redact = {"attempts": stream}, evaluation.Redactor(["test-secret"])
+        evidence.pending_events = []
+        evidence.closed = False
         with patch.object(stream, "fileno", return_value=71), patch.object(stream, "flush") as flush, \
                 patch.object(evaluation.os, "fsync") as fsync:
             evidence.emit("attempts", {"error": "test-secret"})
@@ -363,6 +365,43 @@ class ConfigurationTests(unittest.TestCase):
 
 
 class PacerTests(unittest.IsolatedAsyncioTestCase):
+    async def test_token_smoothing_waits_between_turns_not_tool_continuations(self):
+        with fake_clock() as clock:
+            pacer = evaluation.Pacer(0)
+            await pacer.wait()
+            pacer.response_started()
+            usage = pacer.account_usage({"total_tokens": 9000})
+            self.assertEqual(usage["client_delay_scope"], "between_attempts")
+            self.assertEqual(pacer.token_due, 106)
+            await pacer.wait_response()
+            self.assertEqual(clock.now, 100)
+            self.assertEqual(clock.sleeps, [])
+            pacer.response_started()
+            pacer.account_usage({"total_tokens": 6000})
+            await pacer.wait_response()
+            self.assertEqual(clock.now, 100)
+            note = pacer.finish_turn()
+            self.assertEqual(note["reported_tokens_sum"], 15000)
+            await pacer.wait()
+            self.assertEqual(clock.now, 110)
+            self.assertEqual(clock.sleeps, [10])
+            pacer.finish_turn()
+
+    async def test_service_wait_is_not_extended_by_token_smoothing(self):
+        with fake_clock() as clock:
+            pacer = evaluation.Pacer(0)
+            await pacer.wait()
+            pacer.response_started()
+            pacer.account_usage({"total_tokens": 9000})
+            pacer.defer(2)
+            await pacer.wait_response()
+            self.assertEqual(clock.now, 102)
+            pacer.finish_turn()
+            await pacer.wait()
+            self.assertEqual(clock.now, 106)
+            self.assertEqual(clock.sleeps, [2, 4])
+            pacer.finish_turn()
+
     async def test_global_spacing_and_reported_reset(self):
         with fake_clock() as clock:
             pacer = evaluation.Pacer(8)
