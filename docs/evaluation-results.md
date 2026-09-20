@@ -10,6 +10,11 @@ timings. Its separate
 explains the old runner's within-turn waiting. Do not assume a defect in one
 harness applies to another without checking its timing path.
 
+The later [concise v4 prompt evaluation](terra-prompt-evaluation.md) records
+the separate prompt-only smoke comparison and financial query/fallback gate.
+The larger study below retains its original instructions and results; it was
+not rerun or regraded for v4.
+
 > **Measurement audit, 20 September 2026:** the 792-turn agent text harness
 > paces/retries before each successful stream timer, and the 72-sample agent
 > audio harness spaces calls after completion. Neither has the realtime

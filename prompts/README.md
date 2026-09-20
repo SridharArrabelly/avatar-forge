@@ -11,12 +11,12 @@ prompts/
 ├── README.md                          # this file
 ├── agent/                             # used when VOICE_BINDING=agent
 │   ├── description.md                 # one-line agent description (UI / catalog)
-│   └── instructions.md                # system instructions — the only agent prompt
+│   └── instructions.md                # active system instructions, concise v4
 └── realtime/                          # used when VOICE_BINDING=model
     └── instructions.md                # system instructions, gpt-realtime family
 ```
 
-Everything here is sent somewhere. The whole folder is copied into the container
+Everything here is prompt text or its documentation. The whole folder is copied into the container
 image (`Dockerfile`), so anything that is *not* a prompt does not belong — the
 historical routing regression checklist that used to sit here now lives in
 [evaluation history](../docs/evaluation-history.md). The
@@ -64,8 +64,8 @@ running with reasoning switched **off**. `_model_supports_reasoning()` still exi
 but now only gates the `reasoning.effort` parameter, which is all it ever really
 described.
 
-The agent prompt carries the voice-first output rules, the silent meeting
-catalogue contract, and the `bing_custom_search` query-style-by-intent block.
+The agent prompt carries voice-first output rules, the silent meeting catalogue
+contract, meeting/public routing and financial-source/unit safeguards.
 
 ### A rejected draft, and what measuring it taught us
 
@@ -121,22 +121,45 @@ uv run python scripts/bench_routing_model.py --runs 5 --arms LIVE=prompts/realti
 There is deliberately no env override for the prompt path, so promoting one means
 replacing the file its loader expects.
 
+### Concise v4 instructions
+
+[`agent/instructions.md`](agent/instructions.md) now contains the concise v4
+instructions evaluated on Terra/none. All four supported placeholders remain;
+onboarding expands once. Repeated routing/voice rules and source-specific rule
+examples are removed. The prompt retains date resolution, cents/rand handling,
+honest missing-evidence responses and the three-sentence/70-word default.
+
+Financial queries target issuer financial statements or income statements
+instead of only results highlights. An unsupported total must be acknowledged
+before any separately labelled service-revenue fallback. This does not
+guarantee that managed Bing supplies the requested total.
+
+Each selected tool is limited to one call per turn, replacing the previous
+refinement allowance. Both tools are allowed only for an explicitly requested
+meeting/public comparison. This intentional behavior change passed a bounded
+smoke gate, not a broad quality certification.
+
+See [the v4 evaluation](../docs/terra-prompt-evaluation.md) for exact prompt
+versions, failed intermediate trials, final checks and remaining limitations.
+The loader still selects one prompt unconditionally; no model-specific prompt
+selector or environment override was added. Existing deployments require the
+instruction-only update described below, not a web-image redeployment.
+
 ### Sizes, because this is a latency-sensitive path
 
-Historical measurements before the 20 September 2026 scope/onboarding update,
-as the text actually sent rather than the file on disk:
+Rendered character counts with the display name Nuru, including shared
+onboarding expansion:
 
-| prompt | sent | approx. tokens |
-| --- | --- | --- |
-| `realtime/instructions.md` | 4,434 chars | ~1,110 |
-| `agent/instructions.md` | 21,640 chars | ~5,410 |
+| prompt | characters sent |
+| --- | ---:|
+| `realtime/instructions.md` | 4,467 |
+| `agent/instructions.md` (v4) | 5,931 |
 
-The realtime prompt is deliberately the smallest: it is prefilled on every model
-turn, and a realtime model is tuned for immediacy rather than for following a
-long procedural brief. Both prompts now describe meeting minutes and public web
-information, with honest boundaries for unavailable internal sources. The agent prompt is larger because a reasoning model
-needs more explicit arbitration and output constraints. Do not copy one into
-the other.
+These are character counts, not exact model tokens. V4 is 68.5% smaller than the
+18,855-character rendered agent prompt it replaces. Smaller instructions do not
+by themselves prove lower latency; tool results, cache state and answer behavior
+also matter. Both prompts describe meeting minutes and public information, but
+they are evaluated on different tool/voice paths. Do not copy one into the other.
 
 ## Format
 
