@@ -52,7 +52,9 @@ from backend.voice.tools import SEARCH_MINUTES_TOOL, SEARCH_WEB_TOOL  # noqa: E4
 PLACEHOLDER_RE = re.compile(r"\{\{[A-Z_]+\}\}")
 
 # Substituted by _apply_brand (agent) and load_realtime_instructions (model).
-KNOWN_PLACEHOLDERS = {"{{AVATAR_NAME}}", "{{SEARCH_TOOL}}", "{{WEB_TOOL}}"}
+KNOWN_PLACEHOLDERS = {
+    "{{AVATAR_NAME}}", "{{SEARCH_TOOL}}", "{{WEB_TOOL}}", "{{ONBOARDING_GUIDANCE}}",
+}
 
 failures: list[str] = []
 checks = 0

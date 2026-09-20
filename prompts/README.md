@@ -123,7 +123,8 @@ replacing the file its loader expects.
 
 ### Sizes, because this is a latency-sensitive path
 
-Measured as the text actually sent, not the file on disk:
+Historical measurements before the 20 September 2026 scope/onboarding update,
+as the text actually sent rather than the file on disk:
 
 | prompt | sent | approx. tokens |
 | --- | --- | --- |
@@ -132,8 +133,8 @@ Measured as the text actually sent, not the file on disk:
 
 The realtime prompt is deliberately the smallest: it is prefilled on every model
 turn, and a realtime model is tuned for immediacy rather than for following a
-long procedural brief. It still carries the policy-routing and compliance rules
-that affect correctness. The agent prompt is larger because a reasoning model
+long procedural brief. Both prompts now describe meeting minutes and public web
+information, with honest boundaries for unavailable internal sources. The agent prompt is larger because a reasoning model
 needs more explicit arbitration and output constraints. Do not copy one into
 the other.
 
@@ -147,6 +148,13 @@ name — `_apply_brand()` in `setup_foundry_agent.py`, and
 `load_realtime_instructions()` at session start. It is the same value the stage
 and the Teams package use, so the avatar never introduces itself as someone
 else. Never hardcode a persona name in a prompt.
+
+`{{ONBOARDING_GUIDANCE}}` expands the shared questions and spoken replies from
+[`backend/onboarding.py`](../backend/onboarding.py) in both loaders. This is the
+single place to edit the three introductory answers. It also supplies the
+default tile questions; custom `SUGGESTED_PROMPTS` overrides remain supported.
+The model still generates speech, but receives explicit answer guidance rather
+than inferring its capabilities from general tool descriptions.
 
 `realtime/instructions.md` additionally uses a `---` convention: **everything
 above the first horizontal rule is commentary for whoever edits the file and is
@@ -162,20 +170,30 @@ belong in subfolders here, e.g. `prompts/tools/<tool>.md`.
 
 ## Editing
 
-**Model mode** — edit `realtime/instructions.md`, then `azd deploy`. The file
-ships in the container image and is read at runtime, so a deploy is enough.
+**Model mode** — edit `realtime/instructions.md` or the shared onboarding module,
+then deploy the web service. Both ship in the image and are read at runtime.
 
 **Agent mode** — edit `agent/instructions.md`, then push a new agent version:
 
 ```powershell
-uv run python scripts/setup_foundry_agent.py
+uv run python scripts/setup_foundry_agent.py --env-file .azure\my-agent-env\.env --update-instructions
 ```
+
+Use the existing agent environment's path. `--update-instructions` copies the
+live definition and changes only instructions, preserving model, reasoning,
+tools, connections, retrieval settings, description and metadata. It is
+idempotent when the instructions already match, detects a changed latest
+version before publication, and verifies readback. It requires an existing
+prompt agent plus `PROJECT_ENDPOINT` and `AGENT_NAME`; it does not rebuild tools
+from potentially stale local defaults. It cannot be combined with `--clone-from`.
 
 > ⚠️ **`azd up` will not do this for you on an existing environment.** The
 > postprovision hook creates the agent on *greenfield only*; against an already
 > provisioned Foundry it prints `[brownfield] Skipping Foundry agent creation`
 > and your prompt edit silently never reaches the agent. Re-running the script
-> creates a new agent *version*, which is the supported update path.
+> creates a new agent *version*, which is the supported update path. For shared
+> onboarding edits, republish agent instructions **and** redeploy the web image
+> in both environments so the tiles and model-mode instructions stay aligned.
 
 Commit the prompt change in the same PR as any code that depends on it (tool
 wiring, routing rules), and follow the

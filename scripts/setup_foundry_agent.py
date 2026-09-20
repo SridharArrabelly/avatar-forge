@@ -96,6 +96,7 @@ from rbac_propagation import wait_for_data_plane
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from backend.avatar_identity import resolve_avatar_display_name  # noqa: E402
+from backend.onboarding import expand_onboarding  # noqa: E402
 
 # Exit code meaning "the agent exists and works, but an OPTIONAL tool was left
 # out". Distinct from 0 (fully wired) and from 1 (nothing usable was created) so
@@ -138,7 +139,7 @@ def _apply_brand(text: str) -> str:
     These must resolve to the names the tools are actually created with below.
     """
     return (
-        text.replace("{{AVATAR_NAME}}", resolve_avatar_display_name())
+        expand_onboarding(text).replace("{{AVATAR_NAME}}", resolve_avatar_display_name())
         .replace("{{SEARCH_TOOL}}", AGENT_SEARCH_TOOL_NAME)
         .replace("{{WEB_TOOL}}", AGENT_WEB_TOOL_NAME)
     )
@@ -216,6 +217,7 @@ def _validate_clone_names(source_name: str, target_name: str) -> None:
 
 def load_settings(
     env_file: str | Path | None = None, *, clone_from: str | None = None,
+    instructions_only: bool = False,
 ) -> dict:
     """Read settings, optionally overlaying an explicit file onto the process."""
     if env_file is None:
@@ -229,6 +231,14 @@ def load_settings(
         # Even a bare key overrides the process; retrieval validation rejects it
         # as empty instead of silently inheriting an unrelated deployment value.
         os.environ.update({key: value if value is not None else "" for key, value in values.items()})
+    if instructions_only:
+        settings = {
+            "project_endpoint": (os.getenv("PROJECT_ENDPOINT") or "").strip(),
+            "agent_name": (os.getenv("AGENT_NAME") or "").strip(),
+        }
+        if not all(settings.values()):
+            raise EnvironmentError("--update-instructions requires PROJECT_ENDPOINT and AGENT_NAME.")
+        return settings
     query_type, top_k = _retrieval_settings()
     settings = {
         "project_endpoint": os.getenv("PROJECT_ENDPOINT"),
@@ -544,6 +554,46 @@ def create_agent(project: AIProjectClient, settings: dict) -> tuple[object, bool
     return agent, web_tool_enabled
 
 
+def update_agent_instructions(project: AIProjectClient, agent_name: str) -> object:
+    """Publish instructions only, retaining the existing agent definition."""
+    if not isinstance(agent_name, str) or not agent_name.strip():
+        raise ValueError("AGENT_NAME must name an existing agent.")
+    agent_name = agent_name.strip()
+    instructions = _load_prompt("agent", "instructions.md")
+    if not instructions:
+        raise ValueError("Agent instructions must not be empty.")
+    source = project.agents.get(agent_name)
+    source_version = source.versions.latest.version
+    previous = project.agents.get_version(agent_name, source_version)
+    original = copy.deepcopy(previous.definition.as_dict())
+    if original.get("kind") != "prompt":
+        raise ValueError("--update-instructions requires an existing prompt agent.")
+    if project.agents.get(agent_name).versions.latest.version != source_version:
+        raise RuntimeError("Agent changed while reading its definition; no update was published.")
+    if original.get("instructions") == instructions:
+        print(f"Agent {agent_name!r} version {source_version} already has these instructions.")
+        return previous
+
+    modified = copy.deepcopy(original)
+    modified["instructions"] = instructions
+    body = {"definition": modified}
+    for field in ("description", "metadata"):
+        value = getattr(previous, field, None)
+        if value is not None:
+            body[field] = copy.deepcopy(value)
+    created = project.agents.create_version(agent_name=agent_name, body=body)
+    published = project.agents.get_version(agent_name, created.version)
+    if published.definition.as_dict() != modified:
+        raise RuntimeError("Published agent definition differs from the requested instruction-only update.")
+    if project.agents.get(agent_name).versions.latest.version != created.version:
+        raise RuntimeError("Another agent version became latest during the instruction update.")
+    print(
+        f"Updated {agent_name!r} instructions: version {source_version} -> {created.version}; "
+        "model, tools and other definition settings unchanged."
+    )
+    return published
+
+
 def retrieval_definition(source: dict, settings: dict) -> dict:
     """Copy a source definition, changing only its single Search resource."""
     query_type, top_k = _retrieval_settings(settings)
@@ -654,16 +704,24 @@ def _credential() -> DefaultAzureCredential:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--env-file", type=Path, help="Explicit .env file; supplied keys override the process environment.")
-    parser.add_argument("--clone-from", help="Read-only source agent to clone into an isolated AGENT_NAME, changing only Search retrieval.")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--clone-from", help="Read-only source agent to clone into an isolated AGENT_NAME, changing only Search retrieval.")
+    mode.add_argument("--update-instructions", action="store_true", help="Publish instructions only on existing AGENT_NAME, preserving its model, tools and other settings.")
     args = parser.parse_args(argv)
     try:
-        settings = load_settings(args.env_file, clone_from=args.clone_from)
+        settings = load_settings(
+            args.env_file, clone_from=args.clone_from,
+            instructions_only=args.update_instructions,
+        )
     except (OSError, ValueError) as exc:
         parser.error(str(exc))
     try:
         with _credential() as credential, AIProjectClient(
             endpoint=settings["project_endpoint"], credential=credential,
         ) as project:
+            if args.update_instructions:
+                update_agent_instructions(project, settings["agent_name"])
+                return 0
             if args.clone_from is not None:
                 clone_agent(project, settings, args.clone_from)
                 return 0

@@ -107,11 +107,9 @@ SEARCH_MINUTES_TOOL: dict[str, Any] = {
     "type": "function",
     "name": "search_minutes",
     "description": (
-        "Search MTN's internal document library, containing official policies and "
-        "board or executive meeting minutes. Use it for internal rules, limits, "
-        "eligibility, approvals, declarations and compliance duties, and for what "
+        "Search MTN's board and executive meeting minutes. Use it for what "
         "a meeting discussed, decided, approved, reported or actioned. Always call "
-        "this rather than answering internal rules or records from memory."
+        "this rather than answering meeting content from memory."
     ),
     "parameters": {
         "type": "object",
@@ -119,10 +117,8 @@ SEARCH_MINUTES_TOOL: dict[str, Any] = {
             "query": {
                 "type": "string",
                 "description": (
-                    "What to look for, in natural language. For minutes, include "
-                    "the exact meeting date when known. For policies, include the "
-                    "policy topic and the rule, limit, duty or eligibility being "
-                    "asked about."
+                    "What to look for in the meeting minutes, in natural language. "
+                    "Include the exact meeting date when known."
                 ),
             },
             "top": {
@@ -729,7 +725,7 @@ async def build_realtime_tools() -> list[dict[str, Any]]:
     """The tool set advertised for this session.
 
     The web tool appears only when it is actually usable, so a deployment
-    without a reachable Web IQ degrades to the internal minutes-and-policies
+    without a reachable Web IQ degrades to the internal meeting-minutes
     corpus rather than to a model that keeps calling a tool that always fails.
     """
     tools = list(REALTIME_TOOLS)
@@ -738,7 +734,7 @@ async def build_realtime_tools() -> list[dict[str, Any]]:
     else:
         logger.info(
             "Web IQ unavailable - model mode will ground on internal "
-            "minutes and policies only."
+            "meeting minutes only."
         )
     return tools
 
@@ -824,8 +820,7 @@ async def search_minutes(query: str, top: int | None = None) -> dict[str, Any]:
     the query itself and this stays a single round trip rather than an
     embedding call followed by a search call.
 
-    The public function name is retained for compatibility, but the index now
-    contains both MeetingMinutes and Policy documents.
+    The configured index supplies the board and executive meeting minutes.
     """
     query = (query or "").strip()
     if not query:
@@ -927,7 +922,7 @@ async def search_minutes(query: str, top: int | None = None) -> dict[str, Any]:
     if not passages:
         return {
             "passages": [],
-            "note": "No matching passages in the internal minutes or policies.",
+            "note": "No matching passages in the meeting minutes.",
         }
     note = BREVITY_NOTE
     if any(p.get("truncated") for p in passages):

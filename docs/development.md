@@ -163,7 +163,9 @@ uv run python tests/test_agent_tool_wiring.py    # required vs optional agent to
 uv run python tests/test_prompt_tool_names.py    # prompt tool-name placeholders match each binding
 uv run python tests/test_rbac_propagation.py # the RBAC-propagation wait used by postprovision
 uv run python tests/test_set_profile.py      # profile flags are authoritative, not cumulative
-uv run python tests/test_realtime_policy_mode.py # the realtime policy mode wiring
+uv run python tests/test_realtime_scope.py      # minutes/web scope and unavailable-source boundaries
+uv run python tests/test_suggested_prompts.py   # original onboarding tiles and shared spoken replies
+uv run python tests/test_agent_instructions.py  # instruction-only updates preserve the live agent
 uv run python tests/test_thinking_cue.py     # the wait indicator never claims work it is not doing
 uv run python tests/test_voice_interrupt.py  # barge-in stops playback
 uv run python tests/test_ops_logs.py         # no conversation content reaches the ops logs

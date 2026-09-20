@@ -1,5 +1,11 @@
 # Realtime model-mode evaluation
 
+> **Post-evaluation scope update, 20 September 2026:** active instructions now
+> advertise meeting minutes and public web information only, and the original
+> onboarding tiles have shared spoken-answer guidance. This prompt change is
+> covered by targeted smoke checks, not a repeat of the full study below.
+> Recorded benchmark prompts, scores and timings remain historical evidence.
+
 Companion to [evaluation-results.md](evaluation-results.md), which records the
 **agent-mode** (Foundry agent + managed tools) comparison. This page is the
 **model-mode** (Voice Live bound directly to a realtime model, no agent) track:
