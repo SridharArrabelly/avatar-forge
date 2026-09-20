@@ -14,6 +14,10 @@ The later [concise v4 prompt evaluation](terra-prompt-evaluation.md) records
 the separate prompt-only smoke comparison and financial query/fallback gate.
 The larger study below retains its original instructions and results; it was
 not rerun or regraded for v4.
+The subsequent [full v4 evaluation](terra-v4-full-evaluation.md) completed
+99 text turns and nine audio samples but failed the result-replacement gate.
+Its measurements are documented separately; the numerical headlines below
+remain unchanged.
 
 > **Measurement audit, 20 September 2026:** the 792-turn agent text harness
 > paces/retries before each successful stream timer, and the 72-sample agent
