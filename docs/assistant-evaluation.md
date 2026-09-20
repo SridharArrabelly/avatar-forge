@@ -320,6 +320,22 @@ do not rename that measurement time-to-first-audible-answer. The probe does
 not exercise input speech recognition, VAD, browser buffering/playback or
 avatar rendering.
 
+**Keep benchmark throttling outside the measured turn.** Apply discretionary
+spacing/token-budget admission before submitting a new user turn or retry
+attempt, not between a tool result and its answer. Honor genuine service
+Retry-After/reset instructions, but record those waits explicitly rather than
+silently folding them into a model-speed comparison. Keep blocking evidence
+serialization/fsync outside first-token/first-audio collection where possible;
+declare buffering, durability and loss behavior.
+
+Record submission, function announcement, argument-ready, tool execution
+start/end, tool-output send completion, response-create, first answer
+transcript and first observed PCM separately. Missing phases stay missing,
+especially when media travels directly to the browser over WebRTC.
+Historical timings collected with a different measurement policy must retain
+that label. Subtracting an aggregate wait median does not create a new
+unpaced measurement.
+
 ## Frozen-retrieval comparison authorized on 18 September
 
 The approved agent roster is GPT-5.4, GPT-5.4-mini, Luna and Terra, each at

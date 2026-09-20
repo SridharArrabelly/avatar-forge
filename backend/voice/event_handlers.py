@@ -21,6 +21,7 @@ from .. import audit
 from ..error_reporting import describe_error
 from ..logsafe import fingerprint, keys_only
 from .functions import execute_function
+from .latency_trace import create_response
 
 logger = logging.getLogger(__name__)
 
@@ -30,14 +31,7 @@ def _now_ms() -> float:
 
 
 def _log_first_text_delta(handler, kind: str) -> None:
-    """Log the agent thinking + tool-call time (response_created -> first token).
-
-    This is a useful proxy for "how long did the Foundry agent take to call
-    tools (AI Search / Web Search) and produce its first text token", separate
-    from the TTS warm-up time that dominates `user_done -> first_audio`. If
-    this number is large, the bottleneck is the agent / tools; if it's small
-    but `first_audio` is still large, the bottleneck is TTS.
-    """
+    """Preserve the legacy latency diagnostic when structured tracing is off."""
     if getattr(handler, "_first_text_logged", False):
         return
     handler._first_text_logged = True
@@ -156,6 +150,9 @@ def _classify_question(text: str, previous: str | None = None) -> str | None:
 
 async def handle_event(handler, event, connection):
     """Handle individual events from Voice Live API."""
+    trace = getattr(handler, "_latency_trace", None)
+    if trace is not None:
+        trace.observe(event)
     try:
         event_type = event.type
 
@@ -173,8 +170,7 @@ async def handle_event(handler, event, connection):
         # Falls back to base64-in-JSON for older clients (no send_binary callback).
         if event_type == ServerEventType.RESPONSE_AUDIO_DELTA:
             if hasattr(event, "delta") and event.delta:
-                # Latency milestone: first TTS audio chunk for this response.
-                if not getattr(handler, "_first_audio_logged", False):
+                if trace is None and not getattr(handler, "_first_audio_logged", False):
                     handler._first_audio_logged = True
                     t_user = getattr(handler, "_t_user_done_ms", None)
                     t_resp = getattr(handler, "_t_response_created_ms", None)
@@ -184,6 +180,7 @@ async def handle_event(handler, event, connection):
                             f"[LATENCY] first audio: user_done->audio={now - t_user:.0f}ms"
                             + (f", response_created->audio={now - t_resp:.0f}ms" if t_resp else "")
                         )
+                handler._first_audio_logged = True
                 if getattr(handler, "send_binary", None):
                     await handler.send_binary(event.delta)
                 else:
@@ -201,7 +198,9 @@ async def handle_event(handler, event, connection):
         # Audio transcript (assistant speaking text)
         elif event_type == ServerEventType.RESPONSE_AUDIO_TRANSCRIPT_DELTA:
             if hasattr(event, "delta") and event.delta:
-                _log_first_text_delta(handler, "audio_transcript")
+                if trace is None:
+                    _log_first_text_delta(handler, "audio_transcript")
+                handler._first_text_logged = True
                 await handler.send_message({
                     "type": "transcript_delta",
                     "role": "assistant",
@@ -222,7 +221,9 @@ async def handle_event(handler, event, connection):
         # Text delta (for text responses)
         elif event_type == ServerEventType.RESPONSE_TEXT_DELTA:
             if hasattr(event, "delta") and event.delta:
-                _log_first_text_delta(handler, "text")
+                if trace is None:
+                    _log_first_text_delta(handler, "text")
+                handler._first_text_logged = True
                 await handler.send_message({
                     "type": "text_delta",
                     "delta": event.delta,
@@ -274,7 +275,8 @@ async def handle_event(handler, event, connection):
             )
 
             handler._response_active = True
-            handler._t_response_created_ms = _now_ms()
+            if trace is None:
+                handler._t_response_created_ms = _now_ms()
             handler._first_audio_logged = False
             handler._first_video_logged = False
             handler._first_text_logged = False
@@ -287,7 +289,7 @@ async def handle_event(handler, event, connection):
             # response is cancelled before producing anything.
             handler._retrieval_cue_sent = active_tool
             t_user = getattr(handler, "_t_user_done_ms", None)
-            if t_user is not None:
+            if trace is None and t_user is not None:
                 logger.info(
                     f"[LATENCY] user_done->response_created={handler._t_response_created_ms - t_user:.0f}ms"
                 )
@@ -389,7 +391,8 @@ async def handle_event(handler, event, connection):
 
         # User transcription
         elif event_type == ServerEventType.CONVERSATION_ITEM_INPUT_AUDIO_TRANSCRIPTION_COMPLETED:
-            handler._t_user_done_ms = _now_ms()
+            if trace is None:
+                handler._t_user_done_ms = _now_ms()
             transcript = getattr(event, "transcript", "") or ""
             item_id = getattr(event, "item_id", "") or getattr(event, "itemId", "")
             if transcript.strip():
@@ -446,7 +449,8 @@ async def handle_event(handler, event, connection):
                     try:
                         logger.info("[SEND] response.create (proactive greeting, after avatar connect)")
                         from .handler import PROACTIVE_GREETING_INSTRUCTIONS
-                        await connection.response.create(
+                        await create_response(
+                            handler, connection,
                             additional_instructions=PROACTIVE_GREETING_INSTRUCTIONS
                         )
                         logger.info("Proactive greeting sent after avatar connect")
@@ -523,7 +527,7 @@ async def handle_event(handler, event, connection):
                 if not getattr(handler, "_first_video_logged", False):
                     handler._first_video_logged = True
                     t_user = getattr(handler, "_t_user_done_ms", None)
-                    if t_user is not None:
+                    if trace is None and t_user is not None:
                         logger.info(
                             f"[LATENCY] first avatar video: user_done->video={_now_ms() - t_user:.0f}ms"
                         )
@@ -533,6 +537,8 @@ async def handle_event(handler, event, connection):
                 })
 
     except Exception as e:
+        if trace is not None:
+            trace.finish(trace.current, "error", "handler_error")
         logger.error(f"Error handling event {getattr(event, 'type', 'unknown')}: {e}")
 
 async def handle_conversation_item(handler, event, connection):
@@ -548,6 +554,11 @@ async def handle_conversation_item(handler, event, connection):
     call_id = item.call_id
     previous_item_id = item.id
 
+    trace = getattr(handler, "_latency_trace", None)
+    tool_trace = trace.function_announced(function_name) if trace is not None else None
+    # Capture the owner before any await: an interrupted tool must never update
+    # a new user's turn when its task/send eventually returns.
+    trace_turn = tool_trace[0] if tool_trace is not None else None
     logger.info(f"Function call: {function_name} (call_id: {call_id})")
     # Claim the cue so a managed event for the same retrieval can't re-send it
     # and restart the "taking longer" escalation, and retire the prediction now
@@ -566,10 +577,17 @@ async def handle_conversation_item(handler, event, connection):
             connection, {ServerEventType.RESPONSE_FUNCTION_CALL_ARGUMENTS_DONE}
         )
         if args_done.call_id != call_id:
+            if trace is not None:
+                trace.finish(trace_turn, "error", "argument_mismatch")
             logger.warning(f"Call ID mismatch: expected {call_id}, got {args_done.call_id}")
             return
 
         arguments = args_done.arguments
+        if trace is not None:
+            trace.tool_mark(
+                tool_trace, "arguments_ready_ms",
+                count=len(arguments) if isinstance(arguments, str) else None,
+            )
         logger.info(f"Function args: {keys_only(arguments)}")
 
         # Kick off function execution immediately, in parallel with waiting
@@ -577,7 +595,28 @@ async def handle_conversation_item(handler, event, connection):
         # finish before we can create the follow-up response, but there's no
         # reason to keep the tool idle until then.
         _tool_started_ms = _now_ms()
-        exec_task = asyncio.create_task(execute_function(function_name, arguments))
+        if tool_trace is None:
+            exec_task = asyncio.create_task(execute_function(function_name, arguments))
+        else:
+            async def execute_traced():
+                # T1/T2 bracket execution INSIDE the scheduled task, not task
+                # creation or the later await after the tool-call response.done.
+                trace.tool_mark(tool_trace, "execution_start_ms")
+                try:
+                    value = await execute_function(function_name, arguments)
+                except asyncio.CancelledError:
+                    trace.tool_mark(tool_trace, "execution_end_ms", status="cancelled")
+                    raise
+                except Exception:
+                    trace.tool_mark(tool_trace, "execution_end_ms", status="error")
+                    raise
+                trace.tool_mark(
+                    tool_trace, "execution_end_ms",
+                    status="error" if isinstance(value, dict) and value.get("error") else "completed",
+                )
+                return value
+
+            exec_task = asyncio.create_task(execute_traced())
 
         await handler._wait_for_event(connection, {ServerEventType.RESPONSE_DONE})
 
@@ -605,12 +644,22 @@ async def handle_conversation_item(handler, event, connection):
         function_output = FunctionCallOutputItem(
             call_id=call_id, output=json.dumps(result)
         )
+        if trace is not None:
+            trace.tool_mark(tool_trace, "output_send_start_ms", count=len(function_output.output))
         await connection.conversation.item.create(
             previous_item_id=previous_item_id, item=function_output
         )
-        await connection.response.create()
+        if trace is not None:
+            trace.tool_mark(tool_trace, "output_send_done_ms")
+        await create_response(handler, connection, turn=trace_turn, reason="tool")
 
+    except asyncio.CancelledError:
+        if trace is not None:
+            trace.finish(trace_turn, "cancelled", "tool_cancelled")
+        raise
     except Exception as e:
+        if trace is not None:
+            trace.finish(trace_turn, "error", "tool_error")
         logger.error(f"Error handling function call {function_name}: {e}")
         await handler.send_message({
             "type": "function_call_error",
