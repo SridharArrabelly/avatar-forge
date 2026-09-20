@@ -1,5 +1,10 @@
 # Terra concise v4 prompt evaluation
 
+> **Full-run follow-up:** the [99-text/9-audio evaluation](terra-v4-full-evaluation.md)
+> did not confirm the pilot's latency gains and found one new factual error.
+> It failed the result-replacement gate. This pilot remains separate evidence,
+> not a full-cohort quality or production-latency guarantee.
+
 Status: **passed the bounded promotion gate** after the financial query/fallback
 adjustment. The final tested instructions are selected by the repository's
 normal agent loader. This is not a claim of perfect answer completeness or
