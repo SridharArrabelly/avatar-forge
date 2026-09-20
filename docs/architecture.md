@@ -195,7 +195,9 @@ Everything the end user sees is anchored to the avatar:
   (the WebRTC data-channel `EVENT_TYPE_SWITCH_TO_SPEAKING`/`_IDLE` events plus an
   `AnalyserNode` on the live audio track), with a watchdog so it never sticks on.
 - **Suggested prompts + onboarding hint** *(`ENABLE_SUGGESTED_PROMPTS`, default on)*
-  — on first load, a one-line hint and 2–3 tappable example chips. The hint wording
+  — on first load, a one-line hint and three tappable introductory questions.
+  Shared spoken-answer guidance comes from `backend/onboarding.py` through both
+  prompt loaders. The hint wording
   is derived from the *effective* composer state (so Teams never says "…or type…").
 
 The captions, suggested-prompt, text-input, and stop-button features are additive and
@@ -262,8 +264,8 @@ avatar-forge/
 │   │   ├── builders.py            # build_voice_config / build_avatar_config / build_turn_detection
 │   │   ├── event_handlers.py      # SDK event -> frontend message translation
 │   │   ├── catalog.py             # Meeting catalogue fetch from AI Search (injected at session start)
-│   │   ├── functions.py           # Built-in tool implementations (get_time, get_weather, calculate)
-│   │   ├── tools.py               # Model tools: internal minutes/policies (AI Search) + web (Web IQ)
+│   │   ├── functions.py           # Realtime tool dispatch
+│   │   ├── tools.py               # Model tools: meeting minutes (AI Search) + web (Web IQ)
 │   │   ├── instructions.py        # Model-mode prompt loader (prompts/realtime/)
 │   │   └── auth.py                # DefaultAzureCredential + caching wrapper
 │   ├── audit/                     # Conversation audit trail (opt-in, ENABLE_AUDIT) — see docs/audit.md

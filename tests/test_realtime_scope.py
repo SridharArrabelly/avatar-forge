@@ -1,14 +1,15 @@
-"""Offline regression checks for policy grounding in Voice Live model mode.
+"""Offline checks for minutes/web scope and legacy document formatting.
 
 Run from the repository root:
 
-    uv run python tests/test_realtime_policy_mode.py
+    uv run python tests/test_realtime_scope.py
 """
 
 from __future__ import annotations
 
 import asyncio
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -83,7 +84,7 @@ async def exercise_search() -> tuple[dict, FakeSearchClient]:
 
 
 def main() -> int:
-    print("1. Realtime prompt carries the policy contract")
+    print("1. Realtime prompt describes only available sources")
     saved_name = os.environ.get("AVATAR_DISPLAY_NAME")
     try:
         os.environ["AVATAR_DISPLAY_NAME"] = "Nuru"
@@ -104,29 +105,23 @@ def main() -> int:
     check("first spoken words must be grounded",
           "first spoken words must be the grounded answer" in flat_prompt
           and '"I\'ll check"' in flat_prompt)
-    check("minutes and policies are both described",
-          "Type: MeetingMinutes" in prompt and "Type: Policy" in prompt)
-    check("policy absence refuses invention",
-          "does not appear to cover it" in flat_prompt
-          and "Do not use the web" in flat_prompt)
-    check("gift receiving direction is pinned",
-          "Only corporate-branded promotional items up to USD50" in flat_prompt)
-    check("gift above limit is not approval",
-          'Above USD50 the answer is not "get approval"' in flat_prompt)
-    check("gift remedy is complete",
-          all(term in flat_prompt for term in ("Return it", "donate it", "declare it")))
-    check("offering bands cannot leak into receiving",
-          "USD200" in flat_prompt and "USD750" in flat_prompt
-          and "Never apply them" in flat_prompt)
+    check("minutes are the internal source", "Type: MeetingMinutes" in prompt)
+    check("no policy corpus or embedded gift rules",
+          not re.search(r"\bpolic(?:y|ies)\b|USD(?:50|200|750)", prompt, re.I))
+    check("unavailable internal sources refuse invention",
+          "Other internal sources are unavailable" in flat_prompt
+          and "Do not search the public web as a substitute or invent requirements" in flat_prompt)
+    check("getting started explains the interface",
+          "Tap the microphone and speak" in prompt and "type your question" in prompt)
 
-    print("\n2. Registered tool advertises the mixed corpus")
+    print("\n2. Registered tool advertises meeting minutes only")
     description = tools.SEARCH_MINUTES_TOOL["description"].lower()
-    check("tool description includes policies", "policies" in description)
+    check("tool description excludes policies", "polic" not in description)
     check("tool description includes minutes", "minutes" in description)
-    check("tool description includes rule intents",
-          all(term in description for term in ("limits", "eligibility", "compliance")))
+    check("tool description excludes rule intents",
+          not any(term in description for term in ("eligibility", "compliance")))
 
-    print("\n3. Policy filenames become human document names")
+    print("\n3. Legacy document-title formatting remains compatible")
     check(
         "gift policy title",
         display_document_title(

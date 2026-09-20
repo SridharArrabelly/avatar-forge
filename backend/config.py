@@ -10,6 +10,7 @@ from .avatar_identity import (
     avatar_type,
     resolve_avatar_display_name,
 )
+from .onboarding import ONBOARDING_ANSWERS
 
 load_dotenv(override=True)
 
@@ -404,10 +405,6 @@ def get_ui_defaults() -> dict:
         "onboardingHint": _str("ONBOARDING_HINT", ""),
         "suggestedPrompts": _list(
             "SUGGESTED_PROMPTS",
-            [
-                "Summarise the latest board meeting",
-                "What actions were agreed at the latest meeting?",
-                "What is MTN's latest share price?",
-            ],
+            list(ONBOARDING_ANSWERS),
         ),
     }

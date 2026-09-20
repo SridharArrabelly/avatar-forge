@@ -214,15 +214,15 @@ variable in `.env` and restart the backend instead. See the
 
 Model mode takes the agent out of the picture, and its managed `azure_ai_search`
 and `bing_grounding` tools go with it — the tool surface becomes in-process Python
-(`backend/voice/tools.py`). The historically named `search_minutes` tool queries
-the same mixed `knowledge-index` of meeting minutes **and official policies**;
+(`backend/voice/tools.py`). The `search_minutes` tool queries the meeting-minutes
+index selected by `SEARCH_INDEX_NAME`;
 `search_web` is Web IQ and is advertised to the model **only when Web IQ can
 actually be called** — an API key, or a managed identity that the app proves at
 startup can obtain a Web IQ token.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `WEBIQ_API_KEY` | — | Enables the `search_web` tool in model mode without a startup check. Passed to the container app as a **secret**, never as a plain environment variable. Leave it unset and the app authenticates with its managed identity instead, enabling the tool only if a token comes back — but a token is not the same as being authorised, see the notes under the table. Required, in Azure as well as locally, when the identity cannot be bound with Web IQ. If neither route works the web tool stays off and the assistant answers from the internal minutes-and-policies corpus alone. |
+| `WEBIQ_API_KEY` | — | Enables the `search_web` tool in model mode without a startup check. Passed to the container app as a **secret**, never as a plain environment variable. Leave it unset and the app authenticates with its managed identity instead, enabling the tool only if a token comes back — but a token is not the same as being authorised, see the notes under the table. Required, in Azure as well as locally, when the identity cannot be bound with Web IQ. If neither route works the web tool stays off and the assistant answers from the meeting-minutes corpus alone. |
 | `WEBIQ_BASE_URL` | `https://api.microsoft.ai/v3` | Web IQ endpoint. |
 | `WEBIQ_ALLOWED_DOMAINS` | *derived from `bingAllowedDomains`* | Comma-separated hosts that scope the search, e.g. `jse.co.za,mtn.com`. Web IQ has no server-side allow-list — its request model exposes no `site` field — so [`build_query()`](../backend/voice/tools.py) compiles these into `site:a OR site:b` operators on the query, which is the mechanism the Web IQ API documents. Same intent as `bingAllowedDomains`, and by default the **same sources**: leave this empty and `main.bicep` derives the bare hosts from `bingAllowedDomains`, so the two bindings cannot drift apart. Set it only to make model mode diverge deliberately. **Write bare hosts, not URLs and not `www.`** — see the two notes below. It is emitted **unconditionally**, whether or not a key is set, because the app can enable `search_web` on its own — so an enabled `search_web` is never an unscoped open-web search. |
 | `WEBIQ_LANGUAGE` | `en` | Result language hint. Configurable through `azd env set` and passed to the model-mode container. |
@@ -547,11 +547,20 @@ mode. Captions are **off** by default; suggested prompts, the on-stage composer
 |---|---|---|
 | `ENABLE_CAPTIONS` | `false` | Show the live caption band under the avatar (mirrors the transcript stream — no extra model calls). |
 | `CAPTIONS_SHOW_USER` | `false` | Also briefly show the user's last utterance in the caption band (only when `ENABLE_CAPTIONS=true`). |
-| `ENABLE_SUGGESTED_PROMPTS` | `true` | Show the first-load onboarding hint + 2–3 tappable example chips. |
+| `ENABLE_SUGGESTED_PROMPTS` | `true` | Show the first-load onboarding hint and tappable introductory questions. |
 | `ONBOARDING_HINT` | *(derived)* | The one-line hint above the chips. By default the **frontend** derives it from the *effective* composer state: `Tap the mic or type to ask me anything` when the composer is shown, otherwise `Tap the mic to ask me anything` (e.g. inside Teams). Set explicitly to override everywhere. |
-| `SUGGESTED_PROMPTS` | *(3 minutes/web questions)* | Pipe-separated starter questions: `Summarise the latest board meeting\|What actions were agreed at the latest meeting?\|What is MTN's latest share price?`. These cover meeting minutes, action items, and public web information without suggesting policy documents are available. An explicit value overrides these defaults in either voice binding. |
+| `SUGGESTED_PROMPTS` | *(3 onboarding questions)* | Pipe-separated questions: `What can you help me with?\|Tell me about your services\|How do I get started?`. These introduce capabilities, services and how to use the assistant. An explicit value overrides the tiles in either voice binding. |
 | `ENABLE_TEXT_INPUT` | `true` | **Host-aware.** Shows the on-stage text composer on the standalone **web** app; **always hidden inside the Microsoft Teams client** (the bot chat tab has Teams' native compose box; the avatar tab is voice-first — type via the chat tab, or in a call via the meeting chat with an `@mention`). This var is an optional **web-only** override (set `false` to hide on web too) and can **never** force the composer on in Teams. Developer mode keeps its own text input. |
 | `ENABLE_STOP_BUTTON` | `true` | Show a small Stop control next to the mic so the user can cut the avatar off mid-answer. Always visible while the avatar is on screen (greyed when idle, red while speaking); reuses the barge-in interrupt path. Teams bot chat is text-only and unaffected. |
+
+The tiles send ordinary user questions; their replies are spoken by the model,
+not hardcoded in the frontend. The shared questions and answer guidance live in
+[`backend/onboarding.py`](../backend/onboarding.py) and are expanded into both
+instruction sets. The introductions describe meeting minutes and public web
+information only; "How do I get started?" explains the microphone and text input.
+`SUGGESTED_PROMPTS` changes tile labels/questions, not the shared answer guidance.
+See [prompt editing](../prompts/README.md#editing) for publishing instructions:
+updating the web image alone does not update a stored Foundry agent.
 
 ---
 

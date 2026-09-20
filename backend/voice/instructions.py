@@ -15,6 +15,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from ..avatar_identity import resolve_avatar_display_name
+from ..onboarding import expand_onboarding
 from .tools import SEARCH_MINUTES_TOOL, SEARCH_WEB_TOOL
 
 logger = logging.getLogger(__name__)
@@ -30,10 +31,12 @@ SEPARATOR = "\n---\n"
 
 FALLBACK = (
     "You are {{AVATAR_NAME}}, an executive assistant speaking aloud. Ground "
-    "every answer in a tool: {{SEARCH_TOOL}} for the organisation's internal "
-    "board minutes and official policies, {{WEB_TOOL}} for current public news, "
+    "meeting and public facts in a tool: {{SEARCH_TOOL}} for the organisation's "
+    "board and executive meeting minutes, {{WEB_TOOL}} for current public news, "
     "leadership and market activity. Do not answer either from memory. Keep "
-    "replies to two or three spoken sentences with no markdown."
+    "replies to two or three spoken sentences with no markdown. Other internal "
+    "sources are unavailable; do not invent their contents.\n\n"
+    "{{ONBOARDING_GUIDANCE}}"
 )
 
 
@@ -64,7 +67,7 @@ def load_realtime_instructions() -> str:
     tools.py cannot silently desynchronise the prompt from the tool surface.
     """
     return (
-        _load_body()
+        expand_onboarding(_load_body())
         .replace("{{AVATAR_NAME}}", resolve_avatar_display_name())
         .replace("{{SEARCH_TOOL}}", SEARCH_MINUTES_TOOL["name"])
         .replace("{{WEB_TOOL}}", SEARCH_WEB_TOOL["name"])
