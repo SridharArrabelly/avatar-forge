@@ -1,7 +1,7 @@
-# Realtime latency attribution: initial investigation
+# Realtime latency attribution
 
-20 September 2026. **Investigation only: no production behavior, model, prompt,
-retrieval settings, result limits, voice or deployment was changed.**
+20 September 2026. **Scope: offline attribution and bounded diagnostics, not a
+production inference optimization or prompt/retrieval/voice change.**
 
 The user's final scope limited new inference to two AI Search turns and two
 Web IQ turns. All four completed, with one attempt and one tool call each.
@@ -9,20 +9,19 @@ The broader twenty-turn/prompt/snippet A/B matrix has **not** been run.
 Separately, existing full `gpt-realtime-2.1` live traces (51 turns) and provider
 usage records (51 live + 48 oracle turns) were audited without new inference.
 
-**Subsequent measurement correction:** discretionary smoothing now applies
-between complete attempts, not tool-followup responses. Genuine service
-backoff remains honored and explicitly identified. Event capture is buffered
-and flushed after attempts. No new paid inference was run after that correction;
-all numerical tables below retain their original measurement conditions.
-There is no fabricated "corrected TTFA" obtained by subtracting aggregate
-medians.
+Answer timings below use the [corrected timing method](evaluation-model-mode.md#corrected-results).
+Discretionary smoothing now applies between complete attempts, not tool-followup
+responses. Genuine service backoff remains honored and explicitly identified.
+Event capture is buffered and flushed after attempts. No new paid inference
+was run after that correction.
 
 ## Main finding
 
-The earlier **3.144 s median TTFA includes deliberate benchmark-only waiting**.
-It is not a clean measurement of production response latency or model compute.
+The corrected full-model answer PCM median/p95 is **2.705 / 3.592 s** across
+51 live turns. The benchmark's token-based continuation wait was a measurement
+defect, not a delay in the production handler.
 
-In the historical implementation of `Pacer.account_usage()` in
+In the previous implementation of `Pacer.account_usage()` in
 [`bench_realtime_evaluation.py`](../scripts/bench_realtime_evaluation.py),
 every response added this delay to a client deadline:
 
@@ -49,9 +48,8 @@ Consequences:
 - A smaller prompt/schema can reduce benchmark waiting as well as real model
   work, confounding an ablation.
 - Oracle/no-tool turns have no second response to incur this intra-turn wait.
-- Previous raw timing numbers remain valid for their measured client path,
-  but must not be presented as production timings or pure model-speed rankings.
-- Removing this benchmark artifact would correct measurement; it would **not**
+- Corrected local timings are not production timings or pure model-speed rankings.
+- Removing this benchmark artifact corrects measurement; it does **not**
   remove a delay from production, where the delay does not exist.
 
 ## Timing definitions and instrumentation
@@ -78,7 +76,7 @@ provider compute. T5-T4 is a transcript-to-audio delivery gap, not an isolated
 TTS-engine measurement. Connection setup, microphone/ASR, playback and avatar
 rendering are excluded.
 
-## Historical breakdown: all 51 live full-model turns
+## Corrected breakdown: all 51 live full-model turns
 
 Times are milliseconds; p95 is nearest-rank. This combines 36 Search and 15
 Web IQ turns. Component medians/percentiles do not add to total medians.
@@ -87,16 +85,15 @@ Web IQ turns. Component medians/percentiles do not add to total medians.
 |---|---:|---:|
 | User submission -> tool execution-start trace | 858 | 1,034 |
 | Tool execution | 431 | 1,496 |
-| Tool-output send request -> first answer transcript | 1,162 | 1,378 |
-| Benchmark client wait within the preceding span | 709 | 815 |
+| Tool-output send request -> first answer transcript, wait excluded | 498 | 846 |
 | Final response-create request -> first transcript | 495 | 844 |
 | Transcript -> first PCM | 500 | 934 |
-| Total answer TTFA | 3,144 | 3,749 |
+| Corrected answer transcript receipt | 2,139 | 3,045 |
+| Corrected answer PCM receipt (TTFA) | 2,705 | 3,592 |
 
-The historical output-send marker is logged **before** sending; it is not
-the exact T3 send-completion marker added for the four fresh probes. Historical
-client-wait spans include small trace/scheduling costs. The exact new boundaries
-are reported below rather than retroactively invented.
+The output-send marker in this cohort is logged **before** sending; it is not
+the exact T3 send-completion marker added for the four instrumented probes.
+Send-completion boundaries are not retroactively inferred.
 
 ### Separate the two tools
 
@@ -104,52 +101,56 @@ are reported below rather than retroactively invented.
 |---|---:|---:|
 | Submission -> tool start | 919 | 759 |
 | Tool execution | 422 | 1,389 |
-| Output-send request -> first transcript | 1,251 | 445 |
-| Observed benchmark wait within that span | 725 | 0 |
+| Output-send request -> first transcript, wait excluded | 509 | 445 |
 | Response-create -> first transcript | 506 | 443 |
 | Transcript -> PCM | 481 | 512 |
-| Total TTFA | 3,171 | 3,084 |
+| Corrected answer transcript receipt | 1,910 | 2,532 |
+| Corrected answer PCM receipt (TTFA) | 2,454 | 3,084 |
 
-Positive continuation waits occurred on **29/36 Search turns and 1/15 Web IQ
-turns**. Waiting affects 30/51 overall. For Search, it is a substantial avoidable
-measurement cost; for Web IQ, retrieval itself is the largest median stage.
+For Web IQ, retrieval itself is the largest median stage.
 The largest remaining observed Search stage is submission-to-tool execution.
 None of these local measurements alone establishes production server timings.
 
-## Four fresh instrumented turns
+### Corrected answer distributions by invoked tool
+
+Times are seconds, median / nearest-rank p95. Mini's three web-case misroutes
+are counted under the Search tool it actually invoked, so tool cohorts are not
+matched question sets.
+
+| Model | Tool | Turns | Transcript | PCM |
+|---|---|---:|---:|---:|
+| gpt-realtime-2.1 | AI Search | 36 | 1.910 / 2.923 | 2.454 / 3.494 |
+| gpt-realtime-2.1 | Web IQ | 15 | 2.532 / 3.309 | 3.084 / 3.749 |
+| gpt-realtime-2.1-mini | AI Search | 39 | 1.923 / 3.693 | 2.371 / 4.167 |
+| gpt-realtime-2.1-mini | Web IQ | 12 | 2.676 / 3.866 | 2.950 / 4.135 |
+
+These are terminal-answer arrivals, not first-any audio. Mini emitted pre-tool
+spoken preambles on 10/51 live turns; its separate corrected first-any
+transcript median/p95 is 1.794 / 3.401 s and first-any PCM is 2.223 / 3.770 s.
+Full 2.1 had no such preambles, so its first-any and terminal timings coincide.
+
+## Four instrumented diagnostic turns
 
 Current production prompt/tool functions were used locally with
 `gpt-realtime-2.1`, API `2026-04-10`, Leah voice, semantic/k5/full-section Search,
 and the existing Web IQ profile. No avatar or microphone was started.
 These are current-profile diagnostics, not a controlled old-vs-new prompt A/B.
 
-| Case | Tool | T1-T0 | T2-T1 | T3-T2 | T4-T3 | Client wait inside T4-T3 | T5-T4 | Total TTFA |
-|---|---|---:|---:|---:|---:|---:|---:|---:|
-| Q1 | Search | 816 | 961 | 5 | 635 | 100 | 674 | 3,091 |
-| Q7 | Search | 1,082 | 300 | 3 | 1,552 | 796 | 320 | 3,257 |
-| W1 | Web IQ | 701 | 1,309 | 9 | 402 | <1 | 346 | 2,767 |
-| W2 | Web IQ | 710 | 765 | 48 | 1,460 | 228 | 461 | 3,444 |
-
-Times are ms; waiting is a **subset**, not an additional component to add again.
-Every turn's five sequential intervals reconcile to its measured total.
-With only two examples per tool, a p95 would be the maximum, not a useful tail
-estimate. The larger historical sample supplies the distribution above.
-
-Other observations:
+Detailed timings remain in private diagnostics rather than a second latency
+table. The larger reconciled cohorts supply the distributions above. Relevant
+observations:
 
 - No server-requested defer was recorded in these four turns.
-- First function announcements arrived at 573-636 ms; argument-ready times
-  were 695-1,076 ms. Search arguments were 121/229 characters versus 30/33 for
-  web calls. This suggests a query-generation experiment, not proof that
+- Search arguments were 121/229 characters versus 30/33 for web calls.
+  This suggests a query-generation experiment, not proof that
   shortening queries preserves retrieval quality.
-- Argument readiness -> execution was only 6-9 ms in these probes. The runner's
-  wait-until-response-done ordering differs from production's overlap, but was
-  not a large gap here.
-- Existing trace serialization/write/fsync occupied 45-149 ms before PCM.
+- The runner's wait-until-response-done ordering differs from production's
+  overlap; the probes did not identify that ordering as a large gap.
+- Trace serialization/write/fsync occupied time before PCM.
   That is observer work, not necessarily an equal TTFA penalty: some can overlap
   remote computation. It must not be blindly subtracted.
 - W2 had a smaller result than either Search example, yet the slowest
-  response-create -> transcript span (1,192 ms). Four calls do not establish
+  response-create -> transcript span. Four calls do not establish
   a monotonic payload-size bottleneck.
 - Routing was correct in 4/4. The two minutes answers still omitted some
   required detail (explicit dividend increase / full audit scope); this is
@@ -289,9 +290,9 @@ Shorter payloads are not automatically preferable, and the 5,000-character cap
 is nearly a no-op in the observed examples.
 
 **Current recommendation:** collect a small production baseline with the
-correct boundaries, then choose one experiment. The historical artifact is
+correct boundaries, then choose one experiment. The measurement defect is
 fixed in the harness; a new production optimization has not been selected or
-applied. No new end-to-end latency number is claimed without observation.
+applied.
 
 ## Agent-mode measurement audit
 
@@ -329,8 +330,8 @@ Source anchors: `bench_agent_evaluation.py` `stream_turn`/`run_turn`,
 ## Optional production trace
 
 The backend supports `ENABLE_LATENCY_TRACE=true` with `LOG_LEVEL=INFO`.
-It defaults to **off** and has not been enabled in the deployed environments
-as part of this correction. This is a runtime setting, not an azd/Bicep
+It defaults to **off**; enablement is an explicit operational choice.
+This is a runtime setting, not an azd/Bicep
 parameter; setting an azd variable alone does not forward it to a container.
 It is independent of `ENABLE_AUDIT` and does not enable conversation capture.
 When off, existing `[LATENCY]` diagnostics are unchanged.
@@ -371,8 +372,8 @@ per-response observations are still recorded.
 For a user-run baseline, use a short agreed window, filter only these trace
 records, and distinguish fresh-session from follow-up turns and text from
 microphone input. Preserve the existing live model/avatar/voice settings.
-Do not treat the current ordinary application logs as this new instrumentation
-until the new image is deployed and the flag is explicitly enabled.
+Verify that the deployed image includes the collector and the flag is enabled;
+ordinary application logs are not a substitute for these trace records.
 
 ## Evidence and code
 
@@ -384,6 +385,9 @@ until the new image is deployed and the flag is explicitly enabled.
 - Private aggregates: `historical-latency-events.json`,
   `historical-token-audit.json`, `four-turn-components.json`,
   `observed-payload-sizes.json`, `current-token-summary.json`.
+- Reproducible offline correction: private `correct_realtime_timings.py` and
+  sanitized numeric `corrected-realtime-receipt.json`; no source content is
+  included in the receipt.
 - Four new raw turns remain in the private `instrumented-four-turns` directory.
 - Archived inference/grades were not altered. No additional paid inference,
   production context reduction or inference optimization was performed.
