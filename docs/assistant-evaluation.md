@@ -332,9 +332,9 @@ Record submission, function announcement, argument-ready, tool execution
 start/end, tool-output send completion, response-create, first answer
 transcript and first observed PCM separately. Missing phases stay missing,
 especially when media travels directly to the browser over WebRTC.
-Historical timings collected with a different measurement policy must retain
-that label. Subtracting an aggregate wait median does not create a new
-unpaced measurement.
+Derived timing corrections must be traceable to each turn's recorded spans;
+missing evidence remains indeterminate. Keep derived statistics distinct from
+newly measured cohorts and never estimate them by subtracting aggregate medians.
 
 ## Frozen-retrieval comparison authorized on 18 September
 

@@ -4,7 +4,8 @@ Protocol: [assistant-evaluation.md](assistant-evaluation.md).
 Earlier exploratory model comparisons: [evaluation-history.md](evaluation-history.md).
 
 This page covers **agent mode**. The **realtime/model-mode** comparison is in
-[evaluation-model-mode.md](evaluation-model-mode.md); its separate
+[evaluation-model-mode.md](evaluation-model-mode.md), with corrected realtime
+timings. Its separate
 [latency attribution and measurement correction](realtime-latency-investigation.md)
 explains the old runner's within-turn waiting. Do not assume a defect in one
 harness applies to another without checking its timing path.
