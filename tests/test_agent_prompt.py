@@ -63,6 +63,7 @@ class AgentPromptTests(unittest.TestCase):
     def test_routing_output_and_accuracy_guards_are_present(self):
         flat = " ".join(self.raw.split())
         for rule in (
+            "headline first in a complete sentence of about twelve words",
             "three short sentences and no more than 70 spoken words",
             "before producing any spoken text",
             "never copy or read them aloud",
