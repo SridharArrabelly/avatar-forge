@@ -81,7 +81,7 @@ agent-creation time; the runtime backend never talks to Bing directly.
 | `AGENT_REASONING_EFFORT` | `none` | Reasoning effort. **Model-dependent:** `gpt-4.x`/`gpt-4o` reject it; leave unset for those models. GPT-5 models use explicit `none` by default; supported alternatives depend on the deployed model. Latency and tool-call changes are measured in the evaluation report, not assumed to be a fixed delay. This does **not** select a different prompt. |
 | `AI_SEARCH_TOP_K` | `5` | Positive integer: maximum Search chunks per turn. Does not change Bing count. Explicit `8` remains available for the legacy profile. |
 | `AI_SEARCH_QUERY_TYPE` | `semantic` | Agent setup only: lexical/BM25 candidates plus semantic reranking, **without vector retrieval**. Also accepts `simple`, `vector`, `vector_simple_hybrid`, `vector_semantic_hybrid`. Invalid or explicitly blank values fail before publication. The index needs a compatible semantic configuration. |
-| `BING_COUNT` | `8` | Snippets returned from the Bing Custom Search allow-list per turn. |
+| `BING_COUNT` | `5` | Snippets returned from the Bing Custom Search allow-list per turn. Measured against `8` in a controlled A/B: identical routing (15/15 both arms) and answer length, 24% fewer total tokens, neutral-to-faster first token. Explicit `8` remains available. |
 
 > **The curated site allow-list is not an environment variable.** It is the
 > `bingAllowedDomains` parameter in [`infra/main.bicep`](../infra/main.bicep) — a list of
