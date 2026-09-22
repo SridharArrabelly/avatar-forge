@@ -42,6 +42,10 @@ let thinkingActive = false;
 // Set when a real tool event named the retrieval. A prediction must never
 // overwrite the truth.
 let thinkingAuthoritative = false;
+// Set when the cue was armed from the user's speech_stopped rather than from
+// response_created, so the turn that follows adopts that pill instead of
+// re-arming and restarting the delay from zero.
+let thinkingEarlyArmed = false;
 // Monotonic generation token. Bumped every time a new turn arms the indicator,
 // so a late event from a previous (e.g. cancelled) response can't show or
 // cancel the current turn's pill.
@@ -57,7 +61,13 @@ const CUE = (typeof window !== 'undefined' && window.THINKING_CUE) || null;
 // How long a wait must last before it is worth interrupting the user's view
 // with an indicator at all. Channel-specific: the meeting tile shows its cue
 // sooner, because a room that hears silence starts talking over her.
-const THINKING_SHOW_DELAY_MS = 700;
+//
+// 250ms, not the original 700ms. The guard exists to stop the pill flashing on
+// a turn that answers instantly, but no turn does: the fastest first answer
+// token across 51 measured agent turns was 1.601s after response_created, and a
+// no-retrieval reply still takes ~1.1-1.5s. At 700ms the guard was preventing
+// nothing and charging most of a second of dead air for it.
+const THINKING_SHOW_DELAY_MS = 250;
 let peerConnection = null;
 let avatarVideoElement = null;
 let avatarAudioElement = null;
@@ -1265,11 +1275,16 @@ function revealAvatarVideo(mediaPlayer) {
 }
 
 // ===== Avatar "thinking" indicator =====
-// Three phases, because "a response started", "a search is running" and "this
-// is taking a while" are different facts that become knowable at different
-// times:
+// Phases, because "she heard you", "a response started", "a search is running"
+// and "this is taking a while" are different facts that become knowable at
+// different times:
 //
-//   response_created        -> dots only. She is working; no claim about how.
+//   speech_stopped          -> dots only, after THINKING_SHOW_DELAY_MS. She
+//                              heard them; nothing is knowable about the answer
+//                              yet, so the pill claims nothing.
+//   response_created        -> the turn's own clock starts here. Visibility
+//                              moved earlier; PACING did not — the neutral
+//                              escalation is re-anchored to this moment.
 //   +THINKING_PREDICT_MS    -> if the turn is still running, the predicted
 //                              retrieval is now the only explanation, so name it.
 //   function_call_started   -> a real tool event; overrides any prediction.
@@ -1281,18 +1296,58 @@ function thinkingCaptionFor(functionName) {
     return CUE ? CUE.captionFor(functionName) : '';
 }
 
+// Arm the cue the moment the user stops talking, instead of waiting for the
+// server to accept the question. Recognition takes ~0.73s to finalise before
+// response_created can even fire, and arming there left the stage silent and
+// unacknowledged for ~1.4s after the user stopped speaking.
+//
+// Deliberately neutral: which tool will run is carried by response_created's
+// expectedTool, which has not arrived yet, so this phase shows dots and claims
+// nothing. A speech segment that turns out to be noise is retired by
+// transcript_empty; one that never resolves at all is retired by the MAX_MS
+// failsafe that showThinking arms.
+function armThinkingEarly() {
+    if (!CUE || !(isConnected && avatarEnabled) || avatarConnecting) return;
+    // Already showing or already scheduled — leave it alone rather than
+    // restarting its delay.
+    if (thinkingActive || thinkingShowTimer) return;
+    const gen = ++thinkingGen;
+    thinkingCaption = '';
+    thinkingAuthoritative = false;
+    thinkingEarlyArmed = true;
+    thinkingShowTimer = setTimeout(() => showThinking(gen), THINKING_SHOW_DELAY_MS);
+}
+
 function startThinking(expectedTool) {
-    stopThinking();
+    // If speech_stopped already armed this turn, adopt that pill: tearing it
+    // down here would bump the generation, cancel the pending show and hand
+    // back the dead air the early arm exists to remove.
+    const carry = thinkingEarlyArmed && (thinkingActive || thinkingShowTimer);
+    if (!carry) stopThinking();
+    thinkingEarlyArmed = false;
     // Suppress while the avatar itself is still loading in (greeting turn) or
     // when there's no avatar on screen.
     if (!CUE || !(isConnected && avatarEnabled) || avatarConnecting) return;
-    const gen = ++thinkingGen;
-    thinkingCaption = '';
-    thinkingShowTimer = setTimeout(() => showThinking(gen), THINKING_SHOW_DELAY_MS);
+    const gen = carry ? thinkingGen : ++thinkingGen;
+    if (!carry) {
+        thinkingCaption = '';
+        thinkingShowTimer = setTimeout(() => showThinking(gen), THINKING_SHOW_DELAY_MS);
+    } else if (!thinkingCaption && thinkingActive) {
+        // Re-anchor the neutral escalation to response_created. The early arm
+        // is about VISIBILITY, not pacing: without this, showing the dots
+        // ~1.2s sooner would also drag "still working, nearly there" ~1.2s
+        // sooner, so an ordinary turn would start getting reassured at about
+        // the time it was going to answer anyway. Skipped once a caption
+        // exists, because that phase owns its own clock.
+        armThinkingSlow();
+    }
     // Agent binding relays no tool events, so a prediction is the only way this
     // turn will ever be named. Hold it until the turn proves itself slow.
+    // Still measured from here, not from the early arm, so PREDICT_MS keeps the
+    // calibration it was chosen against.
     const predicted = thinkingCaptionFor(expectedTool);
     if (predicted) {
+        if (thinkingPredictTimer) clearTimeout(thinkingPredictTimer);
         thinkingPredictTimer = setTimeout(() => {
             thinkingPredictTimer = null;
             if (gen !== thinkingGen || thinkingAuthoritative) return;
@@ -1319,6 +1374,17 @@ function upgradeThinking(functionName) {
     applyThinkingCaption(caption);
 }
 
+// Start (or restart) the escalation to SLOW_CAPTION. Always measured from the
+// beginning of the phase the user is currently reading, never from the start of
+// the turn — centralised so the neutral phase and a named caption cannot drift
+// apart as their anchors move.
+function armThinkingSlow() {
+    if (thinkingSlowTimer) clearTimeout(thinkingSlowTimer);
+    thinkingSlowTimer = setTimeout(() => {
+        setThinkingCaption(CUE.SLOW_CAPTION);
+    }, CUE.SLOW_MS);
+}
+
 function applyThinkingCaption(caption) {
     thinkingCaption = caption;
     // Not on screen yet — showThinking will pick this up when it fires.
@@ -1326,10 +1392,7 @@ function applyThinkingCaption(caption) {
     setThinkingCaption(caption);
     // Restart the escalation so "taking longer" is measured from the wording
     // the user is actually reading, not from the neutral phase before it.
-    if (thinkingSlowTimer) clearTimeout(thinkingSlowTimer);
-    thinkingSlowTimer = setTimeout(() => {
-        setThinkingCaption(CUE.SLOW_CAPTION);
-    }, CUE.SLOW_MS);
+    armThinkingSlow();
 }
 
 function showThinking(gen) {
@@ -1342,9 +1405,7 @@ function showThinking(gen) {
     thinkingActive = true;
     setThinkingCaption(thinkingCaption);
     el.classList.add('visible');
-    thinkingSlowTimer = setTimeout(() => {
-        setThinkingCaption(CUE.SLOW_CAPTION);
-    }, CUE.SLOW_MS);
+    armThinkingSlow();
     // Failsafe: force-clear if the answer/response_done never arrives.
     thinkingMaxTimer = setTimeout(stopThinking, CUE.MAX_MS);
 }
@@ -1367,6 +1428,7 @@ function stopThinking() {
     if (thinkingMaxTimer) { clearTimeout(thinkingMaxTimer); thinkingMaxTimer = null; }
     thinkingActive = false;
     thinkingAuthoritative = false;
+    thinkingEarlyArmed = false;
     thinkingCaption = '';
     const el = document.getElementById('avatarThinking');
     if (el) el.classList.remove('visible');
@@ -2925,6 +2987,9 @@ function onSpeechStopped() {
     console.log(`[Turn] speech_stopped | mic chunks sent so far=${audioChunksSent}`);
     pendingAssistantText = '';
     isSpeaking = false;
+    // Acknowledge immediately. Recognition still has to finalise before the
+    // server will accept the question, and that gap is silent otherwise.
+    armThinkingEarly();
 }
 
 // A speech segment produced no recognized words (empty transcript). Remove the
@@ -2932,6 +2997,9 @@ function onSpeechStopped() {
 // going silent. Surface a brief toast so the failure is visible, not mysterious.
 function onTranscriptEmpty(itemId) {
     console.warn(`[Turn] transcript EMPTY item=${itemId} | mic chunks sent so far=${audioChunksSent}`);
+    // The segment was noise, so no answer is coming: retire the cue armed by
+    // speech_stopped rather than leaving it pulsing over a turn that ended.
+    stopThinking();
     if (itemId) {
         const msg = document.querySelector(`.message.user[data-item-id="${itemId}"]`);
         if (msg) msg.remove();
