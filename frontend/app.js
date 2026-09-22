@@ -856,6 +856,7 @@ function handleServerMessage(msg) {
             break;
         case 'transcript_done':
             if (msg.role === 'user') {
+                probeMark('transcript');
                 // A real (non-empty) user turn permanently retires the onboarding hint.
                 if ((msg.transcript || '').trim()) {
                     dismissOnboarding();
@@ -971,6 +972,7 @@ let pendingAssistantText = '';
 let currentAssistantContentEl = null;
 
 function onAssistantDelta(text) {
+    probeMark('first_text');
     // First token of the answer has arrived — tear down the thinking indicator.
     if (thinkingActive || thinkingShowTimer) stopThinking();
     // Speaking glow is normally driven by real playback (data-channel events +
@@ -1579,6 +1581,9 @@ function runAvatarSpeakingLoop() {
         const rms = Math.sqrt(sumSq / avatarAudioData.length);
         const now = performance.now();
         if (rms > AVATAR_SPEAK_RMS_ON) {
+            // Audio-energy fallback for when the service sends no speaking
+            // event; whichever arrives first wins, later marks are ignored.
+            probeMark('speaking');
             avatarLastAudibleTs = now;
             avatarAnalyserProven = true;
         }
@@ -1611,6 +1616,7 @@ function stopAvatarAudioAnalyser() {
 function handleAvatarDataChannelMessage(data) {
     if (typeof data !== 'string') return;
     if (data.indexOf('EVENT_TYPE_SWITCH_TO_SPEAKING') !== -1) {
+        probeMark('speaking');
         avatarSpeechTurnActive = true;
         avatarLastAudibleTs = performance.now();
         setAvatarSpeaking(true);
@@ -2036,6 +2042,7 @@ registerProcessor('pcm16-processor', PCM16Processor);
         // Store mic analyser so volume animation can use it
         micAnalyserNode = micAnalyser;
         micAnalyserDataArray = micDataArray;
+        probeStartMic();
         analyserNode = micAnalyser;
         analyserDataArray = micDataArray;
         startVolumeAnimation('record');
@@ -2063,6 +2070,7 @@ registerProcessor('pcm16-processor', PCM16Processor);
 
 function stopAudioCapture() {
     stopRecordAnimation();
+    probeStopMic();
     micAnalyserNode = null;
     micAnalyserDataArray = null;
     if (workletNode) { try { workletNode.disconnect(); } catch (e) {} workletNode = null; }
@@ -2958,6 +2966,112 @@ function sendStageMessage() {
 }
 
 // ===== Speech Events (sound wave animation) =====
+// ===== Latency probe (opt-in, measurement only) =====
+// `backend/voice/latency_trace.py` is explicit about two segments it cannot
+// see: its clock starts at speech_stopped, "NOT microphone capture time", and
+// "WebRTC avatar playback ... not observable here". Those are the first and
+// last segments of what a person in the room actually experiences, so every
+// latency figure we hold is missing both ends. The browser is the only place
+// they are observable, so measure them here:
+//
+//   endpoint_ms  last mic energy -> speech_stopped  (the VAD endpointing window)
+//   asr_ms       speech_stopped  -> user transcript
+//   answer_ms    speech_stopped  -> first assistant text
+//   render_ms    first text      -> avatar actually speaking
+//   total_ms     last mic energy -> avatar actually speaking
+//
+// Off unless ?probe=1 or localStorage avatarProbe=1. It only reads state that
+// already exists and writes nothing back, so a disabled - or enabled - probe
+// cannot change conversational behaviour.
+const PROBE_ON = (() => {
+    try {
+        if (new URLSearchParams(window.location.search).get('probe') === '1') return true;
+        return window.localStorage.getItem('avatarProbe') === '1';
+    } catch (e) {
+        return false;
+    }
+})();
+// Time-domain RMS above which the mic is treated as carrying speech. Read via
+// getByteTimeDomainData which, unlike the frequency data the level meter uses,
+// is NOT affected by the analyser's 0.85 smoothing - so the trailing edge of
+// speech is not lagged by the smoothing constant.
+const PROBE_MIC_RMS = 0.015;
+let probeMicLastAudibleTs = 0;
+let probeMicBuf = null;
+let probeRafId = null;
+let probeTurn = null;
+
+function probeStartMic() {
+    if (!PROBE_ON || probeRafId) return;
+    const tick = () => {
+        const node = micAnalyserNode;
+        if (!node) { probeRafId = null; return; }
+        if (!probeMicBuf || probeMicBuf.length !== node.fftSize) {
+            probeMicBuf = new Uint8Array(node.fftSize);
+        }
+        node.getByteTimeDomainData(probeMicBuf);
+        let sumSq = 0;
+        for (let i = 0; i < probeMicBuf.length; i++) {
+            const v = (probeMicBuf[i] - 128) / 128;
+            sumSq += v * v;
+        }
+        if (Math.sqrt(sumSq / probeMicBuf.length) > PROBE_MIC_RMS) {
+            probeMicLastAudibleTs = performance.now();
+        }
+        probeRafId = requestAnimationFrame(tick);
+    };
+    probeRafId = requestAnimationFrame(tick);
+}
+
+function probeStopMic() {
+    if (probeRafId) { cancelAnimationFrame(probeRafId); probeRafId = null; }
+    probeMicBuf = null;
+}
+
+function probeMark(event) {
+    if (!PROBE_ON) return;
+    const now = performance.now();
+    if (event === 'speech_stopped') {
+        // Snapshot the mic edge now. The loop keeps running, but the user has
+        // stopped talking, so it will not advance again until the next turn -
+        // and the avatar's own audio is on a different node, not this one.
+        probeTurn = {
+            micEnd: probeMicLastAudibleTs || 0,
+            speechStopped: now,
+            transcript: 0,
+            firstText: 0,
+            speaking: 0,
+        };
+        return;
+    }
+    if (!probeTurn) return;
+    if (event === 'transcript') {
+        if (!probeTurn.transcript) probeTurn.transcript = now;
+    } else if (event === 'first_text') {
+        if (!probeTurn.firstText) probeTurn.firstText = now;
+    } else if (event === 'speaking') {
+        if (probeTurn.speaking) return;
+        probeTurn.speaking = now;
+        probeEmit();
+    }
+}
+
+function probeEmit() {
+    const t = probeTurn;
+    probeTurn = null;
+    if (!t) return;
+    // A missing endpoint reports null rather than a fabricated span: typed
+    // input has no mic edge, and inventing one would poison the median.
+    const span = (a, b) => (a && b ? Math.round(b - a) : null);
+    console.info('[PROBE] ' + JSON.stringify({
+        endpoint_ms: span(t.micEnd, t.speechStopped),
+        asr_ms: span(t.speechStopped, t.transcript),
+        answer_ms: span(t.speechStopped, t.firstText),
+        render_ms: span(t.firstText, t.speaking),
+        total_ms: span(t.micEnd, t.speaking),
+    }));
+}
+
 function onSpeechStarted(itemId) {
     isSpeaking = true;
     console.log(`[Turn] speech_started item=${itemId} | mic chunks sent so far=${audioChunksSent} | isRecording=${isRecording}`);
@@ -2985,6 +3099,7 @@ function onSpeechStarted(itemId) {
 
 function onSpeechStopped() {
     console.log(`[Turn] speech_stopped | mic chunks sent so far=${audioChunksSent}`);
+    probeMark('speech_stopped');
     pendingAssistantText = '';
     isSpeaking = false;
     // Acknowledge immediately. Recognition still has to finalise before the
