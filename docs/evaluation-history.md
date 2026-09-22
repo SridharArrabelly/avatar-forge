@@ -922,3 +922,75 @@ uv run python scripts\bench_routing_matrix.py `
   --model gpt-5.4 --efforts none --breadths 8 --runs 3 `
   --groups minutes web --interval 8 --token-budget 180000 --reserve-tokens 30000
 ```
+
+---
+
+# Bing breadth A/B — `BING_COUNT` 8 vs 5 (22 September 2026)
+
+**Why.** `BING_COUNT` defaulted to 8, justified in code as the "validated
+production value" needed "to answer completely". The 30-question evaluation had
+already recorded 5/5 and 8/8 as identical on every quality axis, so the
+justification was untested. This run isolates Bing breadth.
+
+**Method.** Two disposable clones of the Terra agent, differing *only* in
+retrieval breadth (verified by diffing the published definitions: `top_k` 5 vs 8
+and `count` 5 vs 8). Web-only question group, 3 runs x 5 questions per arm,
+`gpt-5.6-terra`, reasoning effort `none`. Web questions never invoke AI Search,
+so **Bing `count` was the sole active variable**. 0 errors, 0 retries.
+
+## Routing and quality
+
+| | count=5 | count=8 |
+|---|---:|---:|
+| Routing correct | 15/15 | 15/15 |
+| Answer length (median words) | 33 | 35 |
+| Answers over 70 words | 0 | 0 |
+| Truncated / non-answers | 0 | 0 |
+
+Two questions diverged materially, and **both favoured 5**:
+
+- **FY2025 revenue** — count=5 returned the complete figure (total revenue
+  R226.3bn plus service revenue R218.5bn). count=8 replied that total revenue
+  was "not verified from the income statement". More snippets produced the less
+  complete answer, directly contradicting the code comment.
+- **Share price** — same underlying quote, but count=5 showed the cents-to-rand
+  conversion and attributed it to the investor page, while count=8 asserted a
+  "JSE quote delayed by 15 minutes" freshness claim that the cached crawl
+  cannot support.
+
+## Tokens
+
+**130,028 -> 98,364 total tokens, a 24.4% reduction.** This is the arithmetic
+consequence of three fewer snippets per turn, not a noisy measurement, and it
+applies to every web turn.
+
+## First-token latency — direction favours 5, not statistically established
+
+| Cut | count=5 median | count=8 median | count=5 mean | count=8 mean | permutation p |
+|---|---:|---:|---:|---:|---:|
+| All 3 runs | 4.159 s | 4.891 s | 4.805 s | 4.671 s | 0.587 |
+| Excluding run 1 | 4.067 s | 4.929 s | 4.126 s | 4.721 s | 0.104 |
+
+**Reported honestly: the all-runs mean favours count=8 by 0.13 s.** The count=5
+arm ran first and absorbed two cold-start outliers (10.13 s and 8.11 s, both in
+run 1) that count=8 never paid. Medians are insensitive to those and favour
+count=5 in both cuts. Excluding run 1 is defensible but post-hoc, so both cuts
+are shown.
+
+Paired by question (median of 3 runs each), count=5 was faster on **4 of 5**
+questions, median paired difference **+0.39 s**.
+
+At n=10-15 per arm this is **not significant** (p=0.104 at best). The honest
+estimate is ~0.4 s, consistent in sign but unproven. **The default change rests
+on the 24.4% token reduction with quality equal-or-better, not on the latency
+delta.**
+
+Reproduction:
+
+```powershell
+uv run python scripts\bench_routing_matrix.py `
+  --env-file .azure\avatar-agent-env\.env `
+  --output-dir "$env:TEMP\bing-breadth-20260922" `
+  --model gpt-5.6-terra --efforts none --breadths 5 8 --runs 3 `
+  --groups web --interval 8
+```

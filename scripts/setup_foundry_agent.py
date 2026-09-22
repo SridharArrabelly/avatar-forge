@@ -298,8 +298,13 @@ def build_bing_tool(
     curated sources. The configuration is provisioned out of band (Bing Custom
     Search portal); we reference it by name here via ``instance_name``.
 
-    count defaults to 8 (env: ``BING_COUNT``) — the validated production value;
-    enough snippet budget to answer completely while staying tight for voice.
+    count defaults to 5 (env: ``BING_COUNT``) — the measured production value.
+    A controlled A/B against count=8 (web-only questions, 3 runs x 5 questions
+    per arm, Bing count the only variable) found 8 buys no quality: routing was
+    15/15 in both arms and answer length was unchanged, while 8 produced the
+    *less* complete answer on the revenue question. 5 cuts total tokens 24%
+    (130,028 -> 98,364) and is neutral-to-faster on first token. See
+    docs/evaluation-history.md.
     market/set_lang pin South-Africa-first English. freshness is intentionally
     left unset —
     forcing recency would drop legitimate non-news lookups.
@@ -315,7 +320,7 @@ def build_bing_tool(
                     instance_name=bing_custom_config_name,
                     market="en-ZA",
                     set_lang="en",
-                    count=int(os.getenv("BING_COUNT", "8") or "8"),
+                    count=int(os.getenv("BING_COUNT", "5") or "5"),
                 ),
             ]
         )
