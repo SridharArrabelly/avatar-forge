@@ -51,7 +51,7 @@
     "modelName":           { "value": "${MODEL_NAME=gpt-5.6-terra}" },
     "modelVersion":        { "value": "${MODEL_VERSION=2026-07-09}" },
     "modelDeploymentName": { "value": "${MODEL_DEPLOYMENT_NAME=gpt-5.6-terra}" },
-    "modelSkuName":        { "value": "${MODEL_SKU_NAME=DataZoneStandard}" },
+    "modelSkuName":        { "value": "${MODEL_SKU_NAME=GlobalStandard}" },
     "modelCapacity":       { "value": "${MODEL_CAPACITY=250}" },
 
     "enableAcs":       { "value": "${ENABLE_ACS=false}" },

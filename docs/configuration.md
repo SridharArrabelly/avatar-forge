@@ -153,8 +153,8 @@ deployment.
 | `MODEL_NAME` | `gpt-5.6-terra` | **Which** model to pull from the catalogue. Requires availability/access/quota in the target region. |
 | `MODEL_VERSION` | `2026-07-09` | Model version (must match `MODEL_NAME`). |
 | `MODEL_DEPLOYMENT_NAME` | `gpt-5.6-terra` | What to **call** that deployment. |
-| `MODEL_SKU_NAME` | `DataZoneStandard` | Deployment SKU; processing stays within the selected data zone, not necessarily the resource's exact region. Embedding SKU and semantic-ranker billing are separate and unchanged. |
-| `MODEL_CAPACITY` | `250` | TPM allocation for the selected model/SKU; verify the model-specific unit conversion and available quota. Standard/DataZoneStandard are pay-per-token, not reserved processing capacity. Explicit environment allocations remain unchanged. Inspect live deployment rate limits rather than treating the setting as a latency guarantee. |
+| `MODEL_SKU_NAME` | `GlobalStandard` | Deployment SKU. `GlobalStandard` routes to any Azure region with capacity, so prompts may be processed **outside the resource's data zone**. Set `DataZoneStandard` where data residency is required, and watch its availability (see [the SKU comparison](evaluation-history.md#model-sku--datazonestandard-vs-globalstandard-23-september-2026)). Embedding SKU and semantic-ranker billing are separate and unchanged. |
+| `MODEL_CAPACITY` | `250` | TPM allocation for the selected model/SKU; verify the model-specific unit conversion and available quota. GlobalStandard/Standard/DataZoneStandard are pay-per-token, not reserved processing capacity. Explicit environment allocations remain unchanged. Inspect live deployment rate limits rather than treating the setting as a latency guarantee. |
 
 ### Why `MODEL_NAME` and `MODEL_DEPLOYMENT_NAME` are both needed
 

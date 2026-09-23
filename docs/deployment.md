@@ -120,8 +120,12 @@ azd env set FOUNDRY_LOCATION eastus2
 > wires its Foundry project connection automatically.
 
 Fresh agent deployments default to **Terra (`2026-07-09`) / reasoning none /
-DataZoneStandard**, with native Search `semantic` and top-k 5. Bing count remains
-8. Confirm Terra availability and quota for your subscription/region; existing
+GlobalStandard**, with native Search `semantic` and top-k 5, and Bing count 5.
+GlobalStandard may process prompts outside the resource's data zone; set
+`MODEL_SKU_NAME=DataZoneStandard` if residency is required, accepting the
+availability risk recorded in
+[the SKU comparison](evaluation-history.md#model-sku--datazonestandard-vs-globalstandard-23-september-2026).
+Confirm Terra availability and quota for your subscription/region; existing
 explicit environment values override defaults. Embedding deployment SKU and
 semantic-ranker billing are separate and are not changed by these defaults.
 
