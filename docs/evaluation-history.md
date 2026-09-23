@@ -994,3 +994,70 @@ uv run python scripts\bench_routing_matrix.py `
   --model gpt-5.6-terra --efforts none --breadths 5 8 --runs 3 `
   --groups web --interval 8
 ```
+
+---
+
+# Model SKU — DataZoneStandard vs GlobalStandard (23 September 2026)
+
+**Why.** On a fresh swedencentral environment, most live agent-mode turns hung
+on the "Still working" cue and then vanished without an answer. Container logs
+showed the stalled turns producing no output for 30+ s until the user spoke
+again (`CANCELLED reason='turn_detected' empty_turn=True output=[]`). The
+app, retrieval and quota were ruled out before the model SKU was compared.
+
+**Isolating the layer.**
+
+| Probe | What it bypasses | Result |
+|---|---|---|
+| Agent called directly (per-agent endpoint, no Voice Live) | Browser, Voice Live | 4/8 turns stalled ~60 s, always inside a model call; tools took 0.3–2 s |
+| Raw model call, no agent or tools | Agent, tools, retrieval | 8/16 calls had ~61 s time to first token; the rest 0.7–1.6 s |
+| Azure Monitor model metrics | — | All HTTP 200, no 429s; one `TimeToResponse` of 60.9 s |
+| Resource Health | — | Available, no known issues |
+
+So the stall sat in the model deployment itself, not in the app, the agent,
+retrieval or quota.
+
+**Method.** A temporary GlobalStandard deployment of the *same* model and
+version (`gpt-5.6-terra` `2026-07-09`, 250K TPM) was created in the same account.
+The two deployments were called alternately, with the order swapped every
+iteration: 16 calls each, the full agent prompt, reasoning effort `none`, and
+no retries.
+
+| Deployment | Answered < 20 s | Stalled 60–87 s | Rejected | Median TTFT (answered) | Max |
+|---|---:|---:|---:|---:|---:|
+| DataZoneStandard (EU) | 1 | 3 | 12 | — | 86.6 s |
+| GlobalStandard | **16** | 0 | 0 | 1.43 s | 2.4 s |
+
+The 12 DataZoneStandard rejections were 11× "The system is currently
+experiencing high demand … exceeds the maximum usage size allowed during peak
+load" and 1× HTTP 500. This is shared EU data-zone capacity for this model, not
+our quota or our code.
+
+**Change.** The deployment was switched in place (same name, so the agent did
+not change) with `az cognitiveservices account deployment create
+--sku-name GlobalStandard --sku-capacity 250`. **The switch took a few minutes
+to propagate.** Immediately after it, the deployment rejected every call. It
+went clean partway through the next interleaved run: 9 of 16 calls were
+rejected, then 7/7 succeeded.
+
+**After propagation:**
+
+| Probe | Result |
+|---|---|
+| Raw model, 16 calls | 16/16, no stalls, median 0.84 s, max 5.2 s |
+| Agent directly, 8 questions (minutes + web) | 8/8 answered, first text at 1.7–5.2 s, no stalls |
+
+**Decision.** `MODEL_SKU_NAME` now defaults to `GlobalStandard`.
+
+**Trade-off.** GlobalStandard may process prompts in any Azure region, not just
+the EU data zone. Deployments that need data residency should set
+`MODEL_SKU_NAME=DataZoneStandard` explicitly and plan for this availability
+risk.
+
+**Caveats.**
+- This is one time window. EU data-zone capacity may recover, so this is an
+  availability finding, not a permanent ranking.
+- It is not a latency claim: the answered-call timings are too few to compare
+  the SKUs' speed.
+- Existing environments without an explicit `MODEL_SKU_NAME` will have their
+  deployment SKU changed in place on the next `azd provision`.

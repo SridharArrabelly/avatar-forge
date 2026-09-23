@@ -220,7 +220,7 @@ def main() -> int:
         ("modelName", "MODEL_NAME", "gpt-5.6-terra"),
         ("modelDeploymentName", "MODEL_DEPLOYMENT_NAME", "gpt-5.6-terra"),
         ("modelVersion", "MODEL_VERSION", "2026-07-09"),
-        ("modelSkuName", "MODEL_SKU_NAME", "DataZoneStandard"),
+        ("modelSkuName", "MODEL_SKU_NAME", "GlobalStandard"),
     ):
         check(f"Bicep default {name}", defaults[name], expected)
         check(f"azd default {name}", parameters[name]["value"], "${" + variable + "=" + expected + "}")

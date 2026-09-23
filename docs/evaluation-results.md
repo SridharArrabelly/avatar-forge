@@ -98,10 +98,14 @@ CHUNKING_MODE=section
 DOCUMENT_SCOPE=minutes
 ```
 
-Fresh infrastructure defaults match Terra version `2026-07-09` with
-`DataZoneStandard`; existing explicit settings still override defaults.
-Bing count remains 8, and realtime-model defaults, embedding SKU and semantic
-ranker billing were not changed. Explicit `window` + `all` ingestion and
+Fresh infrastructure defaults match Terra version `2026-07-09`; existing
+explicit settings still override defaults. The deployment SKU was
+`DataZoneStandard` for this comparison and has since moved to `GlobalStandard`
+([SKU comparison](evaluation-history.md#model-sku--datazonestandard-vs-globalstandard-23-september-2026)).
+Bing count has since moved from 8 to 5
+([Bing breadth A/B](evaluation-history.md#bing-breadth-ab--bing_count-8-vs-5-22-september-2026)).
+Realtime-model defaults, embedding SKU and semantic ranker billing were not
+changed. Explicit `window` + `all` ingestion and
 `vector_simple_hybrid` + top-8 retrieval remain available for compatibility.
 
 These are code/configuration defaults, not an automatic production migration.

@@ -287,8 +287,13 @@ param meetingBotIconUrl string = ''
 param modelName string = 'gpt-5.6-terra'
 param modelVersion string = '2026-07-09'
 param modelDeploymentName string = 'gpt-5.6-terra'
+// GlobalStandard, not DataZoneStandard: on 23 Sep 2026 the EU data-zone pool for
+// gpt-5.6-terra stalled ~60-87 s or refused ("high demand") on 15/16 calls while
+// GlobalStandard in the same account served 16/16 (docs/evaluation-history.md).
+// GlobalStandard may process prompts outside the data zone; pin DataZoneStandard
+// via MODEL_SKU_NAME where data residency outranks availability.
 @allowed([ 'GlobalStandard', 'Standard', 'DataZoneStandard' ])
-param modelSkuName string = 'DataZoneStandard'
+param modelSkuName string = 'GlobalStandard'
 // TPM capacity in thousands, so '250' is 250K tokens/minute. Typed as a string,
 // not an int, because azd substitutes MODEL_CAPACITY textually and ARM refuses a
 // JSON string for an int parameter -- the same reason enableAcs is a string.
