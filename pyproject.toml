@@ -5,18 +5,24 @@ requires-python = ">=3.12"
 dependencies = [
     "aiofiles>=25.1.0",
     "aiohttp>=3.14.3",
-    "azure-ai-projects>=2.4.0",
-    "azure-ai-voicelive[aiohttp]>=1.2.0",
+    # 2.5.0+ requires openai>=3 (HTTPX2), so these two move together.
+    "azure-ai-projects>=2.7.0",
+    # GA. The app pins the wire API itself (VOICELIVE_API_VERSION in
+    # backend/config.py), so the SDK's own default API version does not apply.
+    "azure-ai-voicelive[aiohttp]>=1.3.0",
     "azure-core>=1.41.0",
-    "azure-identity>=1.26.0b2",
+    # GA line: 1.25.3 fixes expired tokens skipping refresh. The 1.26 betas only
+    # add an AKS workload-identity mode and predate that fix.
+    "azure-identity>=1.25.3",
     "azure-search-documents>=12.0.0",
     "fastapi>=0.141.1",
+    # Used directly by backend/voice/tools.py. openai 3 no longer installs it.
     "httpx>=0.28.1",
-    "openai>=2.52.0",
-    "pypdf>=6.14.2",
+    "openai>=3.16.1",
+    "pypdf>=6.19.0",
     "python-docx>=1.2.0",
-    "python-dotenv>=1.2.2",
-    "uvicorn[standard]>=0.52.1",
+    "python-dotenv>=1.2.3",
+    "uvicorn[standard]>=0.53.0",
     "azure-communication-callautomation>=1.6.0",
     "azure-communication-identity>=1.5.0",
     # Decodes the Voice Live avatar stream (fragmented MP4: H.264 + AAC) into the
@@ -40,10 +46,13 @@ dependencies = [
 # The container image installs this extra (see Dockerfile), so a deployed app
 # can always write to Cosmos. Locally: `uv sync --extra cosmos`.
 [project.optional-dependencies]
-cosmos = ["azure-cosmos>=4.16.3"]
+cosmos = ["azure-cosmos>=4.17.1"]
 
 [tool.uv]
-prerelease = "allow"
+# Pre-releases only when a requirement explicitly names one or nothing else
+# satisfies it. "allow" had silently locked three betas (Voice Live, Identity,
+# Storage Blob) ahead of their GA releases.
+prerelease = "if-necessary-or-explicit"
 package = true
 
 [project.scripts]

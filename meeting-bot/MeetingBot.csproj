@@ -55,6 +55,16 @@
       this pin is older than 90 days. The Calls, Media, Client and Common packages
       must stay version-aligned — bump them together. Restore on a Windows machine.
 
+      HELD AT 1.2.0.17950 (checked 23 Sep 2026). 1.2.0.18725 is the only newer
+      build, and it cannot be restored: its Calls.Media depends on
+      Microsoft.Skype.Bots.Media.Library 1.31.0.243,
+      Microsoft.Identity.ServerAuthorization 4.15.0 and Bond.Core.NET 3.0.69,
+      none of which is published on nuget.org, so restore fails with NU1101.
+      Both builds pin the same Microsoft.Skype.Bots.Media (1.31.0.225-preview).
+      Until a newer build restores cleanly, 1.2.0.17950 is the newest
+      installable version, so check_media_sdk_age.py failing on age alone is
+      not by itself a reason to bump.
+
       Do NOT add an explicit Microsoft.Skype.Bots.Media reference. It arrives
       transitively and Calls.Media pins an exact build of it (1.2.0.17950 ->
       1.31.0.225-preview); that package carries the native media stack
