@@ -2,7 +2,9 @@
 
 Operational scripts in this folder provision, grant, measure or gate an Azure
 deployment. Several cost money to run. The explicitly marked offline evaluation
-helpers only process private local evidence.
+helpers only process private local evidence. One local helper,
+[`sync_via_mirror.py`](sync_via_mirror.py), sets up the venv on networks that
+block PyPI.
 
 The offline suites — no network, no credentials, free — live in
 [`../tests/`](../tests/README.md).
@@ -19,6 +21,7 @@ The prefix answers one question: **what does running this cost me?**
 | `check_` | reads a published version and fails a build | network only | no |
 | `smoke_` | a live compatibility/end-to-end check | yes | some use temporary data/resources; retrieval-agent probe creates/deletes a disposable agent |
 | `bench_` | repeated measurement; long-running, prints numbers | yes | usually no; matrix creates/deletes isolated benchmark agents |
+| `sync_` | installs pinned dependencies into your local `.venv` | no | your `.venv` only — never Azure, never `uv.lock` |
 | *(no prefix)* | imported by other scripts — not meant to be run directly | — | — |
 
 `test_` is deliberately **not** in this table. In this repo it means *offline*, and
@@ -76,6 +79,7 @@ can use `--fixed-retrieval` to preserve that frozen Search/Bing configuration.
 | [`bench_routing_model.py`](bench_routing_model.py) | The same benchmark on the **model** binding. |
 | [`bench_audit_latency.py`](bench_audit_latency.py) | What the audit trail charges the turn it is recording. Three arms — `ENABLE_AUDIT=false`, `AUDIT_SINK=none`, `AUDIT_SINK=file` — so capture cost and sink cost are separated. Offline; touches no Azure resource. |
 | [`check_media_sdk_age.py`](check_media_sdk_age.py) | Fails once the Graph media SDK pin passes 90 days. Wired into [`../meeting-bot/MeetingBot.csproj`](../meeting-bot/MeetingBot.csproj), so a channel-D build runs it for you. |
+| [`sync_via_mirror.py`](sync_via_mirror.py) | `uv sync` fails with `HandshakeFailure` on `files.pythonhosted.org` because your network allows only a package mirror. Installs exactly what `uv.lock` pins through the mirror pip already uses, hash-verified, without rewriting the lock. Run it as `uv run --no-project python scripts/sync_via_mirror.py [--extra cosmos]` (`--no-project` stops `uv run` syncing first), and re-run it after a pull that changes `uv.lock`. See [development.md](../docs/development.md#behind-a-package-mirror-pypi-blocked). |
 
 Files without a prefix are **libraries**, imported rather than run:
 [`channels.py`](channels.py) (the single source of truth for profiles, their flags and

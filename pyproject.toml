@@ -58,9 +58,18 @@ package = true
 [project.scripts]
 avatar-forge = "backend.main:run"
 
+# uv's own backend. When the running uv is inside this range, `uv sync` builds
+# the project in-process and downloads nothing — so touching this file (or a
+# `git pull` that does) never needs PyPI. setuptools had to be fetched for every
+# rebuild, which fails on networks that only allow a package mirror. A uv
+# outside the range still works; it just fetches uv_build first. Move the range
+# with the uv minor the team uses.
 [build-system]
-requires = ["setuptools>=68"]
-build-backend = "setuptools.build_meta"
+requires = ["uv_build>=0.11.0,<0.12"]
+build-backend = "uv_build"
 
-[tool.setuptools]
-packages = ["backend", "backend.api", "backend.voice", "backend.acs"]
+[tool.uv.build-backend]
+# Flat layout: the importable package is `backend/` at the repo root, with every
+# subpackage under it (the old setuptools list had silently dropped `audit`).
+module-name = "backend"
+module-root = ""

@@ -65,6 +65,7 @@ wrong reason. Open a fresh terminal rather than debugging it.
 | [`test_rbac_propagation.py`](test_rbac_propagation.py) | The retry/backoff used by `postprovision` — including that 404 is *not* retried, so a missing optional connection fails fast instead of stalling for 20 minutes. |
 | [`test_set_profile.py`](test_set_profile.py) | That profile flags are authoritative rather than cumulative, so switching profiles clears the previous one's flags instead of leaving you paying for its resources. |
 | [`test_ops_logs.py`](test_ops_logs.py) | That no `logger`/`print` call in `backend/` interpolates conversation content. Container stdout goes to Log Analytics, which is operational storage — a question logged there bypasses every control the audit trail applies, including `ENABLE_AUDIT=false`. Parses the AST rather than scanning lines, because most of these calls span several lines and a line-based check silently misses them. |
+| [`test_sync_via_mirror.py`](test_sync_via_mirror.py) | That [`sync_via_mirror.py`](../scripts/sync_via_mirror.py) hands the mirror only to `uv pip` — never to `uv export`/`uv sync`, which would rewrite `uv.lock` with mirror URLs and break the image build — finds pip's mirror in the right precedence, and never prints credentials. Also that the project builds with `uv_build`, so a `pyproject.toml` edit needs no download. |
 
 ## If you add one
 
