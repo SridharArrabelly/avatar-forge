@@ -20,12 +20,14 @@ Needs no Azure and no credentials: `azd` is never invoked.
 from __future__ import annotations
 
 import io
+import json
 import sys
 from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+REPO = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO / "scripts"))
 
 import channels as ch  # noqa: E402
 import set_profile as sp  # noqa: E402
@@ -39,24 +41,41 @@ def check(name: str, condition: bool) -> None:
         _failures.append(name)
 
 
-def run(env: dict[str, str], profile: str) -> tuple[dict[str, str], str]:
-    """Run set_profile against a fake azd env; return the flags written and the output."""
+def run(
+    env: dict[str, str],
+    profile: str,
+    args: list[str] | None = None,
+    answers: list[str] | None = None,
+) -> tuple[dict[str, str], str]:
+    """Run set_profile against a fake azd env; return the flags written and the output.
+
+    ``args`` replaces the default ``--binding agent``; ``answers`` feeds input()
+    in order, and any prompt beyond them fails the run instead of hanging.
+    """
     written: dict[str, str] = {}
 
     def fake_set(name: str, value: str) -> bool:
         written[name] = value
         return True
 
+    pending = list(answers or [])
+
+    def fake_input(prompt: str = "") -> str:
+        if not pending:
+            raise AssertionError(f"unexpected prompt: {prompt!r}")
+        return pending.pop(0)
+
     old_set, old_values = sp._azd_env_set, sp._azd_env_values
     sp._azd_env_set = fake_set
     sp._azd_env_values = lambda: dict(env)
     old_argv = sys.argv
-    sys.argv = ["set_profile.py", "--profile", profile, "--binding", "agent"]
+    sys.argv = ["set_profile.py", "--profile", profile, *(["--binding", "agent"] if args is None else args)]
     try:
         buf = io.StringIO()
-        with redirect_stdout(buf):
+        with redirect_stdout(buf), patch("builtins.input", fake_input):
             rc = sp.main()
         assert rc == 0, f"exit code {rc}"
+        assert not pending, f"unused answers: {pending}"
         return written, buf.getvalue()
     finally:
         sp._azd_env_set, sp._azd_env_values = old_set, old_values
@@ -140,6 +159,60 @@ check("re-selecting the same profile asks for nothing", "Nothing to re-provision
 print("\nAn unset flag counts as off, so a fresh env is not reported as changed")
 _, fresh_web = run({"DEPLOY_PROFILE": "web", "SERVICE_APP_URI": "https://x"}, "web")
 check("web on a deployed env needs no re-provision", "Nothing to re-provision" in fresh_web)
+
+print("\nAgent mode's web tool: one default everywhere")
+params = json.loads((REPO / "infra" / "main.parameters.json").read_text(encoding="utf-8"))
+check(
+    "main.parameters.json defaults AGENT_WEB_TOOL to DEFAULT_WEB_TOOL",
+    params["parameters"]["agentWebTool"]["value"] == f"${{AGENT_WEB_TOOL={ch.DEFAULT_WEB_TOOL}}}",
+)
+check(
+    "main.bicep defaults agentWebTool to DEFAULT_WEB_TOOL",
+    f"param agentWebTool string = '{ch.DEFAULT_WEB_TOOL}'"
+    in (REPO / "infra" / "main.bicep").read_text(encoding="utf-8"),
+)
+check("the menu offers exactly bing and webiq", ch.WEB_TOOL_ORDER == ["bing", "webiq"])
+
+print("\nThe web tool is asked only in an interactive agent-mode run")
+written, out = run({}, "web")
+check("CI (--binding agent) leaves AGENT_WEB_TOOL untouched", "AGENT_WEB_TOOL" not in written)
+check("and reports the default", "Agent web tool: 'bing'" in out)
+
+written, _ = run({}, "web", ["--binding", "agent", "--web-tool", "webiq"])
+check("--web-tool webiq is written without a prompt", written.get("AGENT_WEB_TOOL") == "webiq")
+
+written, out = run({}, "web", [], answers=["1", ""])
+check("interactive agent mode asks, and Enter picks bing", written.get("AGENT_WEB_TOOL") == "bing")
+check("the menu says what each option measured", "1.83 s" in out and "0.66 s" in out)
+
+written, _ = run({"AGENT_WEB_TOOL": "webiq"}, "web", [], answers=["1", ""])
+check("Enter keeps a web tool already chosen", written.get("AGENT_WEB_TOOL") == "webiq")
+
+written, out = run({}, "web", [], answers=["1", "2"])
+check("choosing 2 selects webiq", written.get("AGENT_WEB_TOOL") == "webiq")
+check("and says Web IQ needs a key", "WEBIQ_API_KEY" in out)
+
+written, _ = run({}, "web", [], answers=["2"])
+check("model mode is not asked about the agent's web tool", "AGENT_WEB_TOOL" not in written)
+
+_, out = run({"FOUNDRY_ACCOUNT_NAME": "byo"}, "web", ["--binding", "agent", "--web-tool", "webiq"])
+check("webiq with a BYO Foundry account warns before preflight", "FOUNDRY_ACCOUNT_NAME is set" in out)
+
+_, out = run({"AGENT_WEB_TOOL": "google"}, "web")
+check("an invalid recorded value is reported, not a crash", "not a valid web tool" in out)
+
+print("\nChanging the web tool or the brain on a deployed env means re-provisioning")
+deployed = {"DEPLOY_PROFILE": "web", "SERVICE_APP_URI": "https://x"}
+_, out = run(deployed, "web", ["--binding", "agent", "--web-tool", "webiq"])
+check("bing -> webiq says azd provision", "azd provision" in out and "AGENT_WEB_TOOL=webiq" in out)
+check("and warns the Bing account keeps billing", "keeps billing" in out)
+
+_, out = run({**deployed, "AGENT_WEB_TOOL": "webiq"}, "web", ["--binding", "agent", "--web-tool", "webiq"])
+check("re-choosing the same web tool asks for nothing", "Nothing to re-provision" in out)
+
+_, out = run({**deployed, "VOICE_BINDING": "model"}, "web")
+check("model -> agent says azd provision", "azd provision" in out and "VOICE_BINDING=agent" in out)
+check("switching the brain alone does not mention Bing billing", "keeps billing" not in out)
 
 print()
 if _failures:

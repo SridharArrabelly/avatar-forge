@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.43.8.12551",
-      "templateHash": "6792917211954937147"
+      "templateHash": "8167536811237109353"
     }
   },
   "parameters": {
@@ -175,7 +175,7 @@
       "type": "string",
       "defaultValue": "",
       "metadata": {
-        "description": "Comma-separated hosts that scope Web IQ searches, e.g. \"mtn.com,sashares.co.za\". Web IQ has no server-side allow-list, so these are compiled into site: operators on the query. Same intent as bingAllowedDomains — an open-web tool answering to an executive should not be able to cite anywhere at all. LEAVE EMPTY to derive the hosts from bingAllowedDomains, which is what keeps the two bindings searching the same sources; set it only to make model mode diverge deliberately."
+        "description": "Comma-separated hosts that scope Web IQ searches, e.g. \"mtn.com,sashares.co.za\". Web IQ has no server-side allow-list, so these are compiled into site: operators on the query. Same intent as bingAllowedDomains — an open-web tool answering to an executive should not be able to cite anywhere at all. LEAVE EMPTY to derive the hosts from bingAllowedDomains, which is what keeps every web tool searching the same sources; set it only to make Web IQ (model mode, and the agent's webiq tool) diverge deliberately."
       }
     },
     "webIqApiKey": {
@@ -358,7 +358,7 @@
         }
       ],
       "metadata": {
-        "description": "The curated allow-list the web tool is restricted to — a HARD boundary enforced by\nBing, which is what makes an open-web tool safe for an executive assistant. Replace\nthese with your own sources.\n\nboostLevel is SuperBoost or Boosted — those are the API values. The portal renders\nthem as \"Super Boost\" and \"Boost\", which are display labels and are NOT accepted here.\n\nSuperBoost is for sources that should win a tie: MTN's own investor, results and\nleadership pages, plus the share-price / market-data sources and Reuters Africa.\nBoosted is the industry and regulator press that supplies context.\n\nOrder below is kept identical to the live configuration this was taken from, so the\ntwo can be diffed line by line:\n  az rest --method get --url \"https://management.azure.com<configId>?api-version=2025-05-01-preview\"\n"
+        "description": "The curated allow-list every web tool is restricted to. Bing enforces it verbatim as a\nHARD boundary, which is what makes an open-web tool safe for an executive assistant;\nWeb IQ (model mode, and AGENT_WEB_TOOL=webiq) gets the bare hosts derived below.\nReplace these with your own sources — see \"Trusted web sources\" in\ndocs/configuration.md.\n\nboostLevel is SuperBoost or Boosted — those are the API values. The portal renders\nthem as \"Super Boost\" and \"Boost\", which are display labels and are NOT accepted here.\n\nSuperBoost is for sources that should win a tie: MTN's own investor, results and\nleadership pages, plus the share-price / market-data sources and Reuters Africa.\nBoosted is the industry and regulator press that supplies context.\n\nOrder below is kept identical to the live configuration this was taken from, so the\ntwo can be diffed line by line:\n  az rest --method get --url \"https://management.azure.com<configId>?api-version=2025-05-01-preview\"\n"
       }
     },
     "agentModel": {

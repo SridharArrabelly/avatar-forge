@@ -187,9 +187,13 @@ azd env set AVATAR_MODEL Simone
 # app refuses to start rather than discard records silently. Set
 # AUDIT_SINK_FALLBACK=file to accept a degraded, ephemeral trail instead.
 # azd env set ENABLE_AUDIT true
+# The trusted sites the web tool may search are MTN's in this repo. Replace them
+# with your own before deploying: bingAllowedDomains in infra/main.bicep
+# (configuration.md#trusted-web-sources).
 
-# 5. Choose the channel AND the brain. Records DEPLOY_PROFILE (web · teams-tab ·
-#    in-call-browser · in-call) and VOICE_BINDING (agent · model), sets every flag
+# 5. Choose the channel, the brain and, for agent mode, the web tool. Records
+#    DEPLOY_PROFILE (web · teams-tab · in-call-browser · in-call), VOICE_BINDING
+#    (agent · model) and AGENT_WEB_TOOL (bing · webiq), sets every flag
 #    those imply and resets the ones they do not, and
 #    prints the full numbered plan marking who performs each step.
 #    channels/README.md to choose the channel; voice-binding.md to choose the brain.
@@ -210,15 +214,18 @@ These two variables are the only avatar-selection settings. See
 
 For **model mode**, provisioning explicitly sets `VOICELIVE_MODEL=gpt-realtime-2.1`
 and Web IQ's endpoint, language (`en`), region (`ZA`), and derived domain list in
-the container. Override these through `azd env set VOICELIVE_MODEL`,
+the container; agent mode with `AGENT_WEB_TOOL=webiq` gets the same Web IQ settings.
+Override these through `azd env set VOICELIVE_MODEL`,
 `WEBIQ_BASE_URL`, `WEBIQ_LANGUAGE`, `WEBIQ_REGION`, and `WEBIQ_ALLOWED_DOMAINS`
-with the desired values before provisioning. If using API-key authentication, set
+with the desired values before provisioning. The domain list is derived from
+`bingAllowedDomains`; see [Trusted web sources](configuration.md#trusted-web-sources)
+to change the sources themselves. If using API-key authentication, set
 `WEBIQ_API_KEY` in that azd environment as well; it is deployed as a Container Apps
 secret reference. Otherwise the managed identity needs Web IQ registration.
 See [Web IQ authentication](auth.md#the-keyless-web-iq-route-needs-one-thing-azure-cannot-give-you).
 Settings added manually in the portal are not imported into azd: preserve them in
-the intended azd environment before redeploying. `AGENT_MODEL` is omitted from
-model-mode containers, and agent-mode containers omit the realtime and Web IQ settings.
+the intended azd environment before redeploying. `AGENT_MODEL` is omitted from model-mode containers. Agent-mode containers omit the
+realtime settings, and the Web IQ settings too unless `AGENT_WEB_TOOL=webiq`.
 
 For example, to select a model for an **existing model-mode environment**
 (replace `my-model-env` with its azd environment name):
@@ -319,8 +326,8 @@ azd env set SEARCH_CONNECTION_NAME  aisearch-connection
 # The web tool is ON by default: azd deploys the Bing account, the curated site
 # allow-list and the Foundry connection, and feeds the two names back automatically.
 # Edit the allow-list in infra/main.bicep (bingAllowedDomains) so it points at YOUR
-# sources. To skip it (it is billable), or to reuse a connection you already have,
-# see "The web tool is optional" below.
+# sources (configuration.md#trusted-web-sources). To skip it (it is billable), or to
+# reuse a connection you already have, see "The web tool is optional" below.
 # azd env set DEPLOY_BING_GROUNDING false
 
 # 6. Provision + deploy
@@ -452,7 +459,8 @@ For **greenfield** (template provisions Foundry + Search) the `postprovision` ho
 ### Choosing the agent's web tool
 
 Agent mode has two web tools. Both search the same trusted-site list
-(`bingAllowedDomains` in [`infra/main.bicep`](../infra/main.bicep)):
+(`bingAllowedDomains` in [`infra/main.bicep`](../infra/main.bicep); to change it, see
+[Trusted web sources](configuration.md#trusted-web-sources)):
 
 | `AGENT_WEB_TOOL` | What the agent calls | Deploys |
 |---|---|---|
@@ -461,7 +469,10 @@ Agent mode has two web tools. Both search the same trusted-site list
 
 In the measured comparison `webiq` was faster and answered better
 ([evaluation history](evaluation-history.md#web-iq-as-the-agents-web-tool-24-september-2026)).
-To switch an existing greenfield agent-mode environment:
+`scripts/set_profile.py` asks which to use when you choose agent mode; Enter keeps
+the environment's current choice, which is `bing` on a new one. For CI, pass
+`--web-tool bing` or `--web-tool webiq`. To switch an existing greenfield agent-mode
+environment directly:
 
 ```powershell
 azd env set AGENT_WEB_TOOL webiq

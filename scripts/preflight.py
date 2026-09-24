@@ -43,6 +43,7 @@ from channels import (
     GREEN,
     RED,
     RESET,
+    WEB_TOOL_ORDER,
     YELLOW,
     get_profile,
     render_steps,
@@ -73,8 +74,8 @@ AVATAR_REGIONS = {
 BASE_PROVIDERS = ["Microsoft.CognitiveServices", "Microsoft.App", "Microsoft.Search", "Microsoft.Bing"]
 DEFAULT_AGENT_NAME = "AvatarAgent"
 
-# Agent mode's web tool (agentWebTool in infra/main.bicep).
-AGENT_WEB_TOOLS = ("bing", "webiq")
+# Agent mode's web tool (agentWebTool in infra/main.bicep), chosen in set_profile.py.
+AGENT_WEB_TOOLS = tuple(WEB_TOOL_ORDER)
 AGENT_WEB_TOOL_APP_PREFIX = "avatar-forge-web-tool-"
 AGENT_WEB_TOOL_MIN_KEY_CHARS = 32
 
@@ -468,7 +469,8 @@ def check_agent_web_tool(cfg: dict[str, str]) -> list[CheckResult]:
                 False,
                 f"{raw!r} is not a valid web tool",
                 fix="        Pick one of: " + ", ".join(AGENT_WEB_TOOLS) + "\n"
-                        "        azd env set AGENT_WEB_TOOL webiq",
+                        "        uv run python scripts/set_profile.py\n"
+                        "        or: azd env set AGENT_WEB_TOOL webiq",
             )
         ]
 

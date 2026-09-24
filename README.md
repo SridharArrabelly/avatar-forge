@@ -223,8 +223,13 @@ azd env set AVATAR_MODEL Simone
 # retention, access control and any notice obligation first — docs/audit.md.
 # azd env set ENABLE_AUDIT true
 
-# 2. Choose which channel you are deploying. Sets DEPLOY_PROFILE and prints
-#    the full numbered plan, marking who performs each step.
+# Optional: the trusted sites the web tool may search. The list checked in is
+# MTN's; replace it with yours in infra/main.bicep (bingAllowedDomains) before
+# deploying — docs/configuration.md#trusted-web-sources.
+
+# 2. Choose which channel you are deploying, which brain answers (agent or model
+#    mode) and, for agent mode, the web tool (Bing or Web IQ). Records them in the
+#    azd env and prints the full numbered plan, marking who performs each step.
 uv run python scripts/set_profile.py
 
 # 3. Check you can actually finish it — region support, providers, tooling and

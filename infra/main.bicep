@@ -95,7 +95,7 @@ param webIqLanguage string = 'en'
 @description('Web IQ result region hint in model mode.')
 param webIqRegion string = 'ZA'
 
-@description('Comma-separated hosts that scope Web IQ searches, e.g. "mtn.com,sashares.co.za". Web IQ has no server-side allow-list, so these are compiled into site: operators on the query. Same intent as bingAllowedDomains — an open-web tool answering to an executive should not be able to cite anywhere at all. LEAVE EMPTY to derive the hosts from bingAllowedDomains, which is what keeps the two bindings searching the same sources; set it only to make model mode diverge deliberately.')
+@description('Comma-separated hosts that scope Web IQ searches, e.g. "mtn.com,sashares.co.za". Web IQ has no server-side allow-list, so these are compiled into site: operators on the query. Same intent as bingAllowedDomains — an open-web tool answering to an executive should not be able to cite anywhere at all. LEAVE EMPTY to derive the hosts from bingAllowedDomains, which is what keeps every web tool searching the same sources; set it only to make Web IQ (model mode, and the agent\'s webiq tool) diverge deliberately.')
 param webIqAllowedDomains string = ''
 
 @description('Web IQ API key. Stored as a container-app secret, never as a plain env var. Set it with: azd env set WEBIQ_API_KEY <key>')
@@ -137,9 +137,11 @@ param agentWebToolAppId string = ''
 param bingSkuName string = 'G2'
 
 @description('''
-The curated allow-list the web tool is restricted to — a HARD boundary enforced by
-Bing, which is what makes an open-web tool safe for an executive assistant. Replace
-these with your own sources.
+The curated allow-list every web tool is restricted to. Bing enforces it verbatim as a
+HARD boundary, which is what makes an open-web tool safe for an executive assistant;
+Web IQ (model mode, and AGENT_WEB_TOOL=webiq) gets the bare hosts derived below.
+Replace these with your own sources — see "Trusted web sources" in
+docs/configuration.md.
 
 boostLevel is SuperBoost or Boosted — those are the API values. The portal renders
 them as "Super Boost" and "Boost", which are display labels and are NOT accepted here.
