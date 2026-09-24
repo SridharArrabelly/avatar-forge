@@ -37,6 +37,7 @@ import httpx
 from azure.ai.projects.models import AzureAISearchQueryType
 from azure.search.documents.models import VectorizableTextQuery
 
+from .. import trusted_sites
 from ..document_titles import display_document_title
 from ..logsafe import fingerprint
 from .catalog import get_search_client
@@ -161,19 +162,17 @@ WEBIQ_API_SCOPE = "https://api.microsoft.ai/.default"
 
 
 def _allowed_domains() -> list[str]:
-    """Same security boundary the Bing custom-search allow-list provided.
+    """Bare hosts from TRUSTED_WEB_SITES, the list Bing is built from too.
 
-    An open-web tool answering to an executive should not be able to cite
-    anywhere at all. Comma-separated hostnames; empty means the open web.
+    Empty means the open web. See backend/trusted_sites.py for how entries with
+    paths and boosts reduce to hosts.
 
     Read per call rather than at import so the value tracks the environment the
     process is actually running in — a module-level read bakes in whatever was
     set at import time, which is the bug class that made `setup_foundry_agent`
     silently ignore `.env`.
     """
-    return [
-        d.strip() for d in os.getenv("WEBIQ_ALLOWED_DOMAINS", "").split(",") if d.strip()
-    ]
+    return trusted_sites.configured_hosts()
 
 # Deliberately tighter than the Web IQ defaults (5 results x 2000 chars). Every
 # character here is prefill the model reads before it starts speaking, and a
@@ -532,7 +531,7 @@ def build_query(query: str, domains: list[str]) -> str:
         # results rather than an error.
         logger.error(
             "Web IQ allow-list is %d chars, at or over the %d-char query cap: "
-            "no room is left for the question. Shorten WEBIQ_ALLOWED_DOMAINS.",
+            "no room is left for the question. Shorten TRUSTED_WEB_SITES.",
             len(suffix), WEBIQ_MAX_QUERY_CHARS,
         )
         return suffix[:WEBIQ_MAX_QUERY_CHARS]

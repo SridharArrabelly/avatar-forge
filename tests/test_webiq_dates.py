@@ -18,7 +18,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 os.environ.setdefault("WEBIQ_API_KEY", "test-key-not-real")
-os.environ.setdefault("WEBIQ_ALLOWED_DOMAINS", "mtn.com")
+os.environ.setdefault("TRUSTED_WEB_SITES", "mtn.com")
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))

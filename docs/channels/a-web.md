@@ -79,12 +79,13 @@ Deployment mechanics: [`../deployment.md`](../deployment.md).
 | Azure subscription + Contributor on the resource group | You |
 | Model quota in the target region | You / subscription owner |
 | Populate the AI Search index with minutes | You |
-| Edit the Bing site allow-list to your own sources — `bingAllowedDomains` in [`../../infra/main.bicep`](../../infra/main.bicep) | You, unless you set `DEPLOY_BING_GROUNDING=false` |
+| List your trusted web sources — `azd env set TRUSTED_WEB_SITES "..."` ([format](../configuration.md#trusted-web-sources)) | You, unless you set `DEPLOY_BING_GROUNDING=false` |
 
-The web/news tool is **on by default**; `azd up` deploys the Bing account, the allow-list
-and the Foundry connection with no portal step and no `.env` edit. Edit `bingAllowedDomains`
-so it searches your sources. To skip it (it is billable), set `DEPLOY_BING_GROUNDING=false`;
-the avatar then answers from your indexed documents alone.
+The web/news tool needs no portal step and no `.env` edit: `azd up` deploys the Bing
+account, the allow-list and the Foundry connection. Bing has no open-web mode, so it
+is deployed once `TRUSTED_WEB_SITES` lists your sources. To skip it (it is billable),
+set `DEPLOY_BING_GROUNDING=false`; the avatar then answers from your indexed documents
+alone.
 
 **No Entra admin. No Teams admin.** See
 [`../admin-checklist.md`](../admin-checklist.md).

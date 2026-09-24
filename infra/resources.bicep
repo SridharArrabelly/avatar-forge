@@ -44,8 +44,8 @@ param webIqBaseUrl string = ''
 param webIqLanguage string = 'en'
 @description('Web IQ result region hint in model mode.')
 param webIqRegion string = 'ZA'
-@description('Comma-separated host allow-list for Web IQ results.')
-param webIqAllowedDomains string = ''
+@description('The trusted sites, as TRUSTED_WEB_SITES. Given to the app as written; empty = Web IQ searches the open web. See main.bicep.')
+param trustedWebSites string = ''
 @description('Web IQ API key, passed to the container app as a secret.')
 @secure()
 param webIqApiKey string = ''
@@ -67,7 +67,7 @@ param agentWebToolConnectionName string = ''
 param deployBingGrounding bool = false
 @allowed([ 'G1', 'G2' ])
 param bingSkuName string = 'G2'
-@description('The curated site allow-list. See modules/bingGrounding.bicep for the entry shape.')
+@description('The trusted sites as Bing entries, parsed from TRUSTED_WEB_SITES in main.bicep. See modules/bingGrounding.bicep for the entry shape.')
 param bingAllowedDomains array = []
 
 // Bing is only created when it is asked for AND there is a Foundry project to
@@ -86,11 +86,15 @@ var agentBinding = toLower(voiceBinding) != 'model'
 // agent only runs against a Foundry project this template created, and the
 // caller check needs that account's identity. It REPLACES Bing, so choosing it
 // stops Bing being deployed.
+//
+// Bing also needs a site list. Custom Search has no open-web mode — with no allowed
+// domains it rejects the configuration or finds nothing — so an empty
+// TRUSTED_WEB_SITES deploys no Bing and the agent has no web tool. Preflight warns.
 var agentWebIq = agentBinding && createFoundry && toLower(agentWebTool) == 'webiq'
 var agentWebToolKeyed = agentWebIq && !empty(agentWebToolKey)
 var agentWebToolEntra = agentWebIq && !agentWebToolKeyed && !empty(agentWebToolAudience)
 var agentWebToolConnectionNameEffective = empty(agentWebToolConnectionName) ? 'agent-web-tool-key' : agentWebToolConnectionName
-var createBing = deployBingGrounding && createFoundry && agentBinding && !agentWebIq
+var createBing = deployBingGrounding && createFoundry && agentBinding && !agentWebIq && !empty(bingAllowedDomains)
 // Deployed names are generated when not pinned, so a first-time deploy needs no
 // prior knowledge of them — they come back as outputs and land in the azd env.
 var bingConnectionNameEffective = empty(bingConnectionName) ? 'bing-grounding-connection' : bingConnectionName
@@ -393,7 +397,7 @@ module app 'modules/containerApp.bicep' = {
     webIqBaseUrl: webIqBaseUrl
     webIqLanguage: webIqLanguage
     webIqRegion: webIqRegion
-    webIqAllowedDomains: webIqAllowedDomains
+    trustedWebSites: trustedWebSites
     webIqApiKey: webIqApiKey
     agentWebIq: agentWebIq
     agentWebToolKey: agentWebToolKeyed ? agentWebToolKey : ''

@@ -9,9 +9,11 @@ What matters, and why:
 * ``agentWebTool=bing`` (the default) changes nothing: no Web IQ settings, no
   tool route credentials, Bing deployed exactly as before.
 * ``webiq`` replaces Bing — Bing is not deployed — and turns on the model-mode
-  Web IQ settings **including the allow-list**. The agent's tool runs the same
-  ``search_web()``; an enabled tool without ``WEBIQ_ALLOWED_DOMAINS`` would search
-  the open web.
+  Web IQ settings **including the trusted sites**. The agent's tool runs the same
+  ``search_web()``, so a ``TRUSTED_WEB_SITES`` that went missing would silently
+  widen it to the open web.
+* Bing is deployed only with a site list: Bing Custom Search has no open-web
+  mode, so an empty ``TRUSTED_WEB_SITES`` means no Bing, not an unscoped one.
 * The caller check is emitted in exactly one mode, and a key wins. A half-set
   Entra mode (audience without callers) emits nothing, so the route stays 404
   rather than accepting tokens it cannot authorise.
@@ -65,7 +67,7 @@ def defaults(scope: dict) -> dict:
 app_scope = scope_with("agentWebToolEnv")
 app_vars = unwrap(app_scope["variables"])
 app = next(r for r in app_scope["resources"] if r["type"] == "Microsoft.App/containerApps")
-DOMAINS = "mtn.com,jse.co.za"
+DOMAINS = "+www.mtn.com/investors,www.jse.co.za"
 AUD = "api://22222222-2222-2222-2222-222222222222"
 ENTRA = {
     "agentWebToolAudience": AUD,
@@ -75,7 +77,7 @@ ENTRA = {
 
 
 def container(**overrides: object) -> tuple[dict, list]:
-    params = {**defaults(app_scope), "webIqAllowedDomains": DOMAINS, **overrides}
+    params = {**defaults(app_scope), "trustedWebSites": DOMAINS, **overrides}
     env = render(app["properties"]["template"]["containers"][0]["env"], params, app_vars)
     secrets = render(app["properties"]["configuration"]["secrets"], params, app_vars)
     names = [e["name"] for e in env]
@@ -99,11 +101,16 @@ check("no secrets", secrets, [])
 env, secrets = container(agentWebToolKey="k", webIqApiKey="w", **ENTRA)
 check("credentials alone do not switch it on", (webiq_names(env), tool_names(env), secrets), ([], [], []))
 
-print("container: webiq turns on the model-mode Web IQ settings, allow-list included")
-BASE = ["WEBIQ_ALLOWED_DOMAINS", "WEBIQ_BASE_URL", "WEBIQ_LANGUAGE", "WEBIQ_REGION"]
+print("container: webiq turns on the model-mode Web IQ settings, trusted sites included")
+BASE = ["WEBIQ_BASE_URL", "WEBIQ_LANGUAGE", "WEBIQ_REGION"]
 env, secrets = container(agentWebIq=True)
 check("Web IQ settings present", webiq_names(env), BASE)
-check("allow-list is the supplied one", env["WEBIQ_ALLOWED_DOMAINS"]["value"], DOMAINS)
+check("trusted sites passed as written", env.get("TRUSTED_WEB_SITES"), {"name": "TRUSTED_WEB_SITES", "value": DOMAINS})
+env, _ = container(agentWebIq=True, trustedWebSites="")
+check("no sites -> no TRUSTED_WEB_SITES (the open web)", "TRUSTED_WEB_SITES" in env, False)
+env, _ = container()
+check("bing: the app is not given the sites (Bing holds them)", "TRUSTED_WEB_SITES" in env, False)
+env, secrets = container(agentWebIq=True)
 check("AGENT_MODEL still set (agent binding)", "AGENT_MODEL" in env, True)
 check("no caller check configured -> no tool credentials (route 404)", tool_names(env), [])
 env, secrets = container(agentWebIq=True, webIqApiKey="w")
@@ -143,7 +150,8 @@ res_vars = unwrap(res_scope["variables"])
 
 def res(expr: str, **params: object) -> object:
     base = {"voiceBinding": "agent", "createFoundry": True, "deployBingGrounding": True,
-            "agentWebTool": "bing", "agentWebToolKey": "", "agentWebToolAudience": ""}
+            "agentWebTool": "bing", "agentWebToolKey": "", "agentWebToolAudience": "",
+            "bingAllowedDomains": [{"domain": "https://www.mtn.com", "includeSubPages": True, "boostLevel": "Boosted"}]}
     return evaluate(expr, {**base, **params}, res_vars)
 
 
@@ -154,6 +162,8 @@ for label, params, web_iq, bing in (
     ("webiq, case-insensitive", {"agentWebTool": "WebIQ"}, True, False),
     ("webiq in model mode", {"agentWebTool": "webiq", "voiceBinding": "model"}, False, False),
     ("webiq with BYO Foundry", {"agentWebTool": "webiq", "createFoundry": False}, False, False),
+    ("bing with no trusted sites", {"bingAllowedDomains": []}, False, False),
+    ("bing turned off", {"deployBingGrounding": False}, False, False),
 ):
     check(f"{label}: agentWebIq", res("variables('agentWebIq')", **params), web_iq)
     check(f"{label}: createBing", res("variables('createBing')", **params), bing)

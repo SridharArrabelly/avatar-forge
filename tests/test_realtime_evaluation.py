@@ -260,7 +260,8 @@ class ConfigurationTests(unittest.TestCase):
         ambient = {"AGENT_NAME": "old-agent", "AGENT_PROJECT_NAME": "old-project",
                    "AZURE_SEARCH_API_KEY": "old-search-key", "AZURE_CLIENT_ID": "managed-identity",
                    "AZURE_CLIENT_SECRET": "old-secret", "VOICELIVE_MODEL": "wrong-model",
-                   "VOICE_BINDING": "agent", "WEBIQ_ALLOWED_DOMAINS": "wrong.invalid", "UNRELATED": "keep"}
+                   "VOICE_BINDING": "agent", "WEBIQ_ALLOWED_DOMAINS": "wrong.invalid",
+                   "TRUSTED_WEB_SITES": "wrong.invalid", "UNRELATED": "keep"}
         values = {**SETTINGS, "WEBIQ_API_KEY": "fixture-web-secret", "AGENT_NAME": "file-agent",
                   "AZURE_SEARCH_API_KEY": "file-search-key"}
         with patch.dict(os.environ, ambient, clear=True):
@@ -276,6 +277,7 @@ class ConfigurationTests(unittest.TestCase):
                 self.assertEqual(os.environ["AZURE_TOKEN_CREDENTIALS"], "AzureCliCredential")
                 self.assertEqual(os.environ["PYTHON_DOTENV_DISABLED"], "1")
                 self.assertEqual(os.environ["WEBIQ_ALLOWED_DOMAINS"], "")
+                self.assertEqual(os.environ["TRUSTED_WEB_SITES"], "")
                 self.assertEqual(os.environ["UNRELATED"], "keep")
             self.assertEqual(dict(os.environ), ambient)
             self.assertNotIn("fixture-web-secret", redact("error fixture-web-secret"))

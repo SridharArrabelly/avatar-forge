@@ -187,9 +187,10 @@ azd env set AVATAR_MODEL Simone
 # app refuses to start rather than discard records silently. Set
 # AUDIT_SINK_FALLBACK=file to accept a degraded, ephemeral trail instead.
 # azd env set ENABLE_AUDIT true
-# The trusted sites the web tool may search are MTN's in this repo. Replace them
-# with your own before deploying: bingAllowedDomains in infra/main.bicep
-# (configuration.md#trusted-web-sources).
+# The trusted sites the web tool may search. Unset, Web IQ searches the open web
+# and agent mode on Bing gets no web tool, because Bing needs a list. MTN's list is
+# in configuration.md#trusted-web-sources.
+# azd env set TRUSTED_WEB_SITES "+www.example.com/investors,news.example.com"
 
 # 5. Choose the channel, the brain and, for agent mode, the web tool. Records
 #    DEPLOY_PROFILE (web · teams-tab · in-call-browser · in-call), VOICE_BINDING
@@ -213,13 +214,13 @@ These two variables are the only avatar-selection settings. See
 [configuration.md](configuration.md#selecting-an-avatar) for the four modes.
 
 For **model mode**, provisioning explicitly sets `VOICELIVE_MODEL=gpt-realtime-2.1`
-and Web IQ's endpoint, language (`en`), region (`ZA`), and derived domain list in
-the container; agent mode with `AGENT_WEB_TOOL=webiq` gets the same Web IQ settings.
+and Web IQ's endpoint, language (`en`), region (`ZA`), and trusted sites in the
+container; agent mode with `AGENT_WEB_TOOL=webiq` gets the same Web IQ settings.
 Override these through `azd env set VOICELIVE_MODEL`,
-`WEBIQ_BASE_URL`, `WEBIQ_LANGUAGE`, `WEBIQ_REGION`, and `WEBIQ_ALLOWED_DOMAINS`
-with the desired values before provisioning. The domain list is derived from
-`bingAllowedDomains`; see [Trusted web sources](configuration.md#trusted-web-sources)
-to change the sources themselves. If using API-key authentication, set
+`WEBIQ_BASE_URL`, `WEBIQ_LANGUAGE`, `WEBIQ_REGION`, and `TRUSTED_WEB_SITES`
+with the desired values before provisioning. Unset, `TRUSTED_WEB_SITES` means the
+open web; see [Trusted web sources](configuration.md#trusted-web-sources). If using
+API-key authentication, set
 `WEBIQ_API_KEY` in that azd environment as well; it is deployed as a Container Apps
 secret reference. Otherwise the managed identity needs Web IQ registration.
 See [Web IQ authentication](auth.md#the-keyless-web-iq-route-needs-one-thing-azure-cannot-give-you).
@@ -323,11 +324,12 @@ azd env set APPINSIGHTS_RESOURCE_GROUP rg-shared-observability
 azd env set AGENT_NAME              MtnAvatarAgent
 azd env set SEARCH_CONNECTION_NAME  aisearch-connection
 
-# The web tool is ON by default: azd deploys the Bing account, the curated site
-# allow-list and the Foundry connection, and feeds the two names back automatically.
-# Edit the allow-list in infra/main.bicep (bingAllowedDomains) so it points at YOUR
-# sources (configuration.md#trusted-web-sources). To skip it (it is billable), or to
-# reuse a connection you already have, see "The web tool is optional" below.
+# The web tool: azd deploys the Bing account, the site allow-list and the Foundry
+# connection, and feeds the two names back automatically. Bing has no open-web mode,
+# so it is deployed only once TRUSTED_WEB_SITES lists YOUR sources
+# (configuration.md#trusted-web-sources). To skip it (it is billable), or to reuse a
+# connection you already have, see "The web tool is optional" below.
+# azd env set TRUSTED_WEB_SITES "+www.example.com/investors,news.example.com"
 # azd env set DEPLOY_BING_GROUNDING false
 
 # 6. Provision + deploy
@@ -458,9 +460,9 @@ For **greenfield** (template provisions Foundry + Search) the `postprovision` ho
 
 ### Choosing the agent's web tool
 
-Agent mode has two web tools. Both search the same trusted-site list
-(`bingAllowedDomains` in [`infra/main.bicep`](../infra/main.bicep); to change it, see
-[Trusted web sources](configuration.md#trusted-web-sources)):
+Agent mode has two web tools. Both search the same trusted-site list,
+`TRUSTED_WEB_SITES` ([Trusted web sources](configuration.md#trusted-web-sources)).
+With no list, Web IQ searches the open web, and Bing is not deployed:
 
 | `AGENT_WEB_TOOL` | What the agent calls | Deploys |
 |---|---|---|
@@ -501,7 +503,7 @@ The agent needs two things, and they fail differently on purpose:
 | | Missing means | Result |
 |---|---|---|
 | **AI Search connection** | the agent has no corpus | **Fatal.** Nothing usable is created. |
-| **Bing connection** | no site-scoped web grounding | **Degraded.** The agent is created and answers from your indexed documents. |
+| **Bing connection** | no site-scoped web grounding, including when `TRUSTED_WEB_SITES` is empty, because Bing is then not deployed | **Degraded.** The agent is created and answers from your indexed documents. |
 | **Web IQ tool** *(`AGENT_WEB_TOOL=webiq`)* | no URL, or no key connection / audience | **Degraded**, the same way, with a `WARNING` naming the missing piece. |
 
 The Bing tool is skipped — with a warning, not an error — both when

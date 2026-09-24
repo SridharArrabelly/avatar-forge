@@ -138,8 +138,9 @@ def _choose_web_tool(current: str) -> str:
     default_n = WEB_TOOL_ORDER.index(default) + 1
     print()
     print(f"{BOLD}Which web search should the agent use?{RESET}")
-    print(f"{DIM}  Agent mode only. Both search the same trusted sites (bingAllowedDomains). "
-          f"Change it later by re-running this and redeploying.{RESET}")
+    print(f"{DIM}  Agent mode only. Both search the sites in TRUSTED_WEB_SITES; with none set, "
+          f"Web IQ searches the open web and Bing is not deployed. Change it later by "
+          f"re-running this and redeploying.{RESET}")
     print()
     for i, key in enumerate(WEB_TOOL_ORDER, start=1):
         t = WEB_TOOLS[key]
@@ -258,6 +259,16 @@ def main() -> int:
     if uses_web_iq and not env.get("WEBIQ_API_KEY", "").strip():
         print(f"{DIM}  Web IQ needs a key unless the app's identity is bound in the Web IQ "
               f"portal: azd env set WEBIQ_API_KEY <key>{RESET}")
+
+    if not env.get("TRUSTED_WEB_SITES", "").strip():
+        sites_hint = 'azd env set TRUSTED_WEB_SITES "+www.example.com/investors,news.example.com"'
+        if binding == "agent" and effective_web_tool == "bing":
+            print(f"{YELLOW}  Bing searches only the sites in TRUSTED_WEB_SITES, and none are set, "
+                  f"so the agent will have no web tool.{RESET}")
+            print(f"{DIM}  {sites_hint}   (docs/configuration.md#trusted-web-sources){RESET}")
+        elif uses_web_iq:
+            print(f"{DIM}  Web IQ will search the open web. To keep it to trusted sites: "
+                  f"{sites_hint}{RESET}")
 
     missing = [r for r in profile.requires if not env.get(r.name) and not r.optional]
     if missing:

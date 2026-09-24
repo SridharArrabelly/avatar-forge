@@ -199,7 +199,8 @@ WEB_TOOLS: dict[str, WebTool] = {
         title="Web IQ through the app",
         summary=(
             "An OpenAPI tool that calls this app's /api/tools/search-web, which runs "
-            "Web IQ over the same trusted sites as model mode. No Bing is deployed."
+            "Web IQ over the same trusted sites as model mode (TRUSTED_WEB_SITES; unset "
+            "means the open web). No Bing is deployed."
         ),
         tradeoff=(
             "Faster in our tests: 0.66 s per search, first token 1.2 s sooner, 15/15 "
@@ -266,17 +267,19 @@ def _core_steps() -> list[Step]:
             "Point the web tool at your own sources",
             YOU,
             BEFORE,
-            "Every web tool searches the same trusted-site list: edit bingAllowedDomains "
-            "in infra/main.bicep. Agent mode uses the tool set_profile.py recorded "
-            "(AGENT_WEB_TOOL): with bing, azd deploys Grounding with Bing Custom Search "
-            "for you (set the flag below to false to skip it); with webiq, the agent "
-            "calls the app's Web IQ route and no Bing is deployed. Model mode always "
-            "uses Web IQ (Bing has no agent to attach to). Web IQ needs WEBIQ_API_KEY "
-            "unless the app's identity is bound in the Web IQ portal, and reuses the "
-            "list stripped to bare hosts, since site: cannot match a path. Either way, "
-            "skipping web search is supported — the avatar then answers from your "
+            "Every web tool searches the same trusted-site list, TRUSTED_WEB_SITES: "
+            "comma-separated hosts or URLs, a leading + to rank a source first on Bing "
+            "(docs/configuration.md#trusted-web-sources). Agent mode uses the tool "
+            "set_profile.py recorded (AGENT_WEB_TOOL): with bing, azd deploys Grounding "
+            "with Bing Custom Search over the list, and with no list deploys no Bing, "
+            "because Bing has no open-web mode; with webiq, the agent calls the app's "
+            "Web IQ route and no Bing is deployed. Model mode always uses Web IQ (Bing "
+            "has no agent to attach to). Web IQ needs WEBIQ_API_KEY unless the app's "
+            "identity is bound in the Web IQ portal, reduces the list to bare hosts, "
+            "since site: cannot match a path, and with no list searches the open web. "
+            "Skipping web search is supported too — the avatar then answers from your "
             "documents alone.",
-            "azd env set DEPLOY_BING_GROUNDING false   # agent mode with bing only",
+            'azd env set TRUSTED_WEB_SITES "+www.example.com/investors,news.example.com"',
         ),
         Step(
             "Provision + deploy Azure resources",

@@ -707,8 +707,9 @@ def create_agent(project: AIProjectClient, settings: dict) -> tuple[object, bool
         print(
             "Web tool: DISABLED — BING_CONNECTION_NAME / BING_CUSTOM_CONFIG_NAME not set. "
             "Creating the agent with the AI Search (board/meeting minutes) tool only. "
-            "Provision a Grounding-with-Bing-Custom-Search connection and re-run this "
-            "script to add the news/web tool."
+            "Bicep deploys Bing only when TRUSTED_WEB_SITES lists sites: set it and run "
+            "`azd provision`, or add your own Grounding-with-Bing-Custom-Search connection "
+            "and re-run this script."
         )
 
     tools = build_tools(
@@ -986,8 +987,9 @@ def main(argv: list[str] | None = None) -> int:
             )
         else:
             fix = (
-                "documents only. Add a Grounding-with-Bing-Custom-Search connection to the Foundry\n"
-                "project, set BING_CONNECTION_NAME + BING_CUSTOM_CONFIG_NAME, then re-run:\n"
+                "documents only. Bing is deployed only when TRUSTED_WEB_SITES lists sites; set it\n"
+                "and run `azd provision`. Or add a Grounding-with-Bing-Custom-Search connection to\n"
+                "the Foundry project, set BING_CONNECTION_NAME + BING_CUSTOM_CONFIG_NAME, then re-run:\n"
             )
         print(
             "\nAgent is READY but DEGRADED: no web/news tool, so it answers from the indexed\n"

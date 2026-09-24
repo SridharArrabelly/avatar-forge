@@ -50,7 +50,7 @@ param bingConnectionName string = ''
 @description('Bing Custom Search configuration (instance) name — the curated domain allow-list. Surfaces as BING_CUSTOM_CONFIG_NAME in the container.')
 param bingCustomConfigName string = ''
 
-@description('Deploy Grounding with Bing Custom Search: the Bing account, the curated site allow-list, and the Foundry connection. Opt-in and additive — when false nothing Bing-related is created and the agent runs on AI Search alone.')
+@description('Deploy Grounding with Bing Custom Search: the Bing account, the curated site allow-list, and the Foundry connection. Opt-in and additive — when false nothing Bing-related is created and the agent runs on AI Search alone. Also needs TRUSTED_WEB_SITES: with no site list Bing is not deployed.')
 param deployBingGrounding string = 'true'
 
 @description('''
@@ -95,9 +95,6 @@ param webIqLanguage string = 'en'
 @description('Web IQ result region hint in model mode.')
 param webIqRegion string = 'ZA'
 
-@description('Comma-separated hosts that scope Web IQ searches, e.g. "mtn.com,sashares.co.za". Web IQ has no server-side allow-list, so these are compiled into site: operators on the query. Same intent as bingAllowedDomains — an open-web tool answering to an executive should not be able to cite anywhere at all. LEAVE EMPTY to derive the hosts from bingAllowedDomains, which is what keeps every web tool searching the same sources; set it only to make Web IQ (model mode, and the agent\'s webiq tool) diverge deliberately.')
-param webIqAllowedDomains string = ''
-
 @description('Web IQ API key. Stored as a container-app secret, never as a plain env var. Set it with: azd env set WEBIQ_API_KEY <key>')
 @secure()
 param webIqApiKey string = ''
@@ -106,11 +103,12 @@ param webIqApiKey string = ''
 The agent's web tool, agent mode only. Model mode always uses Web IQ in-process.
 
 "bing" (default): Grounding with Bing Custom Search, a managed Foundry tool with a
-server-side site allow-list (bingAllowedDomains).
+server-side site allow-list (TRUSTED_WEB_SITES). Not deployed when that list is
+empty, because Bing Custom Search has no open-web mode.
 
 "webiq": Web IQ, called through this app's /api/tools/search-web as an OpenAPI
-tool. It runs the model-mode search_web() unchanged, so the same allow-list
-(webIqAllowedDomains, derived from bingAllowedDomains) and filtering apply.
+tool. It runs the model-mode search_web() unchanged, so the same trusted sites
+(TRUSTED_WEB_SITES, reduced to hosts; empty = open web) and filtering apply.
 Replaces Bing: nothing Bing-related is deployed. Greenfield Foundry only.
 Measured against Bing on the same agent: faster tool step (0.66 s vs 1.83 s)
 and 15/15 good answers; see docs/evaluation-history.md.
@@ -137,119 +135,41 @@ param agentWebToolAppId string = ''
 param bingSkuName string = 'G2'
 
 @description('''
-The curated allow-list every web tool is restricted to. Bing enforces it verbatim as a
-HARD boundary, which is what makes an open-web tool safe for an executive assistant;
-Web IQ (model mode, and AGENT_WEB_TOOL=webiq) gets the bare hosts derived below.
-Replace these with your own sources — see "Trusted web sources" in
-docs/configuration.md.
+The trusted sites every web tool may search: TRUSTED_WEB_SITES. Comma-separated; each
+entry is a host or a URL, optionally with a path, e.g.
+"+www.mtn.com/investors,www.itweb.co.za,mybroadband.co.za". A leading + marks a
+SuperBoost source, which Bing ranks first; the rest are Boosted.
 
-boostLevel is SuperBoost or Boosted — those are the API values. The portal renders
-them as "Super Boost" and "Boost", which are display labels and are NOT accepted here.
-
-SuperBoost is for sources that should win a tie: MTN's own investor, results and
-leadership pages, plus the share-price / market-data sources and Reuters Africa.
-Boosted is the industry and regulator press that supplies context.
-
-Order below is kept identical to the live configuration this was taken from, so the
-two can be diffed line by line:
-  az rest --method get --url "https://management.azure.com<configId>?api-version=2025-05-01-preview"
+EMPTY MEANS THE OPEN WEB for Web IQ (model mode, and AGENT_WEB_TOOL=webiq). Bing Custom
+Search has no open-web mode, so with an empty list Bing is not deployed and an agent on
+AGENT_WEB_TOOL=bing gets no web tool. See "Trusted web sources" in docs/configuration.md.
 ''')
-param bingAllowedDomains array = [
-  { domain: 'https://www.mtn.com/investors', includeSubPages: true, boostLevel: 'SuperBoost' }
-  { domain: 'https://www.mtn.com/media-centre', includeSubPages: true, boostLevel: 'SuperBoost' }
-  { domain: 'https://www.mtn.com/leadership', includeSubPages: true, boostLevel: 'SuperBoost' }
-  // The trailing '/#' is verbatim from the working configuration. A fragment is
-  // client-side only and should not affect scoping; it is kept rather than tidied
-  // so this list is a faithful copy. Simplify to '/financial-results' if it ever
-  // looks like it is matching nothing.
-  { domain: 'https://www.mtn.com/financial-results/#', includeSubPages: true, boostLevel: 'SuperBoost' }
-  { domain: 'https://www.jse.co.za/market-data', includeSubPages: true, boostLevel: 'SuperBoost' }
-  { domain: 'https://www.ft.com/telecoms', includeSubPages: true, boostLevel: 'Boosted' }
-  { domain: 'https://www.itweb.co.za', includeSubPages: true, boostLevel: 'Boosted' }
-  { domain: 'https://mybroadband.co.za', includeSubPages: true, boostLevel: 'Boosted' }
-  { domain: 'https://www.news24.com/fin24', includeSubPages: true, boostLevel: 'Boosted' }
-  { domain: 'https://africanwirelesscomms.com', includeSubPages: true, boostLevel: 'Boosted' }
-  { domain: 'https://www.itnewsafrica.com', includeSubPages: true, boostLevel: 'Boosted' }
-  { domain: 'https://www.icasa.org.za', includeSubPages: true, boostLevel: 'Boosted' }
-  { domain: 'https://www.mtn.com/newsroom', includeSubPages: true, boostLevel: 'Boosted' }
-  { domain: 'https://www.reuters.com/world/africa', includeSubPages: true, boostLevel: 'SuperBoost' }
-  { domain: 'https://techcentral.co.za', includeSubPages: true, boostLevel: 'Boosted' }
-  { domain: 'https://www.moneyweb.co.za/tools-and-data', includeSubPages: true, boostLevel: 'SuperBoost' }
-  { domain: 'https://sashares.co.za/mtn-shares', includeSubPages: true, boostLevel: 'SuperBoost' }
-  // --- Added after the entries above, which are the verbatim import ----------
-  // Appended rather than merged in so the block above stays diffable line by
-  // line against the live Bing configuration.
-  //
-  // Chosen from a 30-call A/B benchmark of the same 10 questions run against the
-  // 13-host list and against the open web. The narrow list was measurably worse,
-  // not merely narrower: it collapsed onto a single publisher for 3 of 10
-  // questions (62% mean single-source concentration) and returned results a mean
-  // 414 days old. Asked how MTN is addressing its Nigerian FX losses it returned
-  // four 2024 articles about the naira devaluation, while the open web led with
-  // MTN Nigeria having *cleared* the FX debt — the restricted answer was not
-  // just staler, it was backwards.
-  //
-  // These are the sources that carried the material the 13-host list missed.
-  // The open web also surfaced LinkedIn posts and SEO blogs on the strategy
-  // questions, which is why the boundary is widened here rather than removed.
-  //
-  // Every host added here also spends characters from the 1000-character Web IQ
-  // query budget — see WEBIQ_MAX_QUERY_CHARS in backend/voice/tools.py. 21 hosts
-  // cost 471 of 1000, leaving 529 for the question. Keep that in view before
-  // adding more, and prefer removing a source that has stopped earning its place
-  // to letting the list grow.
-  //
-  // MTN's own investor-relations site. Distinct from mtn.com, and the single
-  // biggest gap: it carries the FY2025 summary income statement, which is why
-  // the restricted arm could not produce a revenue figure and this one could.
-  { domain: 'https://www.mtn-investor.com', includeSubPages: true, boostLevel: 'SuperBoost' }
-  // Nigeria is MTN's largest market by subscribers and the source of its FX
-  // exposure, and the 13-host list had no Nigerian publication in it at all.
-  { domain: 'https://punchng.com', includeSubPages: true, boostLevel: 'Boosted' }
-  { domain: 'https://businessday.ng', includeSubPages: true, boostLevel: 'Boosted' }
-  { domain: 'https://africa.businessinsider.com', includeSubPages: true, boostLevel: 'Boosted' }
-  // Scoped to the Africa subdomain deliberately: `site:` matches subdomains
-  // downward, so this admits Business Insider Africa without admitting all of
-  // businessinsider.com.
-  { domain: 'https://techcabal.com', includeSubPages: true, boostLevel: 'Boosted' }
-  { domain: 'https://www.sbmintel.com', includeSubPages: true, boostLevel: 'Boosted' }
-  // Earnings-call and capital-markets-day summaries.
-  { domain: 'https://quartr.com', includeSubPages: true, boostLevel: 'Boosted' }
-  { domain: 'https://www.investing.com', includeSubPages: true, boostLevel: 'Boosted' }
-]
+param trustedWebSites string = ''
 
-// Same sources, two renderings — because the two bindings enforce them differently.
+// One list, two renderings, because the two tools enforce it differently.
 //
-// Agent mode gets the list above verbatim: Bing Custom Search is a real server-side
-// allow-list, so it can honour a path (/investors) and a boost level. Model mode has
-// no agent and no Bing tool; backend/voice/tools.py compiles its allow-list into
-// `site:` operators, and `site:` matches a domain and its subdomains but NEVER a path
-// or a rank. So Web IQ can only be given the bare hosts those URLs sit on.
+// Bing Custom Search is a real server-side allow-list: it takes each entry as a URL and
+// honours its path and boost level. Web IQ has none; backend/voice/tools.py compiles the
+// list into `site:` operators, which match a host and never a path. The container gets
+// the list as written and backend/trusted_sites.py reduces it to bare hosts, so a local
+// run and a deployment parse it the same way.
 //
-// Derived rather than hand-maintained. A second hand-typed list drifts, and this
-// particular drift is silent and unsafe in one direction: forget to widen the Web IQ
-// list and model mode simply cannot see a source; forget to set it at all and an
-// enabled Web IQ searches the entire open web while agent mode stays restricted.
-// Deriving makes bingAllowedDomains the single source of truth for "where may this
-// assistant look", and webIqAllowedDomains an explicit opt-out rather than a duty.
-//
-// Verified against a real ARM evaluation (bicep does not fold lambdas at compile
-// time): 25 URLs -> 21 hosts, www. stripped, first-occurrence order preserved.
-//
-// The joined string is spent from a 1000-character budget shared with the
-// question itself, because backend/voice/tools.py compiles it into `site:`
-// operators on the query text. 21 hosts render to 471 characters. See
-// WEBIQ_MAX_QUERY_CHARS there for what happens when the two stop fitting.
-var bingHostsRaw = map(
-  bingAllowedDomains,
-  d => split(replace(replace(d.domain, 'https://', ''), 'http://', ''), '/')[0]
+// Entries are trimmed and empty ones dropped, so "a, b," is "a,b". Bing needs a URL, so a
+// missing scheme becomes https://. A leading - has no Bing meaning; such entries are
+// skipped rather than failing the deployment, and preflight warns about them.
+var trustedSiteEntries = filter(
+  map(split(trustedWebSites, ','), e => trim(e)),
+  e => !empty(e) && e != '+' && !startsWith(e, '-')
 )
-// Bare host, not www. — `site:www.jse.co.za` would exclude senspdf.jse.co.za, where
-// the JSE's SENS filings live. See the note in docs/configuration.md.
-var bingHosts = map(bingHostsRaw, h => startsWith(h, 'www.') ? substring(h, 4) : h)
-var webIqEffectiveDomains = empty(webIqAllowedDomains)
-  ? join(union(bingHosts, bingHosts), ',')
-  : webIqAllowedDomains
+var trustedSites = map(trustedSiteEntries, e => {
+  site: startsWith(e, '+') ? trim(substring(e, 1)) : e
+  superBoost: startsWith(e, '+')
+})
+var bingAllowedDomains = map(trustedSites, s => {
+  domain: contains(s.site, '://') ? s.site : 'https://${s.site}'
+  includeSubPages: true
+  boostLevel: s.superBoost ? 'SuperBoost' : 'Boosted'
+})
 
 // App runtime extras
 @description('Deployment name the Foundry agent binds to. Empty derives it: on a greenfield deploy the agent must bind to the deployment this template just created, so it follows modelDeploymentName. Set explicitly for BYO Foundry, where the deployment already exists and this template did not name it.')
@@ -407,7 +327,7 @@ module resources 'resources.bicep' = {
     webIqBaseUrl: webIqBaseUrl
     webIqLanguage: webIqLanguage
     webIqRegion: webIqRegion
-    webIqAllowedDomains: webIqEffectiveDomains
+    trustedWebSites: trustedWebSites
     webIqApiKey: webIqApiKey
     agentWebTool: agentWebTool
     agentWebToolKey: agentWebToolKey

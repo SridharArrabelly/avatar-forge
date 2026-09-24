@@ -24,8 +24,8 @@ param voiceLiveModel string = ''
 @description('Web IQ endpoint in model mode. Empty resolves to https://api.microsoft.ai/v3.')
 param webIqBaseUrl string = ''
 
-@description('Comma-separated host allow-list applied to Web IQ results. Same security boundary as bingAllowedDomains — and by default the same sources: main.bicep derives these bare hosts from bingAllowedDomains, because site: cannot express the paths and boost levels Bing Custom Search enforces.')
-param webIqAllowedDomains string = ''
+@description('The trusted sites (TRUSTED_WEB_SITES), as written. The app reduces them to bare hosts for Web IQ, because site: cannot express the paths and boost levels Bing enforces. Empty = the open web.')
+param trustedWebSites string = ''
 
 @description('Web IQ result language hint in model mode.')
 param webIqLanguage string = 'en'
@@ -173,18 +173,18 @@ var voiceBindingEnv = concat([
 // /api/tools/search-web, which runs the model-mode search_web() unchanged. So
 // everything below applies to it too — above all the allow-list.
 //
-// The key is a container-app SECRET rather than a plain env var, and the
-// allow-list mirrors bingAllowedDomains — literally, since main.bicep derives it
-// from that list rather than trusting anyone to retype it: a hard host
-// restriction is what makes an open-web tool safe to hand an executive assistant.
+// The key is a container-app SECRET rather than a plain env var. The trusted
+// sites are the same TRUSTED_WEB_SITES list Bing is built from, passed as
+// written; the app reduces it to hosts. An empty list is a supported choice and
+// means the open web.
 //
 // There is deliberately no enable flag. The app decides at startup whether the
 // tool is usable by asking for a Web IQ token (web_search_available() in
 // backend/voice/tools.py), because a flag can claim an entitlement a tenant does
 // not have and a token cannot. That means the app can switch search_web on with
-// no key present, so wherever Web IQ is on the allow-list must ALWAYS be included — the dangerous state is
-// an enabled web tool with no host restriction, which would answer from the
-// entire open web while agent mode stayed scoped to bingAllowedDomains.
+// no key present, so wherever Web IQ is on a configured site list must ALWAYS be
+// included. If it hung off the key, a keyless deployment would search the open
+// web although the operator had restricted it.
 var webIqOn = modelBinding || agentWebIq
 var webIqKeyed = webIqOn && !empty(webIqApiKey)
 var webIqSecrets = webIqKeyed ? [
@@ -199,8 +199,8 @@ var webIqEnv = webIqOn ? concat(webIqKeyed ? [
   { name: 'WEBIQ_BASE_URL', value: empty(webIqBaseUrl) ? 'https://api.microsoft.ai/v3' : webIqBaseUrl }
   { name: 'WEBIQ_LANGUAGE', value: empty(webIqLanguage) ? 'en' : webIqLanguage }
   { name: 'WEBIQ_REGION', value: empty(webIqRegion) ? 'ZA' : webIqRegion }
-], empty(webIqAllowedDomains) ? [] : [
-  { name: 'WEBIQ_ALLOWED_DOMAINS', value: webIqAllowedDomains }
+], empty(trustedWebSites) ? [] : [
+  { name: 'TRUSTED_WEB_SITES', value: trustedWebSites }
 ]) : []
 
 // How the agent's calls to /api/tools/search-web are authenticated; see

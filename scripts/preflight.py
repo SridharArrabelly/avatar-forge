@@ -49,6 +49,9 @@ from channels import (
     render_steps,
 )
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from backend import trusted_sites  # noqa: E402
+
 # Voice Live (preview) supported regions as of 2026-06.
 # Keep in sync with:
 # https://learn.microsoft.com/azure/ai-services/speech-service/regions#voice-live
@@ -78,6 +81,13 @@ DEFAULT_AGENT_NAME = "AvatarAgent"
 AGENT_WEB_TOOLS = tuple(WEB_TOOL_ORDER)
 AGENT_WEB_TOOL_APP_PREFIX = "avatar-forge-web-tool-"
 AGENT_WEB_TOOL_MIN_KEY_CHARS = 32
+
+# Web IQ rejects a longer query outright (WEBIQ_MAX_QUERY_CHARS in
+# backend/voice/tools.py), and the site: clause is spent from the same budget.
+WEBIQ_QUERY_CHAR_LIMIT = 1000
+# Below this much room the app starts trimming ordinary spoken questions.
+WEBIQ_MIN_QUESTION_CHARS = 300
+TRUSTED_SITES_DOC = "docs/configuration.md#trusted-web-sources"
 
 
 @dataclass
@@ -566,6 +576,154 @@ def check_agent_web_tool(cfg: dict[str, str]) -> list[CheckResult]:
     return results
 
 
+def check_trusted_web_sites(cfg: dict[str, str]) -> list[CheckResult]:
+    """Where the web tools may search: TRUSTED_WEB_SITES.
+
+    Unset never blocks. It is a supported choice, and Web IQ then searches the
+    open web. It does warn when Bing is the agent's web tool, because Bing Custom
+    Search has no open-web mode, so Bing is not deployed and the agent gets no
+    web tool; and when a deployed environment never set it, because until the
+    variable existed infra/main.bicep supplied a list, so the next deploy changes
+    what it searches. `azd env set TRUSTED_WEB_SITES ""` records the open web as
+    a choice, which silences that second warning: azd keeps the empty key.
+    """
+    raw = cfg.get("TRUSTED_WEB_SITES", "").strip()
+    chosen = "TRUSTED_WEB_SITES" in cfg
+    legacy = cfg.get("WEBIQ_ALLOWED_DOMAINS", "").strip()
+    agent = _agent_binding(cfg)
+    tool = cfg.get("AGENT_WEB_TOOL", "").strip().lower() or "bing"
+    uses_web_iq = not agent or tool == "webiq"
+    uses_bing = (
+        agent and tool == "bing"
+        and cfg.get("DEPLOY_BING_GROUNDING", "true").strip().lower() != "false"
+    )
+    deployed = bool(cfg.get("SERVICE_APP_URI", "").strip())
+    name = "Trusted web sites"
+    example = '        azd env set TRUSTED_WEB_SITES "+www.example.com/investors,news.example.com"\n'
+    results: list[CheckResult] = []
+
+    if legacy:
+        move = (
+            "        Clear the old one; TRUSTED_WEB_SITES is already set:\n"
+            if raw
+            else "        Move the value across, then clear the old one:\n"
+                 f'        azd env set TRUSTED_WEB_SITES "{legacy}"\n'
+        )
+        results.append(
+            CheckResult(
+                f"{name}: WEBIQ_ALLOWED_DOMAINS",
+                False,
+                "set, but deployments no longer read it; TRUSTED_WEB_SITES replaced it",
+                fix="        One list now scopes every web tool.\n" + move
+                    + '        azd env set WEBIQ_ALLOWED_DOMAINS ""',
+                warn_only=True,
+            )
+        )
+
+    sites = trusted_sites.entries(raw)
+    items = [item.strip() for item in raw.split(",") if item.strip()]
+    skipped = [item for item in items if item.startswith("-")]
+    malformed = [
+        site for site, _ in sites
+        if not trusted_sites.host(site) or any(ch.isspace() for ch in site)
+    ]
+    if skipped or malformed:
+        parts = []
+        if skipped:
+            parts.append("skipped " + ", ".join(repr(s) for s in skipped))
+        if malformed:
+            parts.append("malformed " + ", ".join(repr(s) for s in malformed))
+        results.append(
+            CheckResult(
+                f"{name}: entries",
+                False,
+                "; ".join(parts),
+                fix="        Each entry is a host or URL with an optional path, separated by\n"
+                    "        commas; a leading + marks a SuperBoost source. Exclusions (-) are\n"
+                    "        not supported, so they are left out. A malformed entry is still\n"
+                    f"        sent, and Bing may reject it. See {TRUSTED_SITES_DOC}.",
+                warn_only=True,
+            )
+        )
+
+    if not sites:
+        state = "has no usable entries" if raw else ("set empty" if chosen else "not set")
+        if uses_bing:
+            was_scoped = deployed and not chosen and cfg.get("BING_CUSTOM_CONFIG_NAME", "").strip()
+            results.append(
+                CheckResult(
+                    name,
+                    False,
+                    f"{state}: Bing needs a site list, so the agent gets NO web tool",
+                    fix="        Bing Custom Search has no open-web mode, so without a list it is\n"
+                        "        not deployed and the agent answers from your documents alone.\n"
+                        + (
+                            "        This environment's agent searches the list that used to be built\n"
+                            "        into infra/main.bicep. The next deploy removes its web tool; the\n"
+                            "        Bing account stays, and keeps billing.\n"
+                            if was_scoped else ""
+                        )
+                        + f"        Set your sites ({TRUSTED_SITES_DOC} has MTN's list):\n"
+                        + example
+                        + "        Or use Web IQ, which can search the open web:\n"
+                          "        uv run python scripts/set_profile.py",
+                    warn_only=True,
+                )
+            )
+        elif uses_web_iq:
+            results.append(
+                CheckResult(
+                    name,
+                    chosen or not deployed,
+                    f"{state}: Web IQ searches the open web",
+                    fix="        This environment was deployed before TRUSTED_WEB_SITES existed,\n"
+                        "        when infra/main.bicep supplied a list, so this deploy opens its web\n"
+                        f"        search to the whole web. To keep a list ({TRUSTED_SITES_DOC}\n"
+                        "        has MTN's):\n"
+                        + example
+                        + "        Or keep the open web and silence this warning:\n"
+                          '        azd env set TRUSTED_WEB_SITES ""',
+                    warn_only=True,
+                )
+            )
+        return results
+
+    hosts = trusted_sites.hosts(raw)
+    boosted = sum(1 for _, boost in sites if boost)
+    cost = trusted_sites.scope_chars(hosts)
+    detail = f"{len(sites)} site(s)"
+    if uses_bing:
+        detail += f", {boosted} SuperBoost"
+    if uses_web_iq:
+        detail += f"; Web IQ scoped to {len(hosts)} host(s), {cost} of {WEBIQ_QUERY_CHAR_LIMIT} query characters"
+    results.append(CheckResult(name, True, detail))
+
+    if uses_web_iq and cost >= WEBIQ_QUERY_CHAR_LIMIT:
+        results.append(
+            CheckResult(
+                f"{name}: Web IQ query budget",
+                False,
+                f"the site list alone needs {cost} characters of Web IQ's "
+                f"{WEBIQ_QUERY_CHAR_LIMIT}, so no search would carry the question",
+                fix="        Web IQ scopes a search with site: operators in the query text, and\n"
+                    "        the question has to fit in what is left. Remove hosts; paths on\n"
+                    "        the same host cost nothing extra, because Web IQ uses the host.",
+            )
+        )
+    elif uses_web_iq and WEBIQ_QUERY_CHAR_LIMIT - cost < WEBIQ_MIN_QUESTION_CHARS:
+        results.append(
+            CheckResult(
+                f"{name}: Web IQ query budget",
+                False,
+                f"leaves {WEBIQ_QUERY_CHAR_LIMIT - cost} characters for the question; "
+                "longer ones are trimmed to fit",
+                fix="        Remove hosts that no longer earn their place.",
+                warn_only=True,
+            )
+        )
+    return results
+
+
 def check_audit(cfg: dict[str, str]) -> list[CheckResult]:
     """Validate the conversation audit trail (docs/audit.md).
 
@@ -1014,6 +1172,7 @@ def main() -> int:
     checks += check_required_inputs(profile, cfg)
     checks += check_voice_binding(cfg)
     checks += check_agent_web_tool(cfg)
+    checks += check_trusted_web_sites(cfg)
     checks += check_audit(cfg)
     for extra in (
         check_dns_label(cfg, location),
@@ -1031,6 +1190,8 @@ def main() -> int:
         else:
             tag = f"{RED}FAIL{RESET}"
         print(f"{tag}  {c.name}: {c.detail}")
+        if not c.ok and c.warn_only and c.fix:
+            print(c.fix)
         if not c.ok and not c.warn_only:
             failed.append(c)
 

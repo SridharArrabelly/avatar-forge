@@ -33,7 +33,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 os.environ.setdefault("WEBIQ_API_KEY", "test-key-not-real")
-os.environ.setdefault("WEBIQ_ALLOWED_DOMAINS", "mtn.com,itweb.co.za")
+os.environ.setdefault("TRUSTED_WEB_SITES", "mtn.com,itweb.co.za")
 
 from backend.voice import tools  # noqa: E402
 

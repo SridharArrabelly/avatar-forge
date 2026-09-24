@@ -223,9 +223,10 @@ azd env set AVATAR_MODEL Simone
 # retention, access control and any notice obligation first — docs/audit.md.
 # azd env set ENABLE_AUDIT true
 
-# Optional: the trusted sites the web tool may search. The list checked in is
-# MTN's; replace it with yours in infra/main.bicep (bingAllowedDomains) before
-# deploying — docs/configuration.md#trusted-web-sources.
+# The trusted sites the web tool may search. Unset, Web IQ searches the open
+# web and agent mode on Bing gets no web tool (Bing needs a list). A leading +
+# ranks a source first; MTN's list is in docs/configuration.md#trusted-web-sources.
+# azd env set TRUSTED_WEB_SITES "+www.example.com/investors,news.example.com"
 
 # 2. Choose which channel you are deploying, which brain answers (agent or model
 #    mode) and, for agent mode, the web tool (Bing or Web IQ). Records them in the

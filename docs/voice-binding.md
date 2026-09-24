@@ -92,8 +92,8 @@ service. Where the widely-repeated claim differs from what we measured, both are
 
 | Option | Pros | Cons |
 | --- | --- | --- |
-| **1. Voice Live + Foundry agent + tools**<br/>`VOICE_BINDING=agent`<br/>*default & recommended* | • **Native RAG.** AI Search and Grounding-with-Bing-Custom-Search are managed Foundry tools — no glue code, no retrieval to maintain<br/>• **Path-scoped web sources.** 25 entries with boost levels, e.g. `mtn.com/investors` (SuperBoost). A path can be targeted<br/>• Foundry owns threads, history and the tool-calling loop<br/>• **Semantic end-of-utterance** available — worth ~200 ms/turn over silence timing<br/>• Prompt and tools live in the agent: change them without redeploying the app<br/>• Built-in governance surface | • Managed tool round trip is slower: **1.3–1.9 s** vs 0.27–1.63 s<br/>• More Azure surface: model deployment **plus quota**, agent registration, Bing account (G2 SKU)<br/>• Less control over the raw session and token-level behaviour |
-| **2. Voice Live + realtime model + tools**<br/>`VOICE_BINDING=model` | • **Tools run in-process: 0.27–1.63 s** round trip<br/>• **No model deployment and no quota request** — Voice Live manages the model itself<br/>• Fewest resources of the two supported modes: no agent, no Bing account<br/>• Direct control of session, prompt and function loop<br/>• Spoken interim cue is available, because Voice Live gives a synthesis stage to inject into | • **Semantic EOU is unavailable** — the service rejects it outright, so turn-taking falls back to a silence timer and hands back ~200 ms/turn<br/>• **We own retrieval.** Quality is ours to get right — currently weaker than agent mode (#78)<br/>• **Web scoping degrades to bare hosts.** The same sources are used — the host list is derived from `bingAllowedDomains` — but `site:` cannot match a path, so `mtn.com/investors` becomes `mtn.com`<br/>• Prompt/tool changes need an app redeploy<br/>• **No measured latency win here** — see below |
+| **1. Voice Live + Foundry agent + tools**<br/>`VOICE_BINDING=agent`<br/>*default & recommended* | • **Native RAG.** AI Search and Grounding-with-Bing-Custom-Search are managed Foundry tools — no glue code, no retrieval to maintain<br/>• **Path-scoped web sources.** MTN's list is 25 entries with boost levels, e.g. `mtn.com/investors` (SuperBoost). A path can be targeted<br/>• Foundry owns threads, history and the tool-calling loop<br/>• **Semantic end-of-utterance** available — worth ~200 ms/turn over silence timing<br/>• Prompt and tools live in the agent: change them without redeploying the app<br/>• Built-in governance surface | • Managed tool round trip is slower: **1.3–1.9 s** vs 0.27–1.63 s<br/>• More Azure surface: model deployment **plus quota**, agent registration, Bing account (G2 SKU)<br/>• Less control over the raw session and token-level behaviour |
+| **2. Voice Live + realtime model + tools**<br/>`VOICE_BINDING=model` | • **Tools run in-process: 0.27–1.63 s** round trip<br/>• **No model deployment and no quota request** — Voice Live manages the model itself<br/>• Fewest resources of the two supported modes: no agent, no Bing account<br/>• Direct control of session, prompt and function loop<br/>• Spoken interim cue is available, because Voice Live gives a synthesis stage to inject into | • **Semantic EOU is unavailable** — the service rejects it outright, so turn-taking falls back to a silence timer and hands back ~200 ms/turn<br/>• **We own retrieval.** Quality is ours to get right — currently weaker than agent mode (#78)<br/>• **Web scoping degrades to bare hosts.** The same sources are used — both read `TRUSTED_WEB_SITES` — but `site:` cannot match a path, so `mtn.com/investors` becomes `mtn.com`<br/>• Prompt/tool changes need an app redeploy<br/>• **No measured latency win here** — see below |
 | **3. Realtime model + tools, no Voice Live**<br/>**not used** | • Lowest *theoretical* speech-to-speech latency — this is where the "absolute lowest latency" claim actually comes from<br/>• Fewest moving parts; native audio straight off the model socket | • **No avatar.** Voice Live drives the TTS Avatar video and lip-sync off the synthesis stage; bound directly there is no such stage<br/>• **No custom neural voice.** A realtime model emits its own audio and bound directly the built-in voices are all you can ever get — `azure-custom` / `azure-personal` are reachable *only* because Voice Live inserts a replaceable synthesis stage<br/>• **No interim response injection** — the service returns a hard 400; with native audio there is nowhere to inject<br/>• VAD, barge-in and audio orchestration would all have to be rebuilt |
 
 **On the latency claim.** Option 3 is what "realtime models are dramatically faster"
@@ -321,9 +321,10 @@ Two further confounds, both measured rather than assumed:
   both sides or neither.
 - **The two bindings search different engines over the same sources** — by default.
   Agent mode uses
-  Grounding with Bing Custom Search over **25 path-scoped, boost-ranked entries**;
+  Grounding with Bing Custom Search over MTN's **25 path-scoped, boost-ranked entries**;
   model mode uses Web IQ over the **21 bare hosts those entries sit on**, derived
-  automatically from the same list because `site:` cannot match a path or a rank. The
+  automatically from the same `TRUSTED_WEB_SITES` because `site:` cannot match a path
+  or a rank. The
   source set is identical by construction; the precision is not. A web-grounded
   question is therefore not the same question in both modes (unless agent mode runs
   with `AGENT_WEB_TOOL=webiq`). Report web-grounded
@@ -348,15 +349,15 @@ constraint is purely which binding the deployment was built with.
 | `WEBIQ_API_KEY` | *(unset)* | Enables `search_web` outright. Stored as a **container-app secret**, never a plain env var. Required when the managed identity cannot be bound with Web IQ. Also used by agent mode with `AGENT_WEB_TOOL=webiq`. |
 | *(no flag)* | — | With no key the app asks for a Web IQ token at startup and enables `search_web` only if one comes back. Nothing to set — but the identity's client id must be **bound in the Web IQ portal**, or the calls 401 even though the token succeeded. See [auth.md](auth.md#the-keyless-web-iq-route-needs-one-thing-azure-cannot-give-you). |
 | `WEBIQ_BASE_URL` | `https://api.microsoft.ai/v3` | Web IQ endpoint. Emitted explicitly in model-mode deployments. |
-| `WEBIQ_ALLOWED_DOMAINS` | *derived from `bingAllowedDomains`* | Comma-separated host allow-list applied to results. |
+| `TRUSTED_WEB_SITES` | *(unset: the open web)* | The trusted sites, shared with Bing; Web IQ uses their bare hosts. See [Trusted web sources](configuration.md#trusted-web-sources). |
 | `WEBIQ_LANGUAGE` | `en` | Web IQ result language hint, configurable through azd. |
 | `WEBIQ_REGION` | `ZA` | Web IQ result region hint, configurable through azd. |
 
-`WEBIQ_ALLOWED_DOMAINS` is the same security boundary as `bingAllowedDomains`: a
-hard host allow-list is what makes an open-web tool safe to hand an executive
-assistant. Because the app can enable `search_web` on its own, the template
-emits the allow-list **regardless of credentials in model mode**, defaulting to the same hosts agent
-mode already uses — so the tool cannot be switched on and left unscoped.
+`TRUSTED_WEB_SITES` is the one security boundary for every web tool: Bing enforces
+it server-side, and Web IQ scopes every query to its hosts. Leaving it unset is a
+supported choice, the open web. Because the app can enable `search_web` on its own,
+the template emits the list **regardless of credentials**, so a deployment that set
+one can't have the tool switched on unscoped.
 
 To switch a deployment over:
 
@@ -367,7 +368,7 @@ azd env set WEBIQ_BASE_URL https://api.microsoft.ai/v3
 azd env set WEBIQ_LANGUAGE en
 azd env set WEBIQ_REGION ZA
 azd env set WEBIQ_API_KEY <key>   # optional only if the identity is bound with Web IQ
-azd env set WEBIQ_ALLOWED_DOMAINS "mtn.com,sashares.co.za"   # optional; defaults to bingAllowedDomains
+azd env set TRUSTED_WEB_SITES "+www.mtn.com/investors,sashares.co.za"   # optional; unset = open web
 azd up
 ```
 
