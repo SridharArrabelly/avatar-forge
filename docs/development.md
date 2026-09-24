@@ -29,6 +29,41 @@ powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | ie
 `uv` creates the `.venv` and installs dependencies automatically the first time you run
 the app.
 
+### Behind a package mirror (PyPI blocked)
+
+On networks that allow only an approved package mirror (common on corporate laptops,
+where IT points pip at it in `pip.ini`/`pip.conf`), `uv sync` fails as soon as it
+needs a wheel it has not cached:
+
+```text
+Failed to fetch: `https://files.pythonhosted.org/packages/...`
+  ╰─▶ received fatal alert: HandshakeFailure
+```
+
+That is the network refusing `files.pythonhosted.org`, not a certificate problem —
+`--native-tls` does not help, and pip only works because it reads the mirror from
+its config. uv does not read pip's config, and `uv.lock` pins every artifact to its
+PyPI URL. **Do not point uv at the mirror** (`uv sync --index-url`,
+`UV_DEFAULT_INDEX`): uv then re-resolves and rewrites every URL in `uv.lock` to the
+mirror, which breaks the image build for everyone outside that network. If it
+happens, `git checkout uv.lock`.
+
+Instead, install exactly what the lock pins, through the mirror pip already uses:
+
+```powershell
+uv run --no-project python scripts/sync_via_mirror.py              # add --extra cosmos if you use it
+```
+
+It verifies every file against the lock's hashes, never writes `uv.lock`, and ends
+with an offline `uv sync --locked` to prove the venv matches. After that, `uv run`
+and `uv sync` work with no downloads. **Re-run it after any pull that changes
+`uv.lock`.** It reads the mirror from `--index-url`, `PIP_INDEX_URL` or pip's config
+files, in that order.
+
+Edits to `pyproject.toml` alone never need the mirror: the project builds with uv's
+built-in backend (`uv_build`), which runs inside uv and downloads nothing, provided
+your uv is within the range in `[build-system]`.
+
 ## 2. Configure your environment
 
 ```powershell

@@ -410,19 +410,19 @@ If it is missing, `AUDIT_SINK=cosmos` fails at startup with a message naming the
 command — and, being an unbuildable sink, it obeys `AUDIT_SINK_FALLBACK` like
 any other. It never degrades silently.
 
-Behind a package mirror that cannot reach PyPI, install the wheel straight into
-the venv instead, then run without a re-sync:
+Behind a package mirror that cannot reach PyPI, install it through the mirror with
+the lock's pinned version and hashes (see
+[development.md](development.md#behind-a-package-mirror-pypi-blocked)):
 
 ```powershell
-uv pip install <path-to>\azure_cosmos-4.16.3-py3-none-any.whl
-uv run --no-sync python -m backend.main
+uv run --no-project python scripts/sync_via_mirror.py --extra cosmos
 ```
 
-`uv pip install` does not touch `uv.lock`. Avoid `uv sync --index-url <mirror>`,
+It never touches `uv.lock`. Avoid `uv sync --index-url <mirror>`,
 which **rewrites every artifact URL in `uv.lock`** to mirror-specific paths and
 breaks the build for anyone outside that network. If you ever run it, restore
-the lock with `git checkout uv.lock`. Note that a plain `uv sync` (or a bare
-`uv run`, which syncs) prunes the manually installed wheel again.
+the lock with `git checkout uv.lock`. A bare `uv run` leaves the extra
+installed; a plain `uv sync` without `--extra cosmos` removes it again.
 
 ### Enable it on a deployment
 
