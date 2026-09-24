@@ -115,7 +115,7 @@ has no open-web mode, so with no list Bing is not deployed and an agent on
 | Web tool | How the list is applied |
 |---|---|
 | Agent mode, `AGENT_WEB_TOOL=bing` | Verbatim, by Bing Custom Search. `main.bicep` turns each entry into a `{ domain, includeSubPages, boostLevel }` row of a hard server-side allow-list, which honours paths (`/investors`) and boost levels. |
-| Agent mode, `AGENT_WEB_TOOL=webiq`, and model mode | As bare hosts. The container gets the list as written. [`backend/trusted_sites.py`](../backend/trusted_sites.py) reduces each entry to its host, drops `www.` and duplicates, and the app adds the hosts to every Web IQ query as `site:` operators and filters results to them. Paths and boosts can't be expressed that way, so `www.mtn.com/investors` becomes `mtn.com`. |
+| Agent mode, `AGENT_WEB_TOOL=webiq`, and model mode | As bare hosts. The container gets the list as written. [`backend/trusted_sites.py`](../backend/trusted_sites.py) reduces each entry to its host, drops `www.` and duplicates, and the app adds the hosts to every Web IQ query as `site:` operators and drops `dev.`/`staging.` copies from the results. Paths and boosts can't be expressed that way, so `www.mtn.com/investors` becomes `mtn.com`. That is a gain, not a compromise: in the [Web IQ A/B](evaluation-history.md#web-iq-as-the-agents-web-tool-24-september-2026) 11 of 60 results were outside every path on the list, including the CFO's profile page (`mtn.com/executivecommittee/...`) and MTN's FY2025 results announcement. |
 
 The two parsers are tested against each other
 ([`tests/test_trusted_web_sites.py`](../tests/test_trusted_web_sites.py)), so the tools
