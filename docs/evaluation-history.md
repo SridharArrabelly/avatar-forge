@@ -6,12 +6,10 @@
 > below are preserved for provenance, not as the plan for new runs. Historical
 > first-token timings are not measurements of meaningful first audible speech.
 >
-> **Customer policy tests are excluded from all new evaluation.** Their presence
-> below, or in old harness defaults, does not authorize running them. Follow the
-> [assistant evaluation guide](assistant-evaluation.md) instead: current work is
-> **retrieval only**, with an explicit retrieval-results review gate before any
-> model or voice bakeoff. Keep all new source text, gold answers, traces and
-> customer material in private artifacts, not in this repository.
+> Follow the [assistant evaluation guide](assistant-evaluation.md) for new work:
+> current work is **retrieval only**, with an explicit retrieval-results review
+> gate before any model or voice bakeoff. Keep all new source text, gold answers,
+> traces and customer material in private artifacts, not in this repository.
 
 ---
 
@@ -22,21 +20,12 @@ A quick checklist to verify each turn routes to the correct tool, shared by
 `prompts/agent/instructions.md` or `prompts/realtime/instructions.md`.
 
 - **Internal** questions should hit the **AI Search index** — `azure_ai_search`
-  in agent mode, `search_minutes` in model mode. That index holds **two**
-  corpora: board / exec **meeting minutes**, and MTN **policy documents**.
-  Both sit behind the *same* tool, so both are scored `internal`.
+  in agent mode, `search_minutes` in model mode. That index holds board and
+  executive **meeting minutes**.
 - **External** questions should hit the **curated web** — `bing_custom_search`
   in agent mode, `search_web` in model mode (MTN investor relations, financial
   results, leadership, newsroom/media, JSE market data, and trusted telecom news
   / regulators).
-
-> **What the policy questions do and do not test.** Because minutes and policies
-> share one tool and one index, these questions cannot test *which corpus* a hit
-> came from — that is retrieval-level and is measured separately. What they test
-> is that a policy question **does not leak to the web tool**. That is a real,
-> previously-shipped failure: a prompt asserting "only meeting minutes are
-> internal" sends *"what is our gift policy"* to Bing, which does not hold MTN's
-> internal policies.
 
 In **agent mode** the prompt is stored server-side, so re-provision before testing:
 
@@ -50,7 +39,7 @@ the file straight to `scripts/bench_routing_model.py`, which needs no deployment
 Then ask each question (live in the browser, or via a harness below) and confirm
 the tool that fires matches the "Expected" column.
 
-## Core set (15 questions — 5 minutes / 5 policies / 5 web)
+## Core set (10 questions — 5 minutes / 5 web)
 
 ### Minutes — expect the AI Search tool
 
@@ -60,60 +49,32 @@ the tool that fires matches the "Expected" column.
 4. Summarise the customer experience discussion from the October 2025 board meeting.
 5. What strategy did the board agree in the 15 September 2023 meeting?
 
-### Policies — expect the AI Search tool (same tool, same index)
-
-Ordered by how strongly the surface form pulls towards the web tool, so a
-partial pass still tells you something.
-
-6. What is our gift policy?
-7. What is the maximum value of a gift I can accept from a supplier?
-8. Who owns a patent created by one of our employees?
-9. Am I eligible for a study bursary?
-10. What does our responsible betting policy say about data breaches?
-
 ### Web — expect the web tool
 
-11. Who is MTN's Group CFO?
-12. What was MTN's FY2025 revenue?
-13. What is MTN's share price today?
-14. What is Vodacom doing in fintech?
-15. What is MTN's Ambition 2025?
+6. Who is MTN's Group CFO?
+7. What was MTN's FY2025 revenue?
+8. What is MTN's share price today?
+9. What is Vodacom doing in fintech?
+10. What is MTN's Ambition 2025?
 
 These check *routing only*. For whether the web tool came back with usable
 **sources**, see [Web retrieval quality](#web-retrieval-quality-manual--not-scored-by-the-harnesses)
-below — Q12 appears in both, scored differently in each.
+below — Q7 appears in both, scored differently in each.
 
 ## Why these matter
 
 - **Q3** — "who attended" must trigger a search, not a deferral ("I need to
   check the record"). This was a real miss before the prompt was tightened.
-- **Q5 vs Q15** — the key contrast: *meeting-scoped* strategy ("what did the
+- **Q5 vs Q10** — the key contrast: *meeting-scoped* strategy ("what did the
   board agree…") is internal, but *general / published* strategy ("MTN's
   Ambition 2025") is public → web.
-- **Q11, Q12** — current leadership and published revenue must come from the
+- **Q6, Q7** — current leadership and published revenue must come from the
   web, never from model memory or the minutes.
 - **Q1, Q2** — relative ("last") and named dates confirm the meeting
   catalogue still resolves dates correctly.
 
-The five policy questions each probe a different way of *not* looking like an
-internal question:
-
-- **Q6** — the canonical phrasing. If this leaks to the web, the prompt's
-  routing rule is simply wrong and nothing below it matters.
-- **Q7** — a rule question that never says the word "policy". Routing must key
-  on *"is this an MTN rule?"*, not on a keyword.
-- **Q8** — **highest leak risk.** Patent ownership sounds like a question about
-  general law, so the pull towards the web is strongest here. MTN's IP policy is
-  what actually answers it.
-- **Q9** — first-person HR shape ("am I eligible…"), which reads as a personal
-  question rather than a document lookup.
-- **Q10** — names the policy explicitly. This one is the regression guard: if
-  *this* misroutes, routing is broken outright rather than merely ambiguous.
-
-Note the deliberate collision with **Q12** ("our revenue" → web) and the
-boundary case *"what's our revenue?"*: the word *our* does **not** decide
-routing. What follows it does — *our revenue* is a published fact, *our gift
-policy* is an internal rule.
+Note the boundary case *"what's our revenue?"*: the word *our* does **not**
+decide routing. What follows it does — revenue is a published fact.
 
 ## Boundary / edge cases (optional, manual)
 
@@ -130,22 +91,17 @@ policy* is an internal rule.
 
 ## Pass criteria
 
-All 15 core questions route to the expected tool. `bench_routing_agent.py`
-prints a **per-group** breakdown as well as the headline, because the failure
-that matters most hides inside a good total: a prompt that treats only minutes
-as internal still scores 10/15 with minutes and web perfect, and every drop
-concentrated in the policies group. Read the groups, not the total.
+All 10 core questions route to the expected tool. `bench_routing_agent.py`
+prints a **per-group** breakdown as well as the headline so regressions show
+which source boundary moved.
 
 Spot-check that answers to web questions are tool-grounded (a named CFO, a
-revenue figure, a share price) rather than vague or invented, and that policy
-answers name the document in human form ("the Gift Policy") rather than a
-filename.
+revenue figure, a share price) rather than vague or invented.
 
-**Not covered here:** whether a policy answer came from the *right* policy, and
-whether the agent refuses a policy-shaped question with no matching document
-(e.g. "what is our work-from-home policy?"). Retrieval always returns
-*something*, so absence has to be handled by the prompt and verified at the
-agent level — routing scores cannot see it.
+**Not covered here:** whether an answer came from the *right* meeting, and
+whether the agent refuses an unsupported internal question with no matching
+source. Retrieval can return *something*, so absence has to be handled by the
+prompt and verified at the agent level — routing scores cannot see it.
 
 ## Web retrieval quality (manual — not scored by the harnesses)
 
@@ -154,7 +110,7 @@ sources come back*, not which tool fires. All three route to the web tool
 unambiguously — no surface-form ambiguity, nothing to get wrong — so the
 harnesses would award them a free pass and inflate the score. They are
 deliberately **kept out of `bench_routing_agent.py`**; the routing set stays at
-15 core + 6 boundary.
+10 core + 6 boundary.
 
 They are the three cases the widened allow-list (13 → 21 hosts, PR #124) was
 chosen on, so they double as the **allow-list regression set**: if these
@@ -174,7 +130,7 @@ Nigeria had cleared the FX debt. Expect now: the debt clearance and naira
 recovery (`punchng.com`, `techcabal.com`, `businessday.ng`), across three or
 more hosts.
 
-**R2. What was MTN's FY2025 revenue?** (= core Q12, judged on sources here)
+**R2. What was MTN's FY2025 revenue?** (= core Q7, judged on sources here)
 
 Not a case of *no* sources — the old list returned the FY-25 results
 **PDFs** (`mtn.com` presentation deck, JSE SENS announcements). The figure was
@@ -293,7 +249,7 @@ uv run python scripts/bench_routing_model.py --runs 5 --tier boundary
 
 # Internal regression when Web IQ is unavailable. The harness keeps a local
 # search_web schema as a competing routing-only stub; no web request is made.
-uv run python scripts/bench_routing_model.py --runs 3 --tier core --groups minutes,policies
+uv run python scripts/bench_routing_model.py --runs 3 --tier core --groups minutes
 ```
 
 Notes:
@@ -305,7 +261,7 @@ Notes:
   agent prompt and is loaded unconditionally.
 - Both harnesses locate the repo root by walking up from the working directory.
 - When Web IQ is not configured, the model harness retains `search_web` as a
-  routing-only stub. That makes a policy-to-web leak observable instead of
+  routing-only stub. That makes an internal-to-web leak observable instead of
   awarding internal questions a free pass because only one tool exists. External
   answer quality is still untestable until `WEBIQ_API_KEY` is configured.
 
@@ -313,14 +269,13 @@ Notes:
 
 Use `scripts/bench_routing_matrix.py` to compare reasoning `none`/`low` at
 AI Search `top_k=5/8` and matching Bing `count=5/8`. Each configuration gets
-the same selected questions, three independent rounds, and a separate
-subtotal for the historical ten (minutes + web). By default it includes all
-15 core questions; use `--groups minutes web` when the policy corpus is absent
-or excluded. The script copies the **live agent definition**, changes only
-the requested model deployment, reasoning effort and retrieval breadth, and
-creates a uniquely named benchmark agent in the same Foundry project. It reads
-back that definition before inference and deletes the copy afterwards; it never
-updates the source agent or either Container App.
+the same selected questions, three independent rounds, and a separate subtotal
+for the ten-question core set (minutes + web). The script copies the **live
+agent definition**, changes only the requested model deployment, reasoning
+effort and retrieval breadth, and creates a uniquely named benchmark agent in
+the same Foundry project. It reads back that definition before inference and
+deletes the copy afterwards; it never updates the source agent or either
+Container App.
 
 `--model` may select another **already deployed** model in the same project
 without switching the live agent. Resuming with a different benchmark model is
@@ -337,14 +292,14 @@ uv run python scripts\bench_routing_matrix.py `
 
 Use a **new, empty output directory outside the repository**. It contains all
 rounds' answers, retrieved passages, citations, usage, errors, and exact agent
-definitions; these may include private meeting and policy text and must not be
-committed. The source environment file is read, not copied or changed. Azure CLI
+definitions; these may include private corpus text and must not be committed.
+The source environment file is read, not copied or changed. Azure CLI
 credentials are used explicitly, so a deployed managed-identity client ID cannot
 accidentally select the local authentication path.
 
 The example is 120 scored turns (10 questions x 3 rounds x 4 configurations),
-run serially; including policies gives 180. These pacing arguments reserve at
-least 30,000 tokens per attempt against a 240,000-token rolling 61-second budget,
+run serially. These pacing arguments reserve at least 30,000 tokens per attempt
+against a 240,000-token rolling 61-second budget,
 with at least eight seconds between request starts. Observed usage can increase
 the reservation. This leaves headroom below a 333,000 TPM deployment; it is a
 conservative client-side estimate, **not** a guarantee against server admission
@@ -530,16 +485,11 @@ slips into the deferral failure mode.
 DataZoneStandard, 333,000 TPM / 333 RPM. Four configurations:
 `reasoning.effort=none/low` x AI Search `top_k=5/8`, with Bing `count` matching
 `top_k`. **Ten questions x three rounds per configuration = 120 scored turns.**
-These are the historical five minutes + five web questions (current core IDs
-Q1-5 and Q11-15), not the policy questions or boundary tier.
-
-Policies were explicitly excluded at the owner's request: customer policy
-documents had intentionally been removed. A read-only index check found
-110 meeting-minutes chunks and zero policy chunks. No policy documents were
-loaded. The initial run had included policies; it was stopped, its temporary
-agent deleted, and resumed with only minutes + web. Completed matching turns
-were retained; all exploratory policy turns and the one-question setup pilot
-are excluded from every table below.
+These are the historical five minutes + five web questions, not the boundary
+tier. The tables below keep the numbering used at the time, where the web
+questions were Q11-Q15; they are now core Q6-Q10. A read-only index check found
+110 meeting-minutes chunks. Completed matching turns were retained; the
+one-question setup pilot is excluded from every table below.
 
 ## Configuration and preservation
 
@@ -743,7 +693,7 @@ matrix command and pacing mechanics are documented above.
 # Terra vs fresh GPT-5.4 baseline — 18 September 2026
 
 This follow-up runs **the same ten minutes + web questions**, three rounds per
-configuration, with policies excluded throughout. Terra has four configurations
+configuration, with the same scope throughout. Terra has four configurations
 (none/low x 5/5 and 8/8), **120 turns**. GPT-5.4 is rerun at its recorded
 winning configuration (none / 8/8), **30 turns**, rather than comparing solely
 with the old qualitative winner narrative.

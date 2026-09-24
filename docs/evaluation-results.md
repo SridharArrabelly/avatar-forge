@@ -95,7 +95,6 @@ AGENT_REASONING_EFFORT=none
 AI_SEARCH_TOP_K=5
 AI_SEARCH_QUERY_TYPE=semantic
 CHUNKING_MODE=section
-DOCUMENT_SCOPE=minutes
 ```
 
 Fresh infrastructure defaults match Terra version `2026-07-09`; existing
@@ -105,7 +104,7 @@ explicit settings still override defaults. The deployment SKU was
 Bing count has since moved from 8 to 5
 ([Bing breadth A/B](evaluation-history.md#bing-breadth-ab--bing_count-8-vs-5-22-september-2026)).
 Realtime-model defaults, embedding SKU and semantic ranker billing were not
-changed. Explicit `window` + `all` ingestion and
+changed. Explicit `window` ingestion and
 `vector_simple_hybrid` + top-8 retrieval remain available for compatibility.
 
 These are code/configuration defaults, not an automatic production migration.
@@ -143,7 +142,7 @@ The reference was extracted independently from each original DOCX's
 | Check | Result |
 |---|---|
 | Original minutes documents | 10 |
-| Policy documents read or indexed | 0 |
+| Non-meeting documents read or indexed | 0 |
 | Tables / tracked changes in this corpus | 0 / 0 |
 | Production extraction matches independent XML text | 10/10 |
 | Expected / existing production chunks | 110 / 110 |
@@ -409,8 +408,8 @@ model-only baseline.
 ### Controlled-answering stage: factual correctness is not completeness
 
 The new comparison uses 17 frozen cases: the historical ten questions, five
-additional meeting questions, and two missing-information controls. Policies
-remain excluded. Sixteen cases have fixed source evidence; the live-price
+additional meeting questions, and two missing-information controls. Sixteen
+cases have fixed source evidence; the live-price
 question is deliberately excluded from this control stage. Four models x
 two reasoning settings x three repeats gives **384 fixed-evidence responses**.
 

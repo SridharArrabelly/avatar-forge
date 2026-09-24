@@ -111,13 +111,12 @@ azd env set FOUNDRY_LOCATION eastus2
 ## Deploy (greenfield)
 
 > **Load your documents first.** The default `postprovision` index build uses
-> whole sections of structured, dated meeting DOCX files and excludes policy folders.
-> Put your minutes in [`data/`](../data/) **before** `azd up`; section mode fails
-> explicitly on an empty or incompatible corpus. To use the legacy/general
-> DOCX/PDF/text path, explicitly select `CHUNKING_MODE=window` and
-> `DOCUMENT_SCOPE=all`. When Foundry is
-> new, this also creates/populates the configured index on a BYO Search service and
-> wires its Foundry project connection automatically.
+> whole sections of structured, dated meeting DOCX files. Put your minutes in
+> [`data/`](../data/) **before** `azd up`; section mode fails explicitly on an
+> empty or incompatible corpus. To use the legacy/general DOCX/PDF/text path,
+> explicitly select `CHUNKING_MODE=window`. When Foundry is new, this also
+> creates/populates the configured index on a BYO Search service and wires its
+> Foundry project connection automatically.
 
 Fresh agent deployments default to **Terra (`2026-07-09`) / reasoning none /
 GlobalStandard**, with native Search `semantic` and top-k 5, and the Web IQ web
@@ -141,7 +140,6 @@ The legacy choices remain available:
 
 ```dotenv
 CHUNKING_MODE=window
-DOCUMENT_SCOPE=all
 AI_SEARCH_QUERY_TYPE=vector_simple_hybrid
 AI_SEARCH_TOP_K=8
 ```

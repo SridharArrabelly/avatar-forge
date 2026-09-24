@@ -199,8 +199,8 @@ Exercises the registered Foundry agent end-to-end (tool calls + final answer) â€
 to confirm tool routing after editing prompts or switching `AGENT_MODEL`. For new
 evaluation, follow the [retrieval-first guide](assistant-evaluation.md): current
 work is retrieval only, with an explicit results-review gate before model/voice
-comparisons and no customer policy tests. Old routing checklists and exploratory
-configuration results are preserved in [evaluation history](evaluation-history.md),
+comparisons. Old routing checklists and exploratory configuration results are
+preserved in [evaluation history](evaluation-history.md),
 not as instructions for new runs.
 
 ## Automated tests

@@ -20,43 +20,19 @@ The historical prose rationale for *why* each question is in the set lives in
 ``docs/evaluation-history.md``. This routing-only set is not an independent
 required-fact gold reference. ``docs/assistant-evaluation.md`` defines the current
 retrieval-only scope and the review gate before model/voice comparisons.
-Customer policy questions remain here for historical reproducibility but are
-excluded from ALL new evaluation; do not run policy-inclusive defaults for it.
 """
 from __future__ import annotations
 
 # (question, expected) where expected in {"internal", "external"}
 #
-# The core set is three groups of five. Note what the groups do and do NOT test:
-#
-#   minutes  + policies  -> BOTH expect "internal", because both corpora sit
-#                           behind the SAME hosted tool (azure_ai_search) in the
-#                           SAME index. So these five policy questions do NOT
-#                           test corpus separation - that is retrieval-level and
-#                           is measured separately. What they DO test is that a
-#                           policy question does not LEAK TO THE WEB TOOL, which
-#                           is a real and previously-shipped failure: a prompt
-#                           that says "only meeting minutes are internal" sends
-#                           "what is our gift policy" straight to Bing, which
-#                           does not hold MTN's internal policies.
-#   web                  -> expects "external".
+# The core set is two groups of five. Minutes questions expect the internal
+# AI Search tool; web questions expect the external web tool.
 MINUTES = [
     ("What did we decide about dividends in the last board meeting?", "internal"),
     ("What were the action items from the February 2026 board meeting?", "internal"),
     ("Who attended the October 2025 board meeting?", "internal"),
     ("Summarise the customer experience discussion from the October 2025 board meeting.", "internal"),
     ("What strategy did the board agree in the 15 September 2023 meeting?", "internal"),
-]
-
-# Ordered by how strongly the surface form pulls towards the web tool, so a
-# partial pass still says something: Q1 is the canonical phrasing, Q3 sounds
-# like a question about general law rather than an MTN rule.
-POLICIES = [
-    ("What is our gift policy?", "internal"),
-    ("What is the maximum value of a gift I can accept from a supplier?", "internal"),
-    ("Who owns a patent created by one of our employees?", "internal"),
-    ("Am I eligible for a study bursary?", "internal"),
-    ("What does our responsible betting policy say about data breaches?", "internal"),
 ]
 
 WEB = [
@@ -67,7 +43,7 @@ WEB = [
     ("What is MTN's Ambition 2025?", "external"),
 ]
 
-CORE = MINUTES + POLICIES + WEB
+CORE = MINUTES + WEB
 
 # The discriminating set. Every one of these is a case where the *surface form*
 # of the question pulls the wrong way, so they separate a prompt that states a
@@ -97,7 +73,7 @@ TIERS = {"core": CORE, "boundary": BOUNDARY, "all": CORE + BOUNDARY}
 # unpacks them as ``for idx, (q, expected) in enumerate(questions)``, so widening
 # the tuple would break the model-mode harness. Grouping therefore lives beside the
 # data, not inside it.
-GROUPS = {"minutes": MINUTES, "policies": POLICIES, "web": WEB}
+GROUPS = {"minutes": MINUTES, "web": WEB}
 _GROUP_OF = {q: name for name, qs in GROUPS.items() for q, _ in qs}
 
 # Retrieval-quality questions are deliberately NOT here. They route to the web

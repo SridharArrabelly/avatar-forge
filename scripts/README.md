@@ -44,9 +44,9 @@ Re-run them by hand with `azd hooks run postprovision` (there is no `azd postpro
 command), or individually as `uv run python scripts/<name>.py`.
 
 For isolated retrieval activation, both setup scripts accept `--env-file FILE`.
-Index setup defaults to `CHUNKING_MODE=section` with `DOCUMENT_SCOPE=minutes`,
-using a new versioned index and an optional `--manifest FILE` receipt.
-Explicit `window` + `all` retain legacy/general ingestion. Agent setup
+Index setup defaults to `CHUNKING_MODE=section`, using a new versioned index
+and an optional `--manifest FILE` receipt. Explicit `window` retains
+legacy/general ingestion. Agent setup
 supports `--clone-from SOURCE_AGENT`: a different target `AGENT_NAME` inherits
 the exact source prompt/model/reasoning/Bing configuration while replacing only
 Search index, query type and top-k. See [configuration](../docs/configuration.md).
@@ -67,7 +67,7 @@ can use `--fixed-retrieval` to preserve that frozen Search/Bing configuration.
 | [`smoke_audit_conversation.py`](smoke_audit_conversation.py) | "Which agent-mode tool details are exposed?" Replays one Foundry conversation through the **production reconciler** ([`backend/audit/foundry.py`](../backend/audit/foundry.py)) to inspect exposed queries and AI Search passages. Raw Bing grounding content is not exposed and cannot be recovered by auditing. Reads only. See [audit.md](../docs/audit.md) and the [evaluation guide](../docs/assistant-evaluation.md). |
 | [`smoke_audit_cosmos.py`](smoke_audit_cosmos.py) | "Can this identity actually write the audit trail?" Round-trips one document through the **production sink** ([`backend/audit/cosmos.py`](../backend/audit/cosmos.py)) — connect, write, read back, assert redaction held, delete. Proves the Entra **data-plane** role, which is the half of the audit trail no mock can cover. Run it *before* enabling audit on a deployment. |
 | [`smoke_webiq_search.py`](smoke_webiq_search.py) | "Does web grounding actually work, and is the content worth the tokens?" Calls the **production** [`search_web()`](../backend/voice/tools.py) live, then re-runs the same query with `contentFormat=passage` and `text` side by side so the difference is visible rather than argued. Reports which credential route it took; never prints the key. Needs `WEBIQ_API_KEY` — the keyless route [cannot work on a laptop](../docs/auth.md). |
-| [`bench_retrieval.py`](bench_retrieval.py) | Retrieval-only `audit` / `run`: independent private original-DOCX XML audit, then live top-5/8 retrieval. Modes: `keyword`, `hybrid`, `semantic` (hybrid + ranker), `semantic_keyword` (lexical + ranker); `--query-style canonical` or `--query-style natural`. No answer generation or policies. See the [evaluation guide](../docs/assistant-evaluation.md) for timing/evidence rules and the review gate. |
+| [`bench_retrieval.py`](bench_retrieval.py) | Retrieval-only `audit` / `run`: independent private original-DOCX XML audit, then live top-5/8 retrieval. Modes: `keyword`, `hybrid`, `semantic` (hybrid + ranker), `semantic_keyword` (lexical + ranker); `--query-style canonical` or `--query-style natural`. No answer generation. See the [evaluation guide](../docs/assistant-evaluation.md) for timing/evidence rules and the review gate. |
 | [`bench_routing_agent.py`](bench_routing_agent.py) | Tool-routing accuracy and latency on the **agent** binding. |
 | [`bench_routing_matrix.py`](bench_routing_matrix.py) | Paced reasoning/retrieval comparison using temporary copies of the live agent. Leaves the source unchanged, captures every round privately, and reports the historical minutes+web subtotal separately. |
 | [`bench_agent_evaluation.py`](bench_agent_evaluation.py) | Paid fixed-evidence/live-agent comparison against the frozen section/semantic/k5 profile. `--continue-from` requires a new output directory and reuses successful turns only after verifying source, cases, catalogue and settings. |
@@ -97,10 +97,9 @@ it checks required source-quote availability without equating it to answer corre
 - **New evaluation is retrieval-first, not a routing/model sweep.** Follow the
   [assistant evaluation guide](../docs/assistant-evaluation.md). Retrieval review
   preceded the approved fixed-retrieval agent comparison. Production promotion
-  and the later realtime-model track remain separate decisions. Customer policy
-  tests are excluded from all new evaluation. Historical
-  core/default question sets include them, so explicitly scope permitted cases
-  rather than running those defaults. Routing harness scores are not a substitute
+  and the later realtime-model track remain separate decisions. Historical
+  core/default question sets can differ from current scope, so explicitly scope
+  permitted cases rather than running old defaults. Routing harness scores are not a substitute
   for independent required-fact evidence coverage.
 - **Retrieval selection needs evidence and latency.** Use the guide's repeated,
   seeded/interleaved arm protocol and per-arm p50/p95/max, separating client/server

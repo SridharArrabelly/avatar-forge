@@ -40,7 +40,7 @@ wrong reason. Open a fresh terminal rather than debugging it.
 | [`test_routing_matrix.py`](test_routing_matrix.py) | Benchmark pacing, explicit stream failure handling, retry eligibility, and score denominators; mocked responses only, no Azure calls. |
 | [`test_retrieval_evaluation.py`](test_retrieval_evaluation.py) | Original XML evidence offsets, complete span coverage, overlap deduplication, wrong-meeting rejection, and truncated native tool passages. Synthetic sources only. |
 | [`test_evaluation_index.py`](test_evaluation_index.py) | Evaluation-only index guards and bounded readback after indexing; mocked Search responses and no Azure calls. |
-| [`test_section_ingestion.py`](test_section_ingestion.py) | Normal section ingestion, excluded policy files, immutable index versions, embedding order and per-document upload failures. |
+| [`test_section_ingestion.py`](test_section_ingestion.py) | Normal section ingestion, immutable index versions, embedding order and per-document upload failures. |
 | [`test_agent_retrieval.py`](test_agent_retrieval.py) | Validated retrieval settings, isolated agent clones, exact readback and source-agent preservation. |
 | [`test_evaluation_scoring.py`](test_evaluation_scoring.py) | Required original quotes must be delivered from the right source; hidden Bing evidence and negative cases are not invented recall scores. |
 | [`test_agent_audio.py`](test_agent_audio.py) | Received-audio timing stays distinct from microphone/playback timing; failed or empty audio streams cannot pass. |

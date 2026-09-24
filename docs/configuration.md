@@ -203,7 +203,6 @@ Read by [`scripts/setup_aisearch_index.py`](../scripts/setup_aisearch_index.py) 
 | `AZURE_OPENAI_API_VERSION` | `2024-10-21` | API version for the embedding calls. |
 | `DATA_DIR` | `./data` | Corpus directory ingested into the index. |
 | `CHUNKING_MODE` | `section` | Whole sections of structured, dated meeting DOCX files. Use a new versioned index when migrating. Explicit `window` retains character-window ingestion for the supported general formats. |
-| `DOCUMENT_SCOPE` | `minutes` | Index-build inclusion filter. Excludes designated `data/policies/` subdirectories before opening files; it is directory-based, not a content classifier. Explicit `all` includes all supported corpus files and requires `CHUNKING_MODE=window`. It does not delete existing indexed records. |
 | `CHUNK_SIZE` / `CHUNK_OVERLAP` | `1200` / `200` | Character-window sizing in `window` mode. Section mode preserves whole sections instead. |
 | `RECREATE_INDEX` | `false` | Legacy window mode only: `true` drops and recreates the index. Section mode rejects it; changed corpora/layouts need a new versioned index. |
 | `SEARCH_VECTOR_PROFILE` / `SEARCH_HNSW_ALGO` / `SEARCH_SEMANTIC_CONFIG` / `SEARCH_VECTORIZER` | `default-*` | Internal structural names; override only to stay compatible with an index built with different names. |
@@ -215,8 +214,8 @@ identical corpus instead of overwriting it; mismatched content or an in-place
 window/section migration fails. Tables, tracked changes, notes, unsupported
 structure, and oversized evidence blocks require review rather than silent
 text loss. Merging defaults does not edit a running deployment. Before rerunning
-setup on an existing window index, explicitly select `CHUNKING_MODE=window` and
-`DOCUMENT_SCOPE=all`, or choose a new index name for the section migration.
+setup on an existing window index, explicitly select `CHUNKING_MODE=window`,
+or choose a new index name for the section migration.
 An in-place layout change is rejected rather than silently rebuilding data.
 
 Both setup commands accept `--env-file FILE`, which overlays keys explicitly

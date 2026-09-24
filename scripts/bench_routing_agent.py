@@ -49,7 +49,6 @@ routing_questions = importlib.util.module_from_spec(_qspec)
 _qspec.loader.exec_module(routing_questions)
 
 MINUTES = routing_questions.MINUTES
-POLICIES = routing_questions.POLICIES
 WEB = routing_questions.WEB
 CORE = routing_questions.CORE
 BOUNDARY = routing_questions.BOUNDARY
@@ -206,10 +205,8 @@ def main() -> int:
             f"n={len(all_lat)}"
         )
 
-    # Per-group breakdown. A headline score hides the failure that matters most:
-    # policies leaking to the web tool shows up as a 5-point drop in ONE group
-    # while minutes and web stay perfect.
-    seen = [g for g in ("minutes", "policies", "web", "boundary")
+    # Per-group breakdown. A headline score can hide which source boundary moved.
+    seen = [g for g in ("minutes", "web", "boundary")
             if any(group_of(q) == g for q, _ in QUESTIONS)]
     if len(seen) > 1:
         print("  by group:")

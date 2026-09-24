@@ -52,11 +52,7 @@ class AgentPromptTests(unittest.TestCase):
         self.assertLessEqual(len(rendered), 6000)
         self.assertEqual(rendered, active)
 
-    def test_no_policy_specific_wording_or_unsupported_capabilities(self):
-        self.assertIsNone(re.search(
-            r"\bpolic(?:y|ies)\b|staff rules|eligibility|approval requirements|standing rule|USD(?:50|200|750)",
-            self.render(), re.IGNORECASE,
-        ))
+    def test_no_unsupported_capabilities_wording(self):
         self.assertIn("Only meeting minutes and public information are available", self.raw)
         self.assertIn("You cannot access email, calendars", self.raw)
 

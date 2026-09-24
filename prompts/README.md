@@ -221,6 +221,5 @@ from potentially stale local defaults. It cannot be combined with `--clone-from`
 Commit the prompt change in the same PR as any code that depends on it (tool
 wiring, routing rules), and follow the
 [assistant evaluation guide](../docs/assistant-evaluation.md) for validation.
-Customer policy tests are excluded from all new evaluation; historical checklist
-defaults are not the new-run plan. Model/voice comparisons require the explicit
-retrieval-results review gate first.
+Historical checklist defaults are not the new-run plan. Model/voice comparisons
+require the explicit retrieval-results review gate first.

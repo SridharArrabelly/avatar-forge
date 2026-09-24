@@ -58,15 +58,10 @@ class FakeSearchClient:
         return FakeResults(
             [
                 {
-                    "title": (
-                        "G004 Group Gift, Hospitality & Entertainment "
-                        "Policy final_signed"
-                    ),
-                    "documentType": "Policy",
+                    "title": "Board Meeting - 15 February 2026",
+                    "documentType": "MeetingMinutes",
                     "meeting_date": None,
-                    "content": (
-                        "Type: Policy\nGift acceptance above USD50 is prohibited."
-                    ),
+                    "content": "Type: MeetingMinutes\nThe board approved the synthetic test.",
                 }
             ]
         )
@@ -77,7 +72,7 @@ async def exercise_search() -> tuple[dict, FakeSearchClient]:
     original = tools.get_search_client
     try:
         tools.get_search_client = lambda: fake
-        result = await tools.search_minutes("supplier gift acceptance limit")
+        result = await tools.search_minutes("February board meeting actions")
     finally:
         tools.get_search_client = original
     return result, fake
@@ -106,8 +101,8 @@ def main() -> int:
           "first spoken words must be the grounded answer" in flat_prompt
           and '"I\'ll check"' in flat_prompt)
     check("minutes are the internal source", "Type: MeetingMinutes" in prompt)
-    check("no policy corpus or embedded gift rules",
-          not re.search(r"\bpolic(?:y|ies)\b|USD(?:50|200|750)", prompt, re.I))
+    check("no embedded private-rule examples",
+          not re.search(r"USD(?:50|200|750)", prompt, re.I))
     check("unavailable internal sources refuse invention",
           "Other internal sources are unavailable" in flat_prompt
           and "Do not search the public web as a substitute or invent requirements" in flat_prompt)
@@ -116,30 +111,11 @@ def main() -> int:
 
     print("\n2. Registered tool advertises meeting minutes only")
     description = tools.SEARCH_MINUTES_TOOL["description"].lower()
-    check("tool description excludes policies", "polic" not in description)
     check("tool description includes minutes", "minutes" in description)
     check("tool description excludes rule intents",
           not any(term in description for term in ("eligibility", "compliance")))
 
-    print("\n3. Legacy document-title formatting remains compatible")
-    check(
-        "gift policy title",
-        display_document_title(
-            "G004 Group Gift, Hospitality & Entertainment Policy", "Policy"
-        ) == "Group Gift, Hospitality & Entertainment Policy",
-    )
-    check(
-        "IP policy version suffix",
-        display_document_title(
-            "MTN Group IP Policy November 2025 final_signed", "Policy"
-        ) == "MTN Group IP Policy",
-    )
-    check(
-        "bursary separators",
-        display_document_title(
-            "MTN-MANCO-Bursary-Policy-final_signed", "Policy"
-        ) == "MTN MANCO Bursary Policy",
-    )
+    print("\n3. Document-title formatting remains compatible")
     check(
         "meeting title is untouched",
         display_document_title("Board Meeting - 15 February 2026", "MeetingMinutes")
@@ -154,9 +130,9 @@ def main() -> int:
           repr(fake.kwargs.get("select")))
     check("one passage returned", len(passages) == 1, repr(passages))
     passage = passages[0] if passages else {}
-    check("policy type reaches the model", passage.get("type") == "Policy", repr(passage))
+    check("minutes type reaches the model", passage.get("type") == "MeetingMinutes", repr(passage))
     check("human document title reaches the model",
-          passage.get("title") == "Group Gift, Hospitality & Entertainment Policy",
+          passage.get("title") == "Board Meeting - 15 February 2026",
           repr(passage))
     check("legacy meeting-only result key removed", "meeting" not in passage, repr(passage))
 

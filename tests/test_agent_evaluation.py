@@ -567,7 +567,7 @@ class EvaluationTests(unittest.TestCase):
     def test_cases_schema_and_unknown_selection_fail_closed(self):
         invalid = [
             {}, [], ["text"], [{**CASES[0], "id": ""}], [CASES[0], CASES[0]],
-            [{**CASES[0], "question": False}], [{**CASES[0], "group": "policies"}],
+            [{**CASES[0], "question": False}], [{**CASES[0], "group": "finance"}],
             [{**CASES[0], "cohort": "invalid"}], [{**CASES[0], "expected": "web"}],
             [{**CASES[0], "answerable": "false"}], [{**CASES[0], "oracle_context": {"text": "unsafe"}}],
         ]

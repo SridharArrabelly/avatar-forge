@@ -212,7 +212,7 @@ def main():
     }
     records = [
         completed,
-        {**completed, "group": "policies", "routing_ok": False},
+        {**completed, "group": "boundary", "routing_ok": False},
         {"status": "error", "group": "web", "attempt_errors": [{"attempt": 1}]},
     ]
     summary = matrix.summarize(records)
