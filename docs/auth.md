@@ -174,6 +174,12 @@ A valid token from anyone else gets `403`, and the app logs its `oid` and
 `appid`. That line is also how to diagnose a Foundry that signs as a different
 identity than expected.
 
+**Measured on 24 September 2026** in a fresh environment: Foundry signs these calls
+as the **account's** system-assigned identity, not the project's. With only the
+project's `oid` allowed, every call got `403` and the log named the account's `oid`.
+The project's identity stays on the allow-list in case Foundry changes which one it
+uses; both identities belong to the same Foundry resource.
+
 **What preflight does.** In agent mode with `AGENT_WEB_TOOL=webiq`, no key and no
 audience, preflight creates (or reuses by name) a single-tenant app registration
 `avatar-forge-web-tool-<env>` with no secrets and no API permissions,

@@ -1135,3 +1135,43 @@ with Bing still the default until the change is validated end to end through
 Voice Live. Foundry's call to the wrapper is authenticated with a managed-identity
 token when the deploy can create an Entra app registration, and with a shared key
 otherwise ([auth](auth.md#the-agents-web-iq-tool-foundry-calls-the-app)).
+
+## Fresh-environment check (24 September 2026)
+
+The A/B used clones in the existing environment, with the tool wired up by hand.
+This run deployed the branch from scratch into a new environment (`azd up`, agent
+mode, `AGENT_WEB_TOOL=webiq`, MTN's `TRUSTED_WEB_SITES`, no shared key) to test
+what the clones could not: the deployment itself and the managed-identity path.
+AI Search Basic had no capacity in Sweden Central that day, so the test environment
+used the existing Search service with its own index.
+
+- **Deployment:** preflight created the app registration during `preprovision`, and
+  the audience it stored reached the container in the same provision. No Bing
+  account or connection was created. The agent came up with AI Search plus the
+  OpenAPI tool in `managed_identity` mode.
+- **Managed identity works.** Every web call was accepted. Foundry signs as the
+  **account's** identity: with only the project's `oid` allowed, calls got `403`.
+- **Probe:** the same 5 web questions × 3 runs on the deployed agent, plus 3
+  minutes questions × 3. 0 errors.
+
+| Web turns, medians (n=15) | A/B wrapper arm | Fresh environment |
+|---|---:|---:|
+| Request → `response.created` | 1.64 s | 0.62 s |
+| Tool call item | 0.66 s | 0.43 s |
+| First token | 3.88 s | 2.46 s |
+| Completed | 4.53 s | 3.28 s |
+| Worst first token | 13.9 s | 5.4 s (first, cold turn) |
+| Input tokens | 3233 | 3240 |
+
+This is not a controlled comparison: a new, idle Foundry account on a different
+day. The 1 s drop in `response.created`, before any tool runs, says most of the gain
+is Foundry-side variance rather than the tool.
+
+**Answers: 14/15 web, 9/9 minutes.** The miss was the share price in one run. The
+agent searched without the word "JSE", so Web IQ's passage extraction took a
+broken price widget from MTN's investor page ("ZAR 0 -100%") instead of the "Last
+close as at 23 Sep 2026 19 367c" line the other two runs quoted. With no good
+figure it quoted a truncated investing.com history row (R200.74) as the 23
+September close, although it said it was not a confirmed live price. It is a
+source-quality failure in the same class as the unfiltered arm's, and the thing to
+watch in the Voice Live check.
