@@ -421,8 +421,9 @@ uv run --no-project python scripts/sync_via_mirror.py --extra cosmos
 It never touches `uv.lock`. Avoid `uv sync --index-url <mirror>`,
 which **rewrites every artifact URL in `uv.lock`** to mirror-specific paths and
 breaks the build for anyone outside that network. If you ever run it, restore
-the lock with `git checkout uv.lock`. A bare `uv run` leaves the extra
-installed; a plain `uv sync` without `--extra cosmos` removes it again.
+the lock with `git checkout uv.lock`. Once the extra is installed, later runs of
+the script and its git hooks keep it. A bare `uv run` also leaves it installed,
+but a plain `uv sync` without `--extra cosmos` removes it again.
 
 ### Enable it on a deployment
 
