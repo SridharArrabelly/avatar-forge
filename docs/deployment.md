@@ -446,7 +446,42 @@ For **greenfield** (template provisions Foundry + Search) the `postprovision` ho
   `data/` BEFORE `azd up`**; section mode rejects an empty/incompatible corpus
   and existing indexes with a different layout.
 - `scripts/setup_foundry_agent.py` — registers the Foundry agent (`AGENT_NAME`) with the
-  AI Search tool, plus the Grounding-with-Bing-Custom-Search tool **if** it is configured.
+  AI Search tool, plus its web tool **if** it is configured: Grounding-with-Bing-Custom-Search
+  by default, or the Web IQ tool with `AGENT_WEB_TOOL=webiq`.
+
+### Choosing the agent's web tool
+
+Agent mode has two web tools. Both search the same trusted-site list
+(`bingAllowedDomains` in [`infra/main.bicep`](../infra/main.bicep)):
+
+| `AGENT_WEB_TOOL` | What the agent calls | Deploys |
+|---|---|---|
+| `bing` *(default)* | Grounding with Bing Custom Search, a native Foundry tool | the Bing account, its allow-list and a Foundry connection |
+| `webiq` | an OpenAPI tool → the app's `/api/tools/search-web` → Web IQ, filtered to those sites | no Bing; Web IQ settings on the container app, and an app registration *or* a key for Foundry's call ([auth.md](auth.md#the-agents-web-iq-tool-foundry-calls-the-app)) |
+
+In the measured comparison `webiq` was faster and answered better
+([evaluation history](evaluation-history.md#web-iq-as-the-agents-web-tool-24-september-2026)).
+To switch an existing greenfield agent-mode environment:
+
+```powershell
+azd env set AGENT_WEB_TOOL webiq
+# Web IQ's own credential for the app, unless its managed identity is bound in the
+# Web IQ portal — see auth.md:
+azd env set WEBIQ_API_KEY <key>
+azd up
+```
+
+Preflight then either creates the app registration `avatar-forge-web-tool-<env>`
+or, if the directory refuses, generates `AGENT_WEB_TOOL_KEY` and says so.
+`postprovision` publishes a **new agent version** with the Web IQ tool in place of
+Bing. The template stops deploying Bing, but azd deploys incrementally, so an
+existing Bing account is **not deleted** and keeps billing — delete its resource
+yourself once you will not switch back. Set `bing` and `azd up` again to go back.
+It needs the Foundry account this template creates, so
+it is not available with `FOUNDRY_ACCOUNT_NAME` (BYO).
+
+After `azd down`, delete the app registration yourself:
+`az ad app delete --id <AGENT_WEB_TOOL_APP_ID>`.
 
 ### The web tool is optional, and the deploy tells you which state you got
 
@@ -456,6 +491,7 @@ The agent needs two things, and they fail differently on purpose:
 |---|---|---|
 | **AI Search connection** | the agent has no corpus | **Fatal.** Nothing usable is created. |
 | **Bing connection** | no site-scoped web grounding | **Degraded.** The agent is created and answers from your indexed documents. |
+| **Web IQ tool** *(`AGENT_WEB_TOOL=webiq`)* | no URL, or no key connection / audience | **Degraded**, the same way, with a `WARNING` naming the missing piece. |
 
 The Bing tool is skipped — with a warning, not an error — both when
 `BING_CONNECTION_NAME` / `BING_CUSTOM_CONFIG_NAME` are unset *and* when they name a

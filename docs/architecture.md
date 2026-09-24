@@ -28,6 +28,7 @@ flowchart LR
         WS["WebSocket endpoints<br/>/ws · /ws/acs/audio · /ws/acs/browser"]
         H["VoiceSessionHandler<br/>one Voice Live session per call"]
         EV["Event relay<br/>+ meeting-catalogue injection"]
+        WT["Web tool route<br/>/api/tools/search-web"]
         WS --- H
         H --- EV
     end
@@ -36,13 +37,16 @@ flowchart LR
     AGENT["Foundry agent<br/>instructions · gpt-5.6-terra · tool routing"]
     SEARCH["Azure AI Search<br/>document corpus"]
     NEWS["Grounding with<br/>Bing Custom Search"]
+    WEBIQ["Web IQ<br/>site-filtered search"]
 
     EDGE <== "PCM16 over WSS<br/>question up · answer down" ==> WS
     EDGE <-. "avatar video · WebRTC peer-to-peer<br/><b>never transits the server</b>" .-> VLS
     H <-- "Voice Live SDK<br/><b>server-side only</b>" --> VLS
     VLS -- "agent_config" --> AGENT
     AGENT --> SEARCH
-    AGENT --> NEWS
+    AGENT -->|"AGENT_WEB_TOOL=bing"| NEWS
+    AGENT -.->|"AGENT_WEB_TOOL=webiq<br/>OpenAPI tool"| WT
+    WT -.-> WEBIQ
 ```
 
 **Key design.** The Python backend is a bridge between the browser and the Azure
@@ -50,9 +54,11 @@ Voice Live service. Voice Live binds the session to an existing **Microsoft Foun
 agent** via `agent_config = { agent_name, project_name }`. The agent (created once
 with [`scripts/setup_foundry_agent.py`](../scripts/setup_foundry_agent.py)) owns the
 system prompt, model selection, and tool wiring — an **Azure AI Search** index over
-the document corpus plus **Grounding with Bing Custom Search** for live web facts
-restricted to a curated domain allow-list. Voice Live handles speech-in/speech-out
-and routes turns through the agent so tool calls resolve server-side in Foundry.
+the document corpus plus one web tool for live facts restricted to a curated domain
+allow-list: **Grounding with Bing Custom Search** by default, or **Web IQ** through
+the backend's own `/api/tools/search-web` with `AGENT_WEB_TOOL=webiq`. Voice Live
+handles speech-in/speech-out and routes turns through the agent so tool calls
+resolve server-side in Foundry.
 
 **All Voice Live SDK operations run on the server** (session creation, configuration,
 audio forwarding, event processing). The browser only:
@@ -115,13 +121,24 @@ configuration results, not isolated model ability or a current production
 recommendation. Follow the [assistant evaluation guide](assistant-evaluation.md)
 for the current retrieval-only focus and the review gate before model/voice tests.
 
-**The web tool.** The agent's only external tool is **`bing_custom_search`** — a
+**The web tool.** The agent has one external tool, chosen by `AGENT_WEB_TOOL`.
+The default is **`bing_custom_search`** — a
 single grounded round-trip that returns curated snippets restricted to a server-side
 domain allow-list (the "configuration" provisioned in the Bing Custom Search portal,
 referenced by `BING_CUSTOM_CONFIG_NAME`). An open-ended web-search tool on
 `gpt-4.1-mini` either fans out into many calls or bloats the context;
 `bing_custom_search` resolves a turn in one call. It is wired via `BING_CONNECTION_NAME`
 + `BING_CUSTOM_CONFIG_NAME` when running `setup_foundry_agent.py`.
+
+With `AGENT_WEB_TOOL=webiq` the agent instead gets **`webiq_search_web`**, an OpenAPI
+tool whose only operation is the backend's `POST /api/tools/search-web`
+([`backend/api/agent_tools.py`](../backend/api/agent_tools.py)). That route runs
+model mode's `search_web()` unchanged — Web IQ with the site filter compiled into
+`site:` operators — so both bindings search the same sources the same way. Foundry
+authenticates to it with a managed-identity token or a shared key
+([auth.md](auth.md#the-agents-web-iq-tool-foundry-calls-the-app)). It is still one
+call per turn, and it was faster and more accurate than Bing in the
+[measured comparison](evaluation-history.md#web-iq-as-the-agents-web-tool-24-september-2026).
 
 **The system prompt.** The provisioning script loads a single prompt,
 [`instructions.md`](../prompts/agent/instructions.md), unconditionally — no

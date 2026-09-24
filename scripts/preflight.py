@@ -26,6 +26,7 @@ import base64
 import json
 import os
 import re
+import secrets
 import shutil
 import subprocess
 import sys
@@ -71,6 +72,11 @@ AVATAR_REGIONS = {
 
 BASE_PROVIDERS = ["Microsoft.CognitiveServices", "Microsoft.App", "Microsoft.Search", "Microsoft.Bing"]
 DEFAULT_AGENT_NAME = "AvatarAgent"
+
+# Agent mode's web tool (agentWebTool in infra/main.bicep).
+AGENT_WEB_TOOLS = ("bing", "webiq")
+AGENT_WEB_TOOL_APP_PREFIX = "avatar-forge-web-tool-"
+AGENT_WEB_TOOL_MIN_KEY_CHARS = 32
 
 
 @dataclass
@@ -438,6 +444,126 @@ def check_voice_binding(cfg: dict[str, str]) -> list[CheckResult]:
     return results
 
 
+def _agent_binding(cfg: dict[str, str]) -> bool:
+    return (cfg.get("VOICE_BINDING", "").strip().lower() or "agent") == "agent"
+
+
+def check_agent_web_tool(cfg: dict[str, str]) -> list[CheckResult]:
+    """Validate agent mode's web tool choice and how the agent will authenticate.
+
+    ``webiq`` gives the agent an OpenAPI tool that calls the app's own
+    /api/tools/search-web, which runs the same allow-listed Web IQ search as
+    model mode. That route is on the public internet, so it only answers a
+    caller it can verify: a shared key if AGENT_WEB_TOOL_KEY is set, otherwise
+    an Entra token from Foundry's managed identity. The token needs an audience
+    (an app registration); when none is set, preflight creates one after the
+    checks pass — see _settle_agent_web_tool_auth.
+    """
+    raw = cfg.get("AGENT_WEB_TOOL", "").strip().lower()
+    tool = raw or "bing"
+    if tool not in AGENT_WEB_TOOLS:
+        return [
+            CheckResult(
+                "Agent web tool",
+                False,
+                f"{raw!r} is not a valid web tool",
+                fix="        Pick one of: " + ", ".join(AGENT_WEB_TOOLS) + "\n"
+                        "        azd env set AGENT_WEB_TOOL webiq",
+            )
+        ]
+
+    if not _agent_binding(cfg):
+        if tool == "bing":
+            return []
+        return [
+            CheckResult(
+                "Agent web tool",
+                True,
+                f"{tool} — ignored in model mode, where Web IQ is already the web tool",
+                warn_only=True,
+            )
+        ]
+
+    if tool == "bing":
+        return [
+            CheckResult(
+                "Agent web tool",
+                True,
+                "bing — Grounding with Bing Custom Search" + ("" if raw else " (default)"),
+            )
+        ]
+
+    if cfg.get("FOUNDRY_ACCOUNT_NAME", "").strip():
+        return [
+            CheckResult(
+                "Agent web tool",
+                False,
+                "webiq needs the Foundry account this template creates, not an existing one",
+                fix="        The tool's key connection and caller identities come from the\n"
+                        "        Foundry account provisioned here. With FOUNDRY_ACCOUNT_NAME set\n"
+                        "        the agent would be created with no web tool at all. Either:\n"
+                        "        azd env set AGENT_WEB_TOOL bing\n"
+                        "        or let this deployment create the Foundry account.",
+            )
+        ]
+
+    results = [
+        CheckResult(
+            "Agent web tool",
+            True,
+            "webiq — trusted-site Web IQ search through the app's /api/tools/search-web",
+        )
+    ]
+
+    key = cfg.get("AGENT_WEB_TOOL_KEY", "").strip()
+    audience = cfg.get("AGENT_WEB_TOOL_AUDIENCE", "").strip()
+    if key:
+        strong = len(key) >= AGENT_WEB_TOOL_MIN_KEY_CHARS
+        results.append(
+            CheckResult(
+                "Agent web tool: caller auth",
+                strong,
+                "shared key (AGENT_WEB_TOOL_KEY), held by a Foundry connection"
+                if strong
+                else f"AGENT_WEB_TOOL_KEY is {len(key)} characters — the route is public, "
+                         f"use at least {AGENT_WEB_TOOL_MIN_KEY_CHARS}",
+                fix='        python -c "import secrets; print(secrets.token_urlsafe(32))"\n'
+                        "        azd env set AGENT_WEB_TOOL_KEY <that value>\n"
+                        "        Or clear it to use managed identity instead:\n"
+                        '        azd env set AGENT_WEB_TOOL_KEY ""',
+            )
+        )
+    elif audience:
+        results.append(
+            CheckResult(
+                "Agent web tool: caller auth",
+                True,
+                f"managed identity — Foundry presents an Entra token for {audience}",
+            )
+        )
+    else:
+        results.append(
+            CheckResult(
+                "Agent web tool: caller auth",
+                True,
+                "managed identity — an app registration for the token audience is "
+                "created below (a generated key is used if the directory refuses)",
+            )
+        )
+
+    results.append(
+        CheckResult(
+            "Agent web tool: Web IQ access",
+            True,
+            "key set"
+            if cfg.get("WEBIQ_API_KEY", "").strip()
+            else "no key — the app will try its Entra identity at startup",
+            warn_only=True,
+        )
+    )
+    return results
+
+
 def check_audit(cfg: dict[str, str]) -> list[CheckResult]:
     """Validate the conversation audit trail (docs/audit.md).
 
@@ -664,6 +790,132 @@ def _prompt_for_location() -> str:
     return answer
 
 
+def _az_error(err: str, fallback: str) -> str:
+    for line in (err or "").splitlines():
+        line = line.strip()
+        if line:
+            return line.removeprefix("ERROR:").strip()
+    return fallback
+
+
+def _ensure_web_tool_app(cfg: dict[str, str], display_name: str) -> tuple[str, str]:
+    """Find or create the app registration that names the web tool's token audience.
+
+    Returns ``(app_id, error)``; success is an app ID with no error. The app has
+    no secrets, roles or permissions — it exists only so Foundry's managed
+    identity can ask Entra for a token *for this API*, which the app then checks.
+    ``api://<appId>`` is used as the identifier URI because tenant policy always
+    allows that form.
+
+    Idempotent: a re-run finds the app by AGENT_WEB_TOOL_APP_ID, else by display
+    name, and only fills in what is missing (identifier URI, service principal).
+    """
+    app_id = cfg.get("AGENT_WEB_TOOL_APP_ID", "").strip()
+    uris: list[str] = []
+    if app_id:
+        code, out, _ = _run(["ad", "app", "show", "--id", app_id, "--query", "identifierUris", "-o", "json"])
+        if code == 0:
+            uris = json.loads(out or "[]") or []
+        else:
+            app_id = ""
+    if not app_id:
+        code, out, err = _run(
+            ["ad", "app", "list", "--display-name", display_name,
+             "--query", "[].{appId:appId,name:displayName,uris:identifierUris}", "-o", "json"]
+        )
+        if code != 0:
+            return "", _az_error(err, "could not search the directory for app registrations")
+        # --display-name is a prefix match; only an exact name is ours.
+        found = [a for a in json.loads(out or "[]") if a.get("name") == display_name]
+        if found:
+            app_id, uris = found[0]["appId"], found[0].get("uris") or []
+    if app_id:
+        print(f"{DIM}  Reusing app registration {display_name} ({app_id}){RESET}")
+    else:
+        args = ["ad", "app", "create", "--display-name", display_name,
+                "--sign-in-audience", "AzureADMyOrg", "--query", "appId", "-o", "tsv"]
+        reference = cfg.get("AGENT_WEB_TOOL_SERVICE_MANAGEMENT_REFERENCE", "").strip()
+        if reference:
+            args += ["--service-management-reference", reference]
+        code, out, err = _run(args)
+        if code != 0 or not out.strip():
+            return "", _az_error(err, "az ad app create failed")
+        app_id = out.strip()
+        print(f"{DIM}  Created app registration {display_name} ({app_id}){RESET}")
+
+    audience = f"api://{app_id}"
+    if audience not in uris:
+        code, _, err = _run(["ad", "app", "update", "--id", app_id, "--identifier-uris", audience])
+        if code != 0:
+            return app_id, _az_error(err, "could not set the app's identifier URI")
+    # Entra only issues tokens for an API that has a service principal in the tenant.
+    code, _, _ = _run(["ad", "sp", "show", "--id", app_id, "--query", "id", "-o", "tsv"])
+    if code != 0:
+        code, _, err = _run(["ad", "sp", "create", "--id", app_id, "--query", "id", "-o", "tsv"])
+        if code != 0:
+            return app_id, _az_error(err, "could not create the app's service principal")
+    return app_id, ""
+
+
+def _settle_agent_web_tool_auth(cfg: dict[str, str]) -> None:
+    """Give the Web IQ agent tool a way to authenticate, preferring managed identity.
+
+    Runs only for agent mode with AGENT_WEB_TOOL=webiq when neither
+    AGENT_WEB_TOOL_KEY nor AGENT_WEB_TOOL_AUDIENCE is set. Precedence:
+
+    1. a key, if the operator set one (nothing to do here);
+    2. managed identity: create the app registration, then store its audience
+       for bicep (the preprovision hook runs before bicep reads the env);
+    3. if the directory refuses — many tenants restrict app registrations — a
+       generated key, stored the same way, and said out loud.
+
+    Never fails the deploy: the worst case is a key instead of a token.
+    """
+    if not _agent_binding(cfg):
+        return
+    if (cfg.get("AGENT_WEB_TOOL", "").strip().lower() or "bing") != "webiq":
+        return
+    if cfg.get("FOUNDRY_ACCOUNT_NAME", "").strip():
+        return
+    if cfg.get("AGENT_WEB_TOOL_KEY", "").strip() or cfg.get("AGENT_WEB_TOOL_AUDIENCE", "").strip():
+        return
+
+    env_name = cfg.get("AZURE_ENV_NAME", "").strip() or "default"
+    display_name = f"{AGENT_WEB_TOOL_APP_PREFIX}{env_name}"
+    print(f"{BOLD}Agent web tool: setting up managed-identity auth{RESET}")
+    app_id, error = _ensure_web_tool_app(cfg, display_name)
+
+    if app_id and not error:
+        audience = f"api://{app_id}"
+        if _azd_env_set("AGENT_WEB_TOOL_AUDIENCE", audience):
+            cfg["AGENT_WEB_TOOL_AUDIENCE"] = audience
+            if _azd_env_set("AGENT_WEB_TOOL_APP_ID", app_id):
+                cfg["AGENT_WEB_TOOL_APP_ID"] = app_id
+            print(f"{GREEN}  Saved: AGENT_WEB_TOOL_AUDIENCE={audience}{RESET}")
+            print(f"{DIM}  Foundry's managed identity will call the tool with an Entra token; no key is stored.")
+            print(f"  azd down does not remove app registrations: az ad app delete --id {app_id}{RESET}\n")
+            return
+        error = "could not save the audience to the azd environment"
+
+    key = secrets.token_urlsafe(32)
+    print(f"{YELLOW}  Managed identity is not available: {error}{RESET}")
+    if app_id:
+        print(f"{DIM}  (partly set up app registration left in place: {display_name}, {app_id}){RESET}")
+    if _azd_env_set("AGENT_WEB_TOOL_KEY", key):
+        cfg["AGENT_WEB_TOOL_KEY"] = key
+        print(f"{YELLOW}  Falling back to a generated shared key.{RESET}")
+        print(f"{DIM}  Stored in the azd env as AGENT_WEB_TOOL_KEY; Foundry holds it in a project")
+        print("  connection and sends it as x-tool-key. To move to managed identity later, have")
+        print("  an admin create the app registration, then:")
+        print("    azd env set AGENT_WEB_TOOL_AUDIENCE api://<appId>")
+        print('    azd env set AGENT_WEB_TOOL_KEY ""')
+        print(f"    azd provision{RESET}\n")
+    else:
+        print(f"{YELLOW}  Could not store a generated key either. The agent will be created without")
+        print("  its web tool; set AGENT_WEB_TOOL_KEY or AGENT_WEB_TOOL_AUDIENCE and re-provision.")
+        print(f"{RESET}")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--location", default=None, help="Main azd location. Defaults to AZURE_LOCATION.")
@@ -759,6 +1011,7 @@ def main() -> int:
         ]
     checks += check_required_inputs(profile, cfg)
     checks += check_voice_binding(cfg)
+    checks += check_agent_web_tool(cfg)
     checks += check_audit(cfg)
     for extra in (
         check_dns_label(cfg, location),
@@ -789,6 +1042,9 @@ def main() -> int:
         return 1
 
     print(f"\n{GREEN}All preflight checks passed.{RESET}")
+    # After the checks, not among them: this one writes to the directory and the
+    # azd env, which should not happen for a deploy that is about to be blocked.
+    _settle_agent_web_tool_auth(cfg)
     print(render_steps(profile))
 
     if any(s.who == ADMIN for s in profile.steps):

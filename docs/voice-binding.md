@@ -228,6 +228,13 @@ meeting-minutes corpus alone — the same graceful degradation the agent path
 has for a missing Bing connection. Introductory replies must not promise a
 source that is unavailable in the current session.
 
+> **Agent mode can use it too.** With `AGENT_WEB_TOOL=webiq` the agent gets an
+> OpenAPI tool that calls this same `search_web()` through the app's
+> `/api/tools/search-web`, so both bindings search Web IQ over the same hosts.
+> It was faster and answered better than Bing in agent mode
+> ([evaluation history](evaluation-history.md#web-iq-as-the-agents-web-tool-24-september-2026)).
+> Bing remains the agent default. See [deployment.md](deployment.md#choosing-the-agents-web-tool).
+
 ---
 
 ## 4. What model mode costs
@@ -312,12 +319,14 @@ Two further confounds, both measured rather than assumed:
   `interim_response` — the service echoed the config back in full — so the gap is
   something we withheld from agent mode, not something model mode earns. Enable it on
   both sides or neither.
-- **The two bindings search different engines over the same sources.** Agent mode uses
+- **The two bindings search different engines over the same sources** — by default.
+  Agent mode uses
   Grounding with Bing Custom Search over **25 path-scoped, boost-ranked entries**;
   model mode uses Web IQ over the **21 bare hosts those entries sit on**, derived
   automatically from the same list because `site:` cannot match a path or a rank. The
   source set is identical by construction; the precision is not. A web-grounded
-  question is therefore not the same question in both modes. Report web-grounded
+  question is therefore not the same question in both modes (unless agent mode runs
+  with `AGENT_WEB_TOOL=webiq`). Report web-grounded
   numbers separately from internal-document ones, which *are* comparable — the
   internal corpus was identical in that historical comparison.
 
@@ -336,7 +345,7 @@ constraint is purely which binding the deployment was built with.
 | --- | --- | --- |
 | `VOICE_BINDING` | `agent` | `agent` or `model`. Anything else falls back to `agent`. |
 | `VOICELIVE_MODEL` | `gpt-realtime-2.1` | Realtime model bound in model mode. Managed by Voice Live — no deployment, no quota. Ignored in agent mode. `gpt-realtime-2` and `gpt-realtime-2.1-mini` are explicit overrides. |
-| `WEBIQ_API_KEY` | *(unset)* | Enables `search_web` outright. Stored as a **container-app secret**, never a plain env var. Required when the managed identity cannot be bound with Web IQ. |
+| `WEBIQ_API_KEY` | *(unset)* | Enables `search_web` outright. Stored as a **container-app secret**, never a plain env var. Required when the managed identity cannot be bound with Web IQ. Also used by agent mode with `AGENT_WEB_TOOL=webiq`. |
 | *(no flag)* | — | With no key the app asks for a Web IQ token at startup and enables `search_web` only if one comes back. Nothing to set — but the identity's client id must be **bound in the Web IQ portal**, or the calls 401 even though the token succeeded. See [auth.md](auth.md#the-keyless-web-iq-route-needs-one-thing-azure-cannot-give-you). |
 | `WEBIQ_BASE_URL` | `https://api.microsoft.ai/v3` | Web IQ endpoint. Emitted explicitly in model-mode deployments. |
 | `WEBIQ_ALLOWED_DOMAINS` | *derived from `bingAllowedDomains`* | Comma-separated host allow-list applied to results. |

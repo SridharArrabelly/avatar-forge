@@ -18,6 +18,10 @@ dependencies = [
     "fastapi>=0.141.1",
     # Used directly by backend/voice/tools.py. openai 3 no longer installs it.
     "httpx>=0.28.1",
+    # Verifies Foundry's Entra tokens on the agent web tool route
+    # (backend/api/agent_tools.py). Also arrives through msal; declared because
+    # the app imports it directly.
+    "pyjwt[crypto]>=2.12.1",
     "openai>=3.16.1",
     "pypdf>=6.19.0",
     "python-docx>=1.2.0",

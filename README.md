@@ -51,6 +51,7 @@ flowchart LR
         API["Session + media bridge"]
         VL["Azure Voice Live<br/>speech in · transcription · speech out · avatar"]
         AG["<b>Foundry agent</b><br/>prompt · model · tool routing"]
+        WT["Web tool route<br/>/api/tools/search-web"]
         API <--> VL
         VL <--> AG
     end
@@ -58,6 +59,7 @@ flowchart LR
     subgraph Ground["Grounding — where the answers come from"]
         S["Azure AI Search<br/>your document corpus"]
         N["Grounding with Bing<br/>site-scoped web search"]
+        W["<b>Web IQ</b><br/>site-scoped web search"]
     end
 
     A --> API
@@ -65,7 +67,9 @@ flowchart LR
     C --> API
     D -.-> API
     AG --> S
-    AG --> N
+    AG -->|"AGENT_WEB_TOOL=bing"| N
+    AG -.->|"AGENT_WEB_TOOL=webiq"| WT
+    WT -.-> W
 
     %% Only the stroke is pinned. Fill and text stay with the renderer's theme,
     %% so this reads correctly in GitHub's light and dark modes alike.
@@ -76,11 +80,21 @@ flowchart LR
     style Ground stroke:#539bf5
 ```
 
+The agent has **one web tool**, chosen at deploy time with `AGENT_WEB_TOOL`:
+Grounding with Bing Custom Search (`bing`, the default), or `webiq`, an OpenAPI
+tool that calls back into this backend's `/api/tools/search-web` — the same
+trusted-site Web IQ search model mode uses. In the measured comparison Web IQ
+reached first token in 3.88 s against Bing's 5.07 s, and answered 15/15 web
+questions well against Bing's 13/15
+([evaluation](docs/evaluation-history.md#web-iq-as-the-agents-web-tool-24-september-2026)).
+How to switch, and how Foundry's call is authenticated:
+[choosing the agent's web tool](docs/deployment.md#choosing-the-agents-web-tool).
+
 ### Model mode — `VOICE_BINDING=model`
 
 Voice Live binds straight to a realtime model, which takes the audio itself. The
 prompt and tools travel in the session instead of living in an agent. **The front
-doors are unchanged** — only the middle and the web tool differ.
+doors are unchanged** — only the middle differs, and the web tool is always Web IQ.
 
 ```mermaid
 flowchart LR
@@ -128,12 +142,14 @@ on-screen transcript but the model is already working from the audio.
 
 Why the grounding box changes: Voice Live accepts exactly two tool types in model
 mode, `FUNCTION` and `MCP`, so the managed Grounding-with-Bing tool has nowhere to
-attach. Web search is re-implemented as a function tool over Web IQ. The document
-corpus is identical in both modes.
+attach. Web search is re-implemented as a function tool over Web IQ, in-process.
+The document corpus is identical in both modes, and with `AGENT_WEB_TOOL=webiq`
+so is the web search.
 
 The Python backend bridges the edge and Azure Voice Live. In agent mode it binds each
 session to an existing Foundry agent via `agent_config = { agent_name, project_name }`,
-so RAG + grounding resolve server-side inside Foundry. Internals in
+so tool routing resolves server-side inside Foundry; the Web IQ option is the one
+tool that calls back into the backend. Internals in
 **[docs/architecture.md](docs/architecture.md)**; the full comparison, including
 measured latency, is in **[docs/voice-binding.md](docs/voice-binding.md)**; each
 channel's own edge diagram is on its [channel page](docs/channels/README.md).
@@ -286,7 +302,7 @@ Full walkthrough — building the search index, smoke tests, developer mode — 
 |---|---|
 | **[docs/architecture.md](docs/architecture.md)** | System design, tool-calling accuracy, meeting-catalogue injection, frontend UX, project structure. |
 | **[docs/voice-binding.md](docs/voice-binding.md)** | Agent mode vs model mode: what binding Voice Live straight to a realtime model gives, what it costs, and the measured numbers. Also why Voice Live itself is in the path at all — dropping it costs the avatar and the custom voice. |
-| **[docs/auth.md](docs/auth.md)** | `DefaultAzureCredential`, required roles, startup pre-warm, IMDS skip, token caching. |
+| **[docs/auth.md](docs/auth.md)** | `DefaultAzureCredential`, required roles, the keys that remain (Web IQ, the agent's web tool), startup pre-warm, IMDS skip, token caching. |
 | **[docs/audit.md](docs/audit.md)** | The optional conversation audit trail: what each binding can prove, how agent-mode tool I/O is recovered, the latency rules, storage and retention. Off by default. |
 
 **Per component**
@@ -314,7 +330,8 @@ Avatar Forge was built by referencing the following Microsoft samples and docume
 - **Azure AI VoiceLive samples** — the project started from and the real-time avatar/voice implementation is based on these official samples: [microsoft-foundry/voicelive-samples (Python)](https://github.com/microsoft-foundry/voicelive-samples/tree/main/python) ([`azure-ai-voicelive` SDK](https://pypi.org/project/azure-ai-voicelive/)).
 - **Azure AI Search** — retrieval/grounding index: [Azure AI Search documentation](https://learn.microsoft.com/en-us/azure/search/).
 - **Azure AI Foundry (Agent Service)** — agent orchestration and tool-calling: [Azure AI Foundry documentation](https://learn.microsoft.com/en-us/azure/ai-foundry/).
-- **Grounding with Bing Custom Search** — domain-scoped web grounding for the agent: [Bing Custom Search tool](https://learn.microsoft.com/en-us/azure/foundry-classic/agents/how-to/tools-classic/bing-custom-search).
+- **Grounding with Bing Custom Search** — domain-scoped web grounding for the agent (the default `AGENT_WEB_TOOL=bing`): [Bing Custom Search tool](https://learn.microsoft.com/en-us/azure/foundry-classic/agents/how-to/tools-classic/bing-custom-search).
+- **Foundry OpenAPI tool** — how the agent calls the Web IQ route (`AGENT_WEB_TOOL=webiq`), with API-key or managed-identity auth: [Connect OpenAPI tools to Foundry agents](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/tools/openapi).
 - **Foundry web search (Grounding with Bing Search) tool** — real-time web grounding: [Grounding with Bing Search tools](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/tools/bing-tools).
 
 ## License

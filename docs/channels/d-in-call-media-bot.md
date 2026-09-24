@@ -51,7 +51,7 @@ flowchart LR
         VH --- DEC
     end
 
-    CORE["Azure Voice Live<br/>+ Foundry agent<br/>AI Search · Bing news"]
+    CORE["Azure Voice Live<br/>+ Foundry agent<br/>AI Search · web search"]
 
     MT <== "mixed room audio up<br/>voice + camera tile down" ==> MED
     MED <-- "wss · PCM16 up<br/>PCM16 + NV12 down" --> WSA

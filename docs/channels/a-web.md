@@ -26,7 +26,7 @@ flowchart LR
     end
 
     APP["FastAPI backend<br/><i>Azure Container Apps</i><br/>owns the Voice Live session"]
-    CORE["Azure Voice Live + Foundry agent<br/>AI Search corpus · Bing news"]
+    CORE["Azure Voice Live + Foundry agent<br/>AI Search corpus · web search"]
 
     U <--> BR
     BR <== "PCM16 over WSS<br/>question up · answer down" ==> APP
@@ -41,7 +41,7 @@ and the two Azure services behind it. Internals: [`../architecture.md`](../archi
 
 A browser page where the user speaks, the avatar listens, and it answers aloud
 with a lip-synced face — grounded in meeting minutes (AI Search) and curated news
-(Bing Custom Search) through the Foundry agent.
+(Bing Custom Search, or Web IQ with `AGENT_WEB_TOOL=webiq`) through the Foundry agent.
 
 ## 3. What deploys
 
@@ -61,7 +61,9 @@ Nothing Teams-related is provisioned. `meetingBotHost.bicep` and
 
 The web/news tool is deployed by default: `bingGrounding.bicep` adds
 a Bing account + curated site allow-list, and a Foundry connection
-to it — see section 4.
+to it — see section 4. With `AGENT_WEB_TOOL=webiq` no Bing is deployed; the agent
+searches the same allow-list through Web IQ
+([choosing the agent's web tool](../deployment.md#choosing-the-agents-web-tool)).
 
 ```powershell
 azd up

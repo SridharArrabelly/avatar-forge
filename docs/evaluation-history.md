@@ -1061,3 +1061,77 @@ risk.
   the SKUs' speed.
 - Existing environments without an explicit `MODEL_SKU_NAME` will have their
   deployment SKU changed in place on the next `azd provision`.
+
+---
+
+# Web IQ as the agent's web tool (24 September 2026)
+
+**Why.** Grounding with Bing Custom Search was the slowest step of an agent web
+turn, around 2 s. Model mode already used Web IQ, restricted to the trusted-site
+list, and looked faster. Foundry cannot apply that site filter to a direct Web IQ
+tool, so the question was whether calling our own filtered wrapper
+(`/api/tools/search-web`) from the agent is faster *without* losing quality.
+
+**Method.** Three disposable clones of the Terra agent, identical except for the
+web tool, verified by diffing the published definitions:
+
+| Arm | Web tool |
+|---|---|
+| `bing` | Grounding with Bing Custom Search (production at the time) |
+| `webiq_wrap` | OpenAPI tool → the app's `/api/tools/search-web` → Web IQ with the site filter |
+| `webiq_direct` | OpenAPI tool → Web IQ directly, **no** site filter |
+
+Web-only question group, 3 runs × 5 questions per arm (15 turns each, one web
+call per turn), `gpt-5.6-terra`, reasoning effort `none`, called on the agent
+endpoint without Voice Live. 0 errors. Every clone was deleted afterwards and
+the live agent was not changed.
+
+## Latency (medians, n=15 per arm)
+
+| | Bing | Web IQ wrapper | Web IQ direct |
+|---|---:|---:|---:|
+| Request → `response.created` | 1.67 s | 1.64 s | 1.67 s |
+| Tool call item (Foundry's view of the search) | 1.83 s | **0.66 s** | 0.83 s |
+| First token | 5.07 s | **3.88 s** | 4.25 s |
+| Completed | 6.94 s | **4.53 s** | 5.38 s |
+| Input tokens | 6086 | **3233** | 4232 |
+
+Inside Azure, the wrapper's own log put the Web IQ search at 180–346 ms (median
+~250 ms). The rest of the 0.66 s is Foundry's OpenAPI hop.
+
+**Reported honestly: the wrapper arm has the worst tail.** Its p95 first token
+was 13.9 s against Bing's 8.0 s, from two turns (9.1 s and 13.9 s). Our server
+logged those searches at normal speed, so the stall sat inside Foundry and not
+in Web IQ or the wrapper. At n=15 this is one sample of Foundry's variance, not
+a property of the tool, but it is the thing to watch after a rollout.
+
+## Answer quality
+
+| | Bing | Web IQ wrapper | Web IQ direct |
+|---|---|---|---|
+| Good answers | 13/15 | **15/15** | 13/15 |
+| Share price | correct 3/3 | correct 3/3 | **wrong 2/3** |
+| FY2025 revenue | declined 2/3 | R226.7bn 3/3 | R226.7bn 3/3 |
+
+The unfiltered arm quoted stale intraday prices from aggregator sites as
+"today's" price, timed at 8:00 and 8:30 a.m., before the JSE opens. **The site
+filter is what makes Web IQ trustworthy here**, which is why the agent calls the
+wrapper rather than Web IQ directly.
+
+## Connection keep-alive
+
+httpx keeps an idle pooled connection for only 5 s by default, but searches in a
+conversation arrive 15–40 s apart, so almost every search paid a fresh TCP+TLS
+handshake. Idle-gap probes from a laptop: 1.01–1.12 s after 20 s idle against
+0.35–0.41 s back to back. With a longer expiry, reuse held at 20 s and 60 s gaps
+(0.33–0.40 s) and was lost between 60 and 120 s, where something in the path
+drops idle connections. `search_web()` now keeps connections for 55 s
+(`WEBIQ_KEEPALIVE_EXPIRY_S`), in both modes.
+
+## Decision
+
+`AGENT_WEB_TOOL=webiq` was added as an option ([configuration](configuration.md)),
+with Bing still the default until the change is validated end to end through
+Voice Live. Foundry's call to the wrapper is authenticated with a managed-identity
+token when the deploy can create an Entra app registration, and with a shared key
+otherwise ([auth](auth.md#the-agents-web-iq-tool-foundry-calls-the-app)).

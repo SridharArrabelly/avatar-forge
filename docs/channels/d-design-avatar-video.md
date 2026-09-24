@@ -73,7 +73,7 @@ flowchart LR
     end
 
     VL["Azure Voice Live<br/><b>ONE session</b> — audio and video<br/><i>from the SAME synthesis</i>"]
-    FA["Foundry agent<br/>AI Search RAG + Bing news"]
+    FA["Foundry agent<br/>AI Search RAG + web search"]
 
     MT <== "mixed room audio in<br/>voice + camera tile out" ==> NET
     AS <-- "wss · AudioMetadata + AudioData(PCM16)<br/>both directions, + StopAudio for barge-in" --> BR

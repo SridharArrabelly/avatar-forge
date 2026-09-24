@@ -275,6 +275,146 @@ def main() -> int:
         r["Model mode: Web IQ"].ok and "key set" in r["Model mode: Web IQ"].detail,
     )
 
+    # --- agent web tool ---------------------------------------------------
+    def web_tool(cfg):
+        return {r.name: r for r in pf.check_agent_web_tool(cfg)}
+
+    r = web_tool({})
+    check("web tool: defaults to bing and says so",
+          r["Agent web tool"].ok and "bing" in r["Agent web tool"].detail and "default" in r["Agent web tool"].detail)
+    check("web tool: bing needs no auth lines", list(r) == ["Agent web tool"])
+    r = web_tool({"AGENT_WEB_TOOL": "google"})
+    check("web tool: an invalid value fails and is the only result",
+          len(r) == 1 and not r["Agent web tool"].ok and not r["Agent web tool"].warn_only)
+    check("web tool: silent in model mode when left at bing", web_tool({"VOICE_BINDING": "model"}) == {})
+    r = web_tool({"VOICE_BINDING": "model", "AGENT_WEB_TOOL": "webiq"})
+    check("web tool: webiq in model mode is reported as ignored, never blocks",
+          r["Agent web tool"].ok and "ignored" in r["Agent web tool"].detail)
+    # With an existing Foundry account bicep deploys neither the connection nor
+    # the caller identities, so the agent would silently get no web tool.
+    r = web_tool({"AGENT_WEB_TOOL": "webiq", "FOUNDRY_ACCOUNT_NAME": "byo"})
+    check("web tool: webiq with BYO Foundry blocks", not r["Agent web tool"].ok and not r["Agent web tool"].warn_only)
+    r = web_tool({"AGENT_WEB_TOOL": "WebIQ"})
+    check("web tool: webiq is case-insensitive", r["Agent web tool"].ok and "webiq" in r["Agent web tool"].detail)
+    check("web tool: no credential -> managed identity with fallback explained",
+          r["Agent web tool: caller auth"].ok and "managed identity" in r["Agent web tool: caller auth"].detail
+          and "key" in r["Agent web tool: caller auth"].detail)
+    check("web tool: keyless Web IQ access is a note, not a defect", r["Agent web tool: Web IQ access"].ok)
+    r = web_tool({"AGENT_WEB_TOOL": "webiq", "AGENT_WEB_TOOL_AUDIENCE": "api://x"})
+    check("web tool: audience -> managed identity", "api://x" in r["Agent web tool: caller auth"].detail)
+    strong = "k" * pf.AGENT_WEB_TOOL_MIN_KEY_CHARS
+    r = web_tool({"AGENT_WEB_TOOL": "webiq", "AGENT_WEB_TOOL_KEY": strong, "AGENT_WEB_TOOL_AUDIENCE": "api://x"})
+    check("web tool: a key wins over an audience", "shared key" in r["Agent web tool: caller auth"].detail)
+    r = web_tool({"AGENT_WEB_TOOL": "webiq", "AGENT_WEB_TOOL_KEY": "short"})
+    check("web tool: a short key on a public route blocks",
+          not r["Agent web tool: caller auth"].ok and not r["Agent web tool: caller auth"].warn_only)
+    check("web tool: the short key itself is never printed", "short" not in r["Agent web tool: caller auth"].detail)
+
+    # --- agent web tool: settling auth -----------------------------------
+    class FakeDirectory:
+        """Just enough of `az ad` to drive _ensure_web_tool_app."""
+
+        def __init__(self, apps=None, fail=()):
+            self.apps = apps or {}  # appId -> {"name", "uris", "sp"}
+            self.fail = set(fail)
+            self.calls: list[list[str]] = []
+
+        def run(self, args):
+            self.calls.append(args)
+            verb = " ".join(args[:3])
+            if verb in self.fail:
+                return 1, "", "ERROR: Insufficient privileges to complete the operation.\nmore"
+            opt = dict(zip(args[3::2], args[4::2]))
+            if verb == "ad app show":
+                app = self.apps.get(opt["--id"])
+                return (0, json.dumps(app["uris"]), "") if app else (3, "", "ERROR: not found")
+            if verb == "ad app list":
+                return 0, json.dumps([
+                    {"appId": k, "name": v["name"], "uris": v["uris"]} for k, v in self.apps.items()
+                    if v["name"].startswith(opt["--display-name"])
+                ]), ""
+            if verb == "ad app create":
+                app_id = f"app-{len(self.apps) + 1}"
+                self.apps[app_id] = {"name": opt["--display-name"], "uris": [], "sp": False}
+                return 0, app_id + "\n", ""
+            if verb == "ad app update":
+                self.apps[opt["--id"]]["uris"] = [opt["--identifier-uris"]]
+                return 0, "", ""
+            if verb == "ad sp show":
+                return (0, "sp", "") if self.apps[opt["--id"]]["sp"] else (3, "", "ERROR: not found")
+            if verb == "ad sp create":
+                self.apps[opt["--id"]]["sp"] = True
+                return 0, "sp", ""
+            raise AssertionError(f"unexpected az call: {args}")
+
+    def settle(cfg, directory, env_ok=True):
+        saved.clear()
+        with _Patch(_run=directory.run, _azd_env_set=(fake_set if env_ok else lambda *_a: False)):
+            pf._settle_agent_web_tool_auth(cfg)
+        return dict(saved)
+
+    base = {"AGENT_WEB_TOOL": "webiq", "AZURE_ENV_NAME": "ava"}
+    name = pf.AGENT_WEB_TOOL_APP_PREFIX + "ava"
+
+    for label, cfg in (
+        ("bing", {"AZURE_ENV_NAME": "ava"}),
+        ("model mode", {**base, "VOICE_BINDING": "model"}),
+        ("BYO Foundry", {**base, "FOUNDRY_ACCOUNT_NAME": "byo"}),
+        ("key already set", {**base, "AGENT_WEB_TOOL_KEY": strong}),
+        ("audience already set", {**base, "AGENT_WEB_TOOL_AUDIENCE": "api://x"}),
+    ):
+        d = FakeDirectory()
+        check(f"settle: {label} -> touches nothing", settle(dict(cfg), d) == {} and d.calls == [])
+
+    d = FakeDirectory()
+    cfg = dict(base)
+    got = settle(cfg, d)
+    app_id = next(iter(d.apps))
+    check("settle: creates one single-tenant app named for the env",
+          list(d.apps.values())[0]["name"] == name
+          and any(c[:3] == ["ad", "app", "create"] and "AzureADMyOrg" in c for c in d.calls))
+    check("settle: identifier URI is api://<appId>", d.apps[app_id]["uris"] == [f"api://{app_id}"])
+    check("settle: service principal created (Entra needs it to issue tokens)", d.apps[app_id]["sp"])
+    check("settle: audience and app ID saved for bicep",
+          got == {"AGENT_WEB_TOOL_AUDIENCE": f"api://{app_id}", "AGENT_WEB_TOOL_APP_ID": app_id})
+    check("settle: in-memory config updated too", cfg.get("AGENT_WEB_TOOL_AUDIENCE") == f"api://{app_id}")
+    check("settle: no key generated when managed identity works", "AGENT_WEB_TOOL_KEY" not in got)
+
+    d = FakeDirectory({"app-9": {"name": name, "uris": ["api://app-9"], "sp": True},
+                       "app-8": {"name": name + "-other", "uris": [], "sp": False}})
+    got = settle(dict(base), d)
+    check("settle: reuses the exact-name app on a re-run, creates nothing",
+          got.get("AGENT_WEB_TOOL_APP_ID") == "app-9" and len(d.apps) == 2
+          and not any(c[:3] in (["ad", "app", "create"], ["ad", "app", "update"], ["ad", "sp", "create"]) for c in d.calls))
+
+    d = FakeDirectory({"app-7": {"name": "renamed", "uris": [], "sp": False}})
+    got = settle({**base, "AGENT_WEB_TOOL_APP_ID": "app-7"}, d)
+    check("settle: a stored app ID is reused and completed",
+          got.get("AGENT_WEB_TOOL_AUDIENCE") == "api://app-7" and d.apps["app-7"]["sp"] and len(d.apps) == 1)
+
+    d = FakeDirectory()
+    settle({**base, "AGENT_WEB_TOOL_SERVICE_MANAGEMENT_REFERENCE": "ref-1"}, d)
+    create = next(c for c in d.calls if c[:3] == ["ad", "app", "create"])
+    check("settle: service management reference passed when a tenant requires one",
+          create[create.index("--service-management-reference") + 1] == "ref-1")
+
+    for label, fail in (
+        ("create refused", ["ad app create"]),
+        ("directory unreadable", ["ad app list"]),
+        ("identifier URI refused", ["ad app update"]),
+        ("service principal refused", ["ad sp create"]),
+    ):
+        d = FakeDirectory(fail=fail)
+        got = settle(dict(base), d)
+        key = got.get("AGENT_WEB_TOOL_KEY", "")
+        check(f"settle: {label} -> falls back to a generated key",
+              len(key) >= pf.AGENT_WEB_TOOL_MIN_KEY_CHARS and "AGENT_WEB_TOOL_AUDIENCE" not in got)
+    check("settle: generated keys are not reused between runs",
+          settle(dict(base), FakeDirectory(fail=["ad app create"]))["AGENT_WEB_TOOL_KEY"] != key)
+
+    d = FakeDirectory()
+    check("settle: never raises when azd cannot store anything", settle(dict(base), d, env_ok=False) == {})
+
     print()
     if _failures:
         print(f"{len(_failures)} FAILED: {', '.join(_failures)}")

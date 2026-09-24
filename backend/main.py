@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from .api import routes, websocket as ws
+from .api import agent_tools, routes, websocket as ws
 from .acs import build_acs_router
 from .audit import init_audit, shutdown_audit
 from .config import DEVELOPER_MODE, HOST, MODEL_BINDING, PORT, configure_logging
@@ -68,15 +68,17 @@ async def _prewarm_startup() -> None:
     Sequenced: catalogue fetch starts with a hot token cache; it only pays
     the AI Search round-trip cost.
 
-    The Web IQ probe goes last and only in model mode. It decides whether
-    ``search_web`` is advertised at all, so resolving it here means the first
-    session reads a settled answer instead of waiting on a token — and in agent
-    mode, where Foundry owns web grounding, it is never asked for.
+    The Web IQ probe goes last, and only where something will call Web IQ: model
+    mode, or agent mode with the agent's web tool enabled (see
+    backend/api/agent_tools.py). It decides whether ``search_web`` works at
+    all, so resolving it here means the first call reads a settled answer
+    instead of waiting on a token. The tool's Entra signing keys are fetched
+    here too when it authenticates its caller by token.
     """
     await _prewarm_credential()
     await prewarm_catalog()
-    if MODEL_BINDING:
-        await web_search_available()
+    if MODEL_BINDING or agent_tools.tool_enabled():
+        await asyncio.gather(web_search_available(), agent_tools.prewarm())
 
 
 @asynccontextmanager
@@ -208,6 +210,9 @@ app.add_middleware(SelectiveGZipMiddleware, minimum_size=1024, compresslevel=6)
 
 
 app.include_router(routes.router)
+# Server-side tools for the Foundry agent (Web IQ search). 404 unless a caller
+# check is configured (a key or an Entra audience); see backend/api/agent_tools.py.
+app.include_router(agent_tools.router)
 app.include_router(ws.router)
 # Teams in-call media participants (channels C/D, issue #27). Additive + opt-in: every
 # ACS endpoint returns 503 when ACS is not configured, so this never changes a

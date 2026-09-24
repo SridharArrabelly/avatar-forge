@@ -102,6 +102,36 @@ param webIqAllowedDomains string = ''
 @secure()
 param webIqApiKey string = ''
 
+@description('''
+The agent's web tool, agent mode only. Model mode always uses Web IQ in-process.
+
+"bing" (default): Grounding with Bing Custom Search, a managed Foundry tool with a
+server-side site allow-list (bingAllowedDomains).
+
+"webiq": Web IQ, called through this app's /api/tools/search-web as an OpenAPI
+tool. It runs the model-mode search_web() unchanged, so the same allow-list
+(webIqAllowedDomains, derived from bingAllowedDomains) and filtering apply.
+Replaces Bing: nothing Bing-related is deployed. Greenfield Foundry only.
+Measured against Bing on the same agent: faster tool step (0.66 s vs 1.83 s)
+and 15/15 good answers; see docs/evaluation-history.md.
+
+Foundry's calls to the app are authenticated with agentWebToolKey when set,
+otherwise with a managed-identity token for agentWebToolAudience. The
+preprovision hook settles one of the two; see docs/auth.md.
+''')
+@allowed([ 'bing', 'webiq' ])
+param agentWebTool string = 'bing'
+
+@description('Shared key Foundry presents to the app for the Web IQ agent tool. Stored as a container-app secret and in a Foundry project connection. Wins over agentWebToolAudience. Empty in the normal case: preflight creates an app registration instead, and generates this only if it cannot.')
+@secure()
+param agentWebToolKey string = ''
+
+@description('Application ID URI (api://<client-id>) of the Entra app registration the agent\'s managed-identity token is issued for. Set by preflight.')
+param agentWebToolAudience string = ''
+
+@description('Client ID of that app registration. Optional; accepted as a v2-token audience. Set by preflight.')
+param agentWebToolAppId string = ''
+
 @description('Bing pricing tier. G2 is the tier this project has run on; G1 is the lower tier.')
 @allowed([ 'G1', 'G2' ])
 param bingSkuName string = 'G2'
@@ -377,6 +407,10 @@ module resources 'resources.bicep' = {
     webIqRegion: webIqRegion
     webIqAllowedDomains: webIqEffectiveDomains
     webIqApiKey: webIqApiKey
+    agentWebTool: agentWebTool
+    agentWebToolKey: agentWebToolKey
+    agentWebToolAudience: agentWebToolAudience
+    agentWebToolAppId: agentWebToolAppId
     deployBingGrounding: toLower(deployBingGrounding) == 'true'
     bingSkuName: bingSkuName
     bingAllowedDomains: bingAllowedDomains
@@ -460,6 +494,10 @@ output SEARCH_CONNECTION_NAME string = searchConnectionName
 output SEARCH_INDEX_NAME string = searchIndexName
 output BING_CONNECTION_NAME string = resources.outputs.bingConnectionName
 output BING_CUSTOM_CONFIG_NAME string = resources.outputs.bingCustomConfigName
+// Read by setup_foundry_agent.py. Derived, never inputs, so writing them back to
+// the azd env cannot overwrite a choice the user made.
+output AGENT_WEB_TOOL_AUTH string = resources.outputs.agentWebToolAuth
+output AGENT_WEB_TOOL_CONNECTION_NAME string = resources.outputs.agentWebToolConnectionName
 output APPLICATIONINSIGHTS_CONNECTION_STRING string = resources.outputs.appInsightsConnectionString
 
 // Channel C in-call media (#27). Empty unless enableAcs=true.

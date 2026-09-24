@@ -206,6 +206,15 @@ WEBIQ_MAX_QUERY_CHARS = 1000
 
 WEBIQ_TIMEOUT = httpx.Timeout(connect=3.0, read=8.0, write=3.0, pool=3.0)
 
+# How long an idle pooled connection is kept for reuse. httpx's default is 5 s,
+# but searches in a conversation arrive 15-40 s apart, so with the default
+# almost every one paid a fresh TCP+TLS handshake: measured from a laptop, a
+# call after 20 s idle took 1014-1120 ms against 346-410 ms back to back. With a
+# long expiry, reuse held at 20 s and 60 s gaps (328-396 ms) and was lost
+# between 60 and 120 s (1041-1180 ms) — something in the path drops idle
+# connections there, and httpx then reconnects cleanly. 55 s stays under that.
+WEBIQ_KEEPALIVE_EXPIRY_S = 55.0
+
 # Cap on the startup capability probe. Generous next to WEBIQ_TIMEOUT because a
 # cold credential chain legitimately takes seconds, but finite because the
 # answer gates session setup.
@@ -544,7 +553,9 @@ async def _get_web_client() -> httpx.AsyncClient:
         async with _web_client_lock:
             if _web_client is None:
                 _web_client = httpx.AsyncClient(
-                    base_url=WEBIQ_BASE_URL, timeout=WEBIQ_TIMEOUT
+                    base_url=WEBIQ_BASE_URL,
+                    timeout=WEBIQ_TIMEOUT,
+                    limits=httpx.Limits(keepalive_expiry=WEBIQ_KEEPALIVE_EXPIRY_S),
                 )
     return _web_client
 

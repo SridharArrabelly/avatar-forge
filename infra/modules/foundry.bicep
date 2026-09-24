@@ -190,6 +190,8 @@ resource deployerFoundryUser 'Microsoft.Authorization/roleAssignments@2022-04-01
 }
 
 output projectPrincipalId string = project.identity.principalId
+@description('The account\'s system-assigned identity. Foundry signs OpenAPI tool calls made with managed-identity auth as this identity.')
+output accountPrincipalId string = account.identity.principalId
 output accountId string = account.id
 output accountName string = account.name
 output accountEndpoint string = 'https://${account.name}.services.ai.azure.com/'

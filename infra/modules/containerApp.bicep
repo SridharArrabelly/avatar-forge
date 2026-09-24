@@ -36,6 +36,25 @@ param webIqRegion string = 'ZA'
 @description('Web IQ API key. Passed as a container-app SECRET, never as a plain env var. Optional: with no key the app authenticates to Web IQ with its managed identity, and decides at startup whether that works.')
 @secure()
 param webIqApiKey string = ''
+
+@description('Agent mode only: serve the agent\'s web tool — Web IQ behind /api/tools/search-web. resources.bicep decides this; see agentWebTool in main.bicep.')
+param agentWebIq bool = false
+
+@description('Shared key the Foundry agent presents in x-tool-key. Set = key mode; it then wins over the Entra settings below.')
+@secure()
+param agentWebToolKey string = ''
+
+@description('Entra mode: Application ID URI the agent\'s token must be issued for.')
+param agentWebToolAudience string = ''
+
+@description('Entra mode, optional: the app registration\'s client ID, accepted as a v2-token audience.')
+param agentWebToolAppId string = ''
+
+@description('Entra mode: comma-separated object IDs allowed to call — the Foundry identities that sign the agent\'s calls.')
+param agentWebToolCallerOids string = ''
+
+@description('Entra mode: tenant whose tokens are accepted.')
+param agentWebToolTenantId string = ''
 param appInsightsConnectionString string
 @description('Search service endpoint (https://<name>.search.windows.net/)')
 param searchEndpoint string = ''
@@ -150,6 +169,10 @@ var voiceBindingEnv = concat([
 // the Foundry agent, and its managed Bing grounding tool goes with it — the
 // tools become ours to implement, so the web source has to be ours too.
 //
+// Agent mode can opt into the same tool (agentWebIq): the agent calls this app's
+// /api/tools/search-web, which runs the model-mode search_web() unchanged. So
+// everything below applies to it too — above all the allow-list.
+//
 // The key is a container-app SECRET rather than a plain env var, and the
 // allow-list mirrors bingAllowedDomains — literally, since main.bicep derives it
 // from that list rather than trusting anyone to retype it: a hard host
@@ -159,17 +182,18 @@ var voiceBindingEnv = concat([
 // tool is usable by asking for a Web IQ token (web_search_available() in
 // backend/voice/tools.py), because a flag can claim an entitlement a tenant does
 // not have and a token cannot. That means the app can switch search_web on with
-// no key present, so model mode must ALWAYS include the allow-list — the dangerous state is
+// no key present, so wherever Web IQ is on the allow-list must ALWAYS be included — the dangerous state is
 // an enabled web tool with no host restriction, which would answer from the
 // entire open web while agent mode stayed scoped to bingAllowedDomains.
-var webIqKeyed = modelBinding && !empty(webIqApiKey)
+var webIqOn = modelBinding || agentWebIq
+var webIqKeyed = webIqOn && !empty(webIqApiKey)
 var webIqSecrets = webIqKeyed ? [
   {
     name: 'webiq-api-key'
     value: webIqApiKey
   }
 ] : []
-var webIqEnv = modelBinding ? concat(webIqKeyed ? [
+var webIqEnv = webIqOn ? concat(webIqKeyed ? [
   { name: 'WEBIQ_API_KEY', secretRef: 'webiq-api-key' }
 ] : [], [
   { name: 'WEBIQ_BASE_URL', value: empty(webIqBaseUrl) ? 'https://api.microsoft.ai/v3' : webIqBaseUrl }
@@ -178,6 +202,28 @@ var webIqEnv = modelBinding ? concat(webIqKeyed ? [
 ], empty(webIqAllowedDomains) ? [] : [
   { name: 'WEBIQ_ALLOWED_DOMAINS', value: webIqAllowedDomains }
 ]) : []
+
+// How the agent's calls to /api/tools/search-web are authenticated; see
+// backend/api/agent_tools.py. Exactly one mode is emitted, and a key wins, so the
+// app never has to guess which one Foundry was configured with. Neither = the
+// route answers 404.
+var agentWebToolKeyed = agentWebIq && !empty(agentWebToolKey)
+var agentWebToolEntra = agentWebIq && !agentWebToolKeyed && !empty(agentWebToolAudience) && !empty(agentWebToolCallerOids) && !empty(agentWebToolTenantId)
+var agentWebToolSecrets = agentWebToolKeyed ? [
+  {
+    name: 'agent-web-tool-key'
+    value: agentWebToolKey
+  }
+] : []
+var agentWebToolEnv = concat(agentWebToolKeyed ? [
+  { name: 'AGENT_WEB_TOOL_KEY', secretRef: 'agent-web-tool-key' }
+] : [], agentWebToolEntra ? concat([
+  { name: 'AGENT_WEB_TOOL_AUDIENCE', value: agentWebToolAudience }
+  { name: 'AGENT_WEB_TOOL_CALLER_OIDS', value: agentWebToolCallerOids }
+  { name: 'AGENT_WEB_TOOL_TENANT_ID', value: agentWebToolTenantId }
+], empty(agentWebToolAppId) ? [] : [
+  { name: 'AGENT_WEB_TOOL_APP_ID', value: agentWebToolAppId }
+]) : [])
 
 // Channel D Teams media-bot env (additive). The .NET media bot connects to the
 // /ws/acs/audio bridge, which only needs Voice Live (no ACS resource). MEETING_BOT_ENABLED
@@ -203,7 +249,7 @@ resource app 'Microsoft.App/containerApps@2024-10-02-preview' = {
     managedEnvironmentId: containerAppsEnvironmentId
     configuration: {
       activeRevisionsMode: 'Single'
-      secrets: webIqSecrets
+      secrets: concat(webIqSecrets, agentWebToolSecrets)
       ingress: {
         external: true
         targetPort: 3000
@@ -262,7 +308,7 @@ resource app 'Microsoft.App/containerApps@2024-10-02-preview' = {
             { name: 'SR_MODEL', value: srModel }
             { name: 'RECOGNITION_LANGUAGE', value: recognitionLanguage }
             { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: appInsightsConnectionString }
-          ], concat(acsEnv, meetingBotEnv, voiceBindingEnv, webIqEnv, auditEnv))
+          ], concat(acsEnv, meetingBotEnv, voiceBindingEnv, webIqEnv, agentWebToolEnv, auditEnv))
           probes: [
             {
               type: 'Liveness'

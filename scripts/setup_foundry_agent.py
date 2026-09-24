@@ -4,10 +4,17 @@ This script creates a new version of a Microsoft Foundry agent (e.g.
 ``MtnAvatarAgent``) wired with two tools:
 
 * **Azure AI Search** - internal index of past MTN executive meetings.
-* **Grounding with Bing Custom Search** - single-shot open-web grounding
-  restricted to a curated allow-list (configured server-side as a Bing Custom
-  Search "configuration"). Provides hard source restriction rather than a soft
-  ``site:`` hint, which makes the avatar's external answers safer to trust.
+* **A web tool**, chosen by ``AGENT_WEB_TOOL``:
+
+  * ``bing`` (default) - **Grounding with Bing Custom Search**: single-shot
+    open-web grounding restricted to a curated allow-list (configured
+    server-side as a Bing Custom Search "configuration"). Provides hard source
+    restriction rather than a soft ``site:`` hint, which makes the avatar's
+    external answers safer to trust.
+  * ``webiq`` - an OpenAPI tool that calls the app's own
+    ``/api/tools/search-web``, which runs the same trusted-site Web IQ search as
+    model mode (``backend/api/agent_tools.py``). Measured faster than Bing with
+    equal-or-better answers; see docs/evaluation-history.md.
 
 The agent's system prompt, model, and tool wiring live here; the runtime
 backend (``backend/``) only references the agent by ``AGENT_NAME`` /
@@ -29,10 +36,17 @@ Required environment variables (see ``.env.example``):
     AGENT_NAME                Name of the Foundry agent to create / version (e.g. ``MtnAvatarAgent``)
     AGENT_MODEL               Model deployment name; defaults to ``gpt-5.6-terra``.
                               This deployment must exist in the target project.
+    AGENT_WEB_TOOL            OPTIONAL. ``bing`` (default) or ``webiq``.
     BING_CONNECTION_NAME      OPTIONAL. Grounding-with-Bing-Custom-Search connection in the project.
                               Leave unset to build a search-only agent; add it later and re-run.
     BING_CUSTOM_CONFIG_NAME   OPTIONAL. Bing Custom Search configuration (instance) name — the curated
                               allow-list of sites that the tool is restricted to.
+    SERVICE_APP_URI           webiq only. The app's public URL (an azd output); AGENT_WEB_TOOL_URL
+                              overrides it.
+    AGENT_WEB_TOOL_AUTH       webiq only. ``key`` or ``entra`` (an azd output: how the app checks
+                              the caller). Inferred from the next two when unset.
+    AGENT_WEB_TOOL_CONNECTION_NAME  webiq key mode. The Foundry connection holding the key.
+    AGENT_WEB_TOOL_AUDIENCE   webiq managed-identity mode. The token audience (api://<appId>).
     AI_SEARCH_QUERY_TYPE      OPTIONAL. simple, semantic (default), vector, vector_simple_hybrid,
                               or vector_semantic_hybrid. semantic is lexical + semantic reranking,
                               without vector retrieval.
@@ -79,6 +93,12 @@ from azure.ai.projects.models import (
     BingCustomSearchConfiguration,
     BingCustomSearchPreviewTool,
     BingCustomSearchToolParameters,
+    OpenApiFunctionDefinition,
+    OpenApiManagedAuthDetails,
+    OpenApiManagedSecurityScheme,
+    OpenApiProjectConnectionAuthDetails,
+    OpenApiProjectConnectionSecurityScheme,
+    OpenApiTool,
     PromptAgentDefinition,
     Reasoning,
 )
@@ -128,33 +148,54 @@ _PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
 AGENT_SEARCH_TOOL_NAME = "azure_ai_search"
 AGENT_WEB_TOOL_NAME = "bing_custom_search"
 
+# The Web IQ web tool. Foundry names an OpenAPI function <tool name>_<operationId>,
+# so the agent sees `webiq_search_web`. These strings are the ones measured in the
+# Bing vs Web IQ A/B (docs/evaluation-history.md); the query description is what
+# stops the model adding its own site: operators on top of the enforced list.
+WEBIQ_TOOL_NAME = "webiq"
+WEBIQ_OPERATION_ID = "search_web"
+AGENT_WEBIQ_TOOL_NAME = f"{WEBIQ_TOOL_NAME}_{WEBIQ_OPERATION_ID}"
+AGENT_WEB_TOOL_NAMES = {"bing": AGENT_WEB_TOOL_NAME, "webiq": AGENT_WEBIQ_TOOL_NAME}
+# Must match backend/api/agent_tools.py (pinned by tests/test_agent_tool_wiring.py).
+WEBIQ_TOOL_PATH = "/api/tools/search-web"
+WEBIQ_TOOL_KEY_HEADER = "x-tool-key"
+WEBIQ_TOOL_DESCRIPTION = (
+    "Search trusted public web sources for current, external information: MTN corporate facts, "
+    "leadership, results, share price, and telecom industry and competitor news."
+)
+WEBIQ_QUERY_DESCRIPTION = (
+    "What to search for, in natural language keywords. Do not add 'site:' operators or domain "
+    "names - the trusted sources are applied automatically."
+)
 
-def _apply_brand(text: str) -> str:
+
+def _apply_brand(text: str, web_tool: str = AGENT_WEB_TOOL_NAME) -> str:
     """Substitute brand and tool placeholders in a loaded prompt.
 
     {{SEARCH_TOOL}}/{{WEB_TOOL}} exist because one authored prompt serves both
     voice bindings, and the two register different tool names — model mode has
     search_minutes / search_web (see backend/voice/tools.py). Naming either set
     literally would leave the other mode describing tools that do not exist.
-    These must resolve to the names the tools are actually created with below.
+    These must resolve to the names the tools are actually created with below;
+    ``web_tool`` is the agent's web tool as it sees it (AGENT_WEB_TOOL_NAMES).
     """
     return (
         expand_onboarding(text).replace("{{AVATAR_NAME}}", resolve_avatar_display_name())
         .replace("{{SEARCH_TOOL}}", AGENT_SEARCH_TOOL_NAME)
-        .replace("{{WEB_TOOL}}", AGENT_WEB_TOOL_NAME)
+        .replace("{{WEB_TOOL}}", web_tool)
     )
 
 
-def _load_prompt(*relative: str) -> str:
+def _load_prompt(*relative: str, web_tool: str = AGENT_WEB_TOOL_NAME) -> str:
     """Load a prompt file from prompts/ as UTF-8 plain text."""
     return _apply_brand(
-        _PROMPTS_DIR.joinpath(*relative).read_text(encoding="utf-8").strip()
+        _PROMPTS_DIR.joinpath(*relative).read_text(encoding="utf-8").strip(), web_tool
     )
 
 
-def agent_description() -> str:
+def agent_description(web_tool: str = AGENT_WEB_TOOL_NAME) -> str:
     """Agent description, brand-substituted at call time (see _apply_brand)."""
-    return _load_prompt("agent", "description.md")
+    return _load_prompt("agent", "description.md", web_tool=web_tool)
 
 # Agent instructions — one prompt, loaded for every model.
 #
@@ -204,6 +245,34 @@ def _retrieval_settings(settings: dict | None = None) -> tuple[AzureAISearchQuer
     except ValueError:
         raise ValueError(f"AI_SEARCH_TOP_K must be a positive integer; got {top_k!r}.") from None
     return query_type, parsed_top_k
+
+
+def _web_tool_settings() -> dict:
+    """Read the agent's web tool choice and, for Web IQ, how Foundry will call it.
+
+    AGENT_WEB_TOOL_AUTH is a bicep output recording which caller check the app
+    was actually configured with, so the agent is wired to match it. For a
+    hand-run from a .env without it, infer it the same way bicep decides: a key
+    connection means key mode, else an audience means managed identity.
+    """
+    choice = (os.getenv("AGENT_WEB_TOOL") or "").strip().lower() or "bing"
+    if choice not in AGENT_WEB_TOOL_NAMES:
+        raise ValueError(
+            f"AGENT_WEB_TOOL must be one of: {', '.join(AGENT_WEB_TOOL_NAMES)}; got {choice!r}."
+        )
+    connection = (os.getenv("AGENT_WEB_TOOL_CONNECTION_NAME") or "").strip() or None
+    audience = (os.getenv("AGENT_WEB_TOOL_AUDIENCE") or "").strip() or None
+    auth = (os.getenv("AGENT_WEB_TOOL_AUTH") or "").strip().lower()
+    if not auth:
+        auth = "key" if connection else ("entra" if audience else "")
+    url = (os.getenv("AGENT_WEB_TOOL_URL") or os.getenv("SERVICE_APP_URI") or "").strip().rstrip("/")
+    return {
+        "agent_web_tool": choice,
+        "agent_web_tool_auth": auth or None,
+        "agent_web_tool_connection_name": connection,
+        "agent_web_tool_audience": audience,
+        "agent_web_tool_url": url or None,
+    }
 
 
 def _validate_clone_names(source_name: str, target_name: str) -> None:
@@ -256,6 +325,7 @@ def load_settings(
         # Bing Custom Search configuration (instance) name — the curated
         # allow-list of sites the web tool is restricted to.
         "bing_custom_config_name": (os.getenv("BING_CUSTOM_CONFIG_NAME") or "").strip() or None,
+        **_web_tool_settings(),
     }
     # Bing is OPTIONAL, in both of the ways it can be absent: the vars may be
     # unset (a greenfield deploy that provisioned Foundry + AI Search but no
@@ -327,6 +397,77 @@ def build_bing_tool(
     )
 
 
+def webiq_openapi_spec(base_url: str, *, key_header: str | None = None) -> dict:
+    """OpenAPI 3.0 spec for the app's /api/tools/search-web, as Foundry calls it.
+
+    ``key_header`` declares the apiKey scheme Foundry fills from the project
+    connection. In managed-identity mode there is no scheme: Foundry adds the
+    bearer token itself, from the tool's ``auth``.
+    """
+    spec: dict = {
+        "openapi": "3.0.1",
+        "info": {"title": "Trusted web search", "version": "1.0.0"},
+        "servers": [{"url": base_url.rstrip("/")}],
+        "paths": {WEBIQ_TOOL_PATH: {"post": {
+            "operationId": WEBIQ_OPERATION_ID,
+            "summary": WEBIQ_TOOL_DESCRIPTION,
+            "requestBody": {"required": True, "content": {"application/json": {"schema": {
+                "type": "object",
+                "required": ["query"],
+                "properties": {"query": {"type": "string", "description": WEBIQ_QUERY_DESCRIPTION}},
+            }}}},
+            "responses": {"200": {
+                "description": "Search results",
+                "content": {"application/json": {"schema": {"type": "object"}}},
+            }},
+        }}},
+    }
+    if key_header:
+        spec["components"] = {
+            "securitySchemes": {"apiKeyHeader": {"type": "apiKey", "name": key_header, "in": "header"}}
+        }
+        spec["security"] = [{"apiKeyHeader": []}]
+    return spec
+
+
+def build_webiq_tool(
+    base_url: str,
+    *,
+    connection_id: str | None = None,
+    audience: str | None = None,
+) -> OpenApiTool:
+    """Web IQ through the app, as an OpenAPI tool. Exactly one auth mode.
+
+    Why a call to our own app rather than to Web IQ directly: Web IQ has no
+    server-side allow-list, and the trusted-site scope, staging-mirror filter
+    and passage budget already live in backend/voice/tools.py for model mode.
+    Measured in the A/B (docs/evaluation-history.md): the tool step took 0.66 s
+    against Bing's 1.83 s, with 15/15 good answers; Web IQ called directly with
+    no filter got the share price wrong 2 of 3 times.
+
+    ``connection_id``: key mode. The Foundry connection holds the key and sends
+    it in ``x-tool-key``. ``audience``: managed identity. Foundry's identity
+    presents an Entra token for this audience, which the app verifies.
+    """
+    if bool(connection_id) == bool(audience):
+        raise ValueError("build_webiq_tool needs exactly one of connection_id (key) or audience (managed identity).")
+    if not base_url.lower().startswith("https://"):
+        raise ValueError(f"The Web IQ tool URL must be public https; got {base_url!r}.")
+    if connection_id:
+        auth = OpenApiProjectConnectionAuthDetails(
+            security_scheme=OpenApiProjectConnectionSecurityScheme(project_connection_id=connection_id)
+        )
+        spec = webiq_openapi_spec(base_url, key_header=WEBIQ_TOOL_KEY_HEADER)
+    else:
+        auth = OpenApiManagedAuthDetails(security_scheme=OpenApiManagedSecurityScheme(audience=audience))
+        spec = webiq_openapi_spec(base_url)
+    return OpenApiTool(
+        openapi=OpenApiFunctionDefinition(
+            name=WEBIQ_TOOL_NAME, description=WEBIQ_TOOL_DESCRIPTION, spec=spec, auth=auth,
+        )
+    )
+
+
 def build_tools(
     search_connection_id: str,
     search_index_name: str,
@@ -335,14 +476,21 @@ def build_tools(
     *,
     query_type: str | None = None,
     top_k: int | None = None,
+    web_tool: object | None = None,
 ) -> list:
-    """Build the tool list for the agent: AI Search + (optional) Bing Custom Search.
+    """Build the tool list for the agent: AI Search + (optional) one web tool.
+
+    The web tool is Bing Custom Search when its connection and configuration are
+    given, or ``web_tool`` — a prebuilt tool such as build_webiq_tool() — never
+    both: two web tools would leave the prompt's routing rules naming only one.
 
     AI_SEARCH_QUERY_TYPE defaults to SEMANTIC: BM25 candidates followed by
     semantic reranking, without vectors. AI_SEARCH_TOP_K defaults to 5.
     This is the tested whole-section configuration. Explicit legacy settings
     (vector_simple_hybrid / 8) remain supported; index migrations are separate.
     """
+    if web_tool is not None and bing_connection_id:
+        raise ValueError("build_tools takes one web tool: Bing or web_tool, not both.")
     retrieval = {}
     if query_type is not None:
         retrieval["ai_search_query_type"] = query_type
@@ -368,6 +516,8 @@ def build_tools(
     tools: list = [ai_search]
     if bing_connection_id and bing_custom_config_name:
         tools.append(build_bing_tool(bing_connection_id, bing_custom_config_name))
+    elif web_tool is not None:
+        tools.append(web_tool)
     return tools
 
 
@@ -416,14 +566,68 @@ def _find_connection(project: AIProjectClient, name: str):
         raise
 
 
+def _resolve_webiq_tool(project: AIProjectClient, settings: dict) -> OpenApiTool | None:
+    """Build the Web IQ tool from the deployment's outputs, or None with the reason printed.
+
+    Every failure here degrades rather than fails, like a missing Bing
+    connection: the agent still answers from the indexed documents.
+    """
+    url = settings.get("agent_web_tool_url")
+    auth = settings.get("agent_web_tool_auth")
+
+    def degraded(reason: str, fix: str) -> None:
+        print(
+            f"WARNING: Web IQ web tool left out — {reason}.\n"
+            "         Creating the agent WITHOUT the web/news tool — it will answer from the\n"
+            "         indexed board/meeting minutes only. This is a degraded but working agent.\n"
+            f"         {fix}"
+        )
+
+    if not url or not url.lower().startswith("https://"):
+        degraded(
+            f"no public https app URL (SERVICE_APP_URI={url!r})",
+            "Set SERVICE_APP_URI (an azd output) or AGENT_WEB_TOOL_URL, then re-run this script.",
+        )
+        return None
+    if auth == "key":
+        name = settings.get("agent_web_tool_connection_name")
+        if not name:
+            degraded("key mode but AGENT_WEB_TOOL_CONNECTION_NAME is not set",
+                     "Re-run `azd provision`; it creates the connection and outputs its name.")
+            return None
+        try:
+            connection = _find_connection(project, name)
+        except ResourceNotFoundError:
+            degraded(f"connection {name!r} was not found in this project",
+                     "Re-run `azd provision` to create it, then re-run this script.")
+            return None
+        print(f"Web tool: {AGENT_WEBIQ_TOOL_NAME} -> {url}{WEBIQ_TOOL_PATH} (shared key, connection {name!r}).")
+        return build_webiq_tool(url, connection_id=connection.id)
+    if auth == "entra":
+        audience = settings.get("agent_web_tool_audience")
+        if not audience:
+            degraded("managed-identity mode but AGENT_WEB_TOOL_AUDIENCE is not set",
+                     "Run `uv run python scripts/preflight.py` (it creates the app registration), "
+                     "then `azd provision`.")
+            return None
+        print(f"Web tool: {AGENT_WEBIQ_TOOL_NAME} -> {url}{WEBIQ_TOOL_PATH} (managed identity, audience {audience}).")
+        return build_webiq_tool(url, audience=audience)
+    degraded(
+        "the app was not given a way to check the caller (AGENT_WEB_TOOL_AUTH is empty)",
+        "Run `uv run python scripts/preflight.py`, then `azd provision`: preflight sets up\n"
+        "         managed identity (or a key if the directory refuses) and bicep configures the app.",
+    )
+    return None
+
+
 def create_agent(project: AIProjectClient, settings: dict) -> tuple[object, bool]:
     """Create a new version of the Foundry agent.
 
     Returns ``(agent, web_tool_enabled)``. ``web_tool_enabled`` is False when the
-    optional Grounding-with-Bing-Custom-Search tool was left out — either because
-    it was not configured or because the named connection does not exist. The
-    agent is still fully usable in that case; it just answers from the indexed
-    documents alone.
+    optional web tool (Bing Custom Search, or Web IQ with AGENT_WEB_TOOL=webiq)
+    was left out — either because it was not configured or because what it
+    needs does not exist. The agent is still fully usable in that case; it just
+    answers from the indexed documents alone.
 
     Reasoning effort (`AGENT_REASONING_EFFORT`) is OPTIONAL. Behavior by model:
 
@@ -472,8 +676,15 @@ def create_agent(project: AIProjectClient, settings: dict) -> tuple[object, bool
     bing_custom_config_name = settings.get("bing_custom_config_name")
     bing_connection_name = settings.get("bing_connection_name")
     web_tool_enabled = False
+    web_choice = settings.get("agent_web_tool") or "bing"
+    web_tool_name = AGENT_WEB_TOOL_NAMES[web_choice]
+    webiq_tool = None
 
-    if bing_connection_name and bing_custom_config_name:
+    if web_choice == "webiq":
+        # Bing is not deployed with this choice; any BING_* left in the env is ignored.
+        webiq_tool = _resolve_webiq_tool(project, settings)
+        web_tool_enabled = webiq_tool is not None
+    elif bing_connection_name and bing_custom_config_name:
         try:
             bing_connection = _find_connection(project, bing_connection_name)
         except ResourceNotFoundError:
@@ -507,11 +718,12 @@ def create_agent(project: AIProjectClient, settings: dict) -> tuple[object, bool
         bing_custom_config_name,
         query_type=query_type,
         top_k=top_k,
+        web_tool=webiq_tool,
     )
 
     definition_kwargs = {
         "model": settings["agent_model"],
-        "instructions": _load_prompt("agent", "instructions.md"),
+        "instructions": _load_prompt("agent", "instructions.md", web_tool=web_tool_name),
         "tools": tools,
     }
     effort = settings.get("agent_reasoning_effort")
@@ -548,7 +760,7 @@ def create_agent(project: AIProjectClient, settings: dict) -> tuple[object, bool
     agent = project.agents.create_version(
         agent_name=settings["agent_name"],
         definition=PromptAgentDefinition(**definition_kwargs),
-        description=agent_description(),
+        description=agent_description(web_tool_name),
     )
     print(f"Agent created (id: {agent.id}, name: {agent.name}, version: {agent.version})")
     print(
@@ -559,20 +771,37 @@ def create_agent(project: AIProjectClient, settings: dict) -> tuple[object, bool
     return agent, web_tool_enabled
 
 
+def _definition_web_tool_name(definition: dict) -> str:
+    """The web tool name the agent sees, read from an existing definition.
+
+    An instruction-only update keeps the tools, so the prompt has to name the
+    web tool the agent already has — not whichever AGENT_WEB_TOOL happens to be
+    in this shell.
+    """
+    for tool in definition.get("tools") or []:
+        if (
+            isinstance(tool, dict)
+            and tool.get("type") == "openapi"
+            and (tool.get("openapi") or {}).get("name") == WEBIQ_TOOL_NAME
+        ):
+            return AGENT_WEBIQ_TOOL_NAME
+    return AGENT_WEB_TOOL_NAME
+
+
 def update_agent_instructions(project: AIProjectClient, agent_name: str) -> object:
     """Publish instructions only, retaining the existing agent definition."""
     if not isinstance(agent_name, str) or not agent_name.strip():
         raise ValueError("AGENT_NAME must name an existing agent.")
     agent_name = agent_name.strip()
-    instructions = _load_prompt("agent", "instructions.md")
-    if not instructions:
-        raise ValueError("Agent instructions must not be empty.")
     source = project.agents.get(agent_name)
     source_version = source.versions.latest.version
     previous = project.agents.get_version(agent_name, source_version)
     original = copy.deepcopy(previous.definition.as_dict())
     if original.get("kind") != "prompt":
         raise ValueError("--update-instructions requires an existing prompt agent.")
+    instructions = _load_prompt("agent", "instructions.md", web_tool=_definition_web_tool_name(original))
+    if not instructions:
+        raise ValueError("Agent instructions must not be empty.")
     if project.agents.get(agent_name).versions.latest.version != source_version:
         raise RuntimeError("Agent changed while reading its definition; no update was published.")
     if original.get("instructions") == instructions:
@@ -750,11 +979,20 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
     if not web_tool_enabled:
+        if settings.get("agent_web_tool") == "webiq":
+            fix = (
+                "documents only. The Web IQ tool was left out (see the WARNING above). Fix that,\n"
+                "then re-run:\n"
+            )
+        else:
+            fix = (
+                "documents only. Add a Grounding-with-Bing-Custom-Search connection to the Foundry\n"
+                "project, set BING_CONNECTION_NAME + BING_CUSTOM_CONFIG_NAME, then re-run:\n"
+            )
         print(
             "\nAgent is READY but DEGRADED: no web/news tool, so it answers from the indexed\n"
-            "documents only. Add a Grounding-with-Bing-Custom-Search connection to the Foundry\n"
-            "project, set BING_CONNECTION_NAME + BING_CUSTOM_CONFIG_NAME, then re-run:\n"
-            "    uv run python scripts/setup_foundry_agent.py"
+            + fix
+            + "    uv run python scripts/setup_foundry_agent.py"
         )
         return EXIT_DEGRADED
     return 0

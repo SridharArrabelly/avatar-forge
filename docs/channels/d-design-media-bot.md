@@ -120,7 +120,7 @@ flowchart LR
     end
 
     V["Azure Voice Live"]
-    F["Foundry agent<br/>AI Search RAG + Bing news"]
+    F["Foundry agent<br/>AI Search RAG + web search"]
 
     P <== "mixed room audio up<br/>the avatar's voice down" ==> A
     B <== "AudioMetadata + AudioData over WSS<br/>both directions" ==> WS

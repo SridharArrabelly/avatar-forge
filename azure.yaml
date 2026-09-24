@@ -151,8 +151,12 @@ hooks:
         switch ($agentState) {
           'ok'       { Write-Host "  Agent        : ready (search + web tools)" -ForegroundColor Green }
           'degraded' { Write-Host "  Agent        : ready, WEB TOOL OFF - answers from indexed documents only." -ForegroundColor Yellow
-                       Write-Host "                 To enable: add a Grounding-with-Bing-Custom-Search connection," -ForegroundColor Yellow
-                       Write-Host "                 set BING_CONNECTION_NAME + BING_CUSTOM_CONFIG_NAME, then re-run:" -ForegroundColor Yellow
+                       if ($env:AGENT_WEB_TOOL -eq 'webiq') {
+                         Write-Host "                 To enable: fix the Web IQ tool WARNING above, then re-run:" -ForegroundColor Yellow
+                       } else {
+                         Write-Host "                 To enable: add a Grounding-with-Bing-Custom-Search connection," -ForegroundColor Yellow
+                         Write-Host "                 set BING_CONNECTION_NAME + BING_CUSTOM_CONFIG_NAME, then re-run:" -ForegroundColor Yellow
+                       }
                        Write-Host "                 uv run python scripts/setup_foundry_agent.py" -ForegroundColor Yellow }
           'failed'   { Write-Host "  Agent        : NOT CREATED" -ForegroundColor Red }
           'blocked'  { Write-Host "  Agent        : NOT CREATED - Search index setup failed first" -ForegroundColor Red }
@@ -274,8 +278,12 @@ hooks:
         case "$agent_state" in
           ok)       echo "  Agent        : ready (search + web tools)" ;;
           degraded) echo "  Agent        : ready, WEB TOOL OFF - answers from indexed documents only."
-                    echo "                 To enable: add a Grounding-with-Bing-Custom-Search connection,"
-                    echo "                 set BING_CONNECTION_NAME + BING_CUSTOM_CONFIG_NAME, then re-run:"
+                    if [ "$AGENT_WEB_TOOL" = "webiq" ]; then
+                      echo "                 To enable: fix the Web IQ tool WARNING above, then re-run:"
+                    else
+                      echo "                 To enable: add a Grounding-with-Bing-Custom-Search connection,"
+                      echo "                 set BING_CONNECTION_NAME + BING_CUSTOM_CONFIG_NAME, then re-run:"
+                    fi
                     echo "                 uv run python scripts/setup_foundry_agent.py" ;;
           failed)   echo "  Agent        : NOT CREATED" ;;
           blocked)  echo "  Agent        : NOT CREATED - Search index setup failed first" ;;

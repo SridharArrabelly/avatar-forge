@@ -7,7 +7,8 @@ Four identities show up in this repo and they are easy to confuse. Start here:
 | **Backend principal** | your signed-in user locally; the **user-assigned managed identity** in Azure | Voice Live, the Foundry agent/model, AI Search queries | `az login` / assigned by the template |
 | **Deploying principal** | whoever runs `azd up` | creating resources, stamping RBAC, building the index, registering the agent | `az login` + `azd auth login` |
 | **Calling bot** *(channel D only)* | an Entra app registration behind an Azure Bot | the Teams calling/Graph channel | [`../meeting-bot/README.md`](../meeting-bot/README.md) |
-| **Web IQ** *(model mode only)* | either a service API key **or** the backend managed identity | the web-search tool | `WEBIQ_API_KEY`, or the identity — which only works once its client id is **bound in the Web IQ portal**, and some profiles cannot bind at all |
+| **Web IQ** *(model mode, and agent mode with `AGENT_WEB_TOOL=webiq`)* | either a service API key **or** the backend managed identity | the web-search tool | `WEBIQ_API_KEY`, or the identity — which only works once its client id is **bound in the Web IQ portal**, and some profiles cannot bind at all |
+| **Agent web tool caller** *(agent mode with `AGENT_WEB_TOOL=webiq`)* | the Foundry account's (or project's) system-assigned managed identity, **or** a shared key | Foundry calling the app's `/api/tools/search-web` | created by preflight — see [below](#the-agents-web-iq-tool-foundry-calls-the-app) |
 
 The first two are what almost everything below is about. They are usually *different*
 principals with *different* roles, which is why a deploy can succeed and the running app
@@ -50,12 +51,13 @@ assignment that will not help:
 
 | Variable | Path | When |
 | --- | --- | --- |
-| `WEBIQ_API_KEY` | the Web IQ web-search tool ([`backend/voice/tools.py`](../backend/voice/tools.py)) | **model mode only**, and optional *if* the keyless route is open to you — agent mode uses Grounding-with-Bing-Custom-Search, a native Foundry tool that rides the Entra path. Unset, the backend authenticates to Web IQ with the managed identity on the `https://api.microsoft.ai/.default` scope, and proves at startup that it can obtain a token before offering the tool. That token still has to be **entitled** — see [below](#the-keyless-web-iq-route-needs-one-thing-azure-cannot-give-you). Set the key to skip both the check and the binding. |
+| `WEBIQ_API_KEY` | the Web IQ web-search tool ([`backend/voice/tools.py`](../backend/voice/tools.py)) | **model mode**, or agent mode with `AGENT_WEB_TOOL=webiq` (the default agent web tool, Grounding-with-Bing-Custom-Search, is a native Foundry tool that rides the Entra path). Optional *if* the keyless route is open to you. Unset, the backend authenticates to Web IQ with the managed identity on the `https://api.microsoft.ai/.default` scope, and proves at startup that it can obtain a token before offering the tool. That token still has to be **entitled** — see [below](#the-keyless-web-iq-route-needs-one-thing-azure-cannot-give-you). Set the key to skip both the check and the binding. |
+| `AGENT_WEB_TOOL_KEY` | Foundry → the app's `/api/tools/search-web` ([`backend/api/agent_tools.py`](../backend/api/agent_tools.py)) | agent mode with `AGENT_WEB_TOOL=webiq`, **only** when you set it or the deploy could not create an app registration. Otherwise Foundry uses a managed-identity token — see [below](#the-agents-web-iq-tool-foundry-calls-the-app). |
 | `AZURE_SEARCH_API_KEY` | the meeting-catalogue `SearchClient` ([`backend/voice/catalog.py`](../backend/voice/catalog.py)) | optional fallback. Unset — the normal case — it uses the credential above. |
 
 `AZURE_VOICELIVE_API_KEY` is deliberately **ignored** on the agent path
 ([`backend/api/websocket.py`](../backend/api/websocket.py) forces an empty key), so
-setting it will not rescue a broken agent session. Both variables in the table above are
+setting it will not rescue a broken agent session. All variables in the table above are
 documented in [configuration.md](configuration.md).
 
 ### The keyless Web IQ route needs one thing Azure cannot give you
@@ -147,6 +149,48 @@ The scope, the header names and the request shape all follow the published
 contract and are pinned by
 [`tests/test_webiq_contract.py`](../tests/test_webiq_contract.py) so they cannot
 drift from it unnoticed.
+
+## The agent's Web IQ tool: Foundry calls the app
+
+With `AGENT_WEB_TOOL=webiq` a web question makes **two** authenticated hops:
+
+1. **Foundry → the app.** The agent's OpenAPI tool calls the container app's
+   public `POST /api/tools/search-web`
+   ([`backend/api/agent_tools.py`](../backend/api/agent_tools.py)).
+2. **The app → Web IQ.** The same `search_web()` model mode uses, with the site
+   filter, authenticated exactly as [above](#the-keyless-web-iq-route-needs-one-thing-azure-cannot-give-you).
+
+The route is on the public internet, so hop 1 must prove the caller is *our*
+Foundry. It does that one of two ways, chosen at deploy time in this order:
+
+| | How Foundry authenticates | What the app checks | Set up by |
+| --- | --- | --- | --- |
+| **Key** — when `AGENT_WEB_TOOL_KEY` is set | a Custom Keys project connection sends it as `x-tool-key` | constant-time compare with the container-app secret | you, or preflight's fallback |
+| **Managed identity** — otherwise | the Foundry resource's system-assigned identity gets an Entra token for `AGENT_WEB_TOOL_AUDIENCE` | signature from the tenant's published keys, audience, issuer, expiry, `tid` = our tenant, **and** `oid` = the Foundry account's or project's identity | preflight creates the app registration |
+
+The `oid` check matters: any identity in the tenant can request a token for any
+app registration's audience, so the audience alone does not identify the caller.
+A valid token from anyone else gets `403`, and the app logs its `oid` and
+`appid`. That line is also how to diagnose a Foundry that signs as a different
+identity than expected.
+
+**What preflight does.** In agent mode with `AGENT_WEB_TOOL=webiq`, no key and no
+audience, preflight creates (or reuses by name) a single-tenant app registration
+`avatar-forge-web-tool-<env>` with no secrets and no API permissions,
+gives it the identifier URI `api://<appId>` and a service principal, and stores
+`AGENT_WEB_TOOL_AUDIENCE` and `AGENT_WEB_TOOL_APP_ID` in the azd environment. The
+registration exists only to be a token audience. It needs a directory role that
+can create applications; tenants that require a service-tree reference also need
+`AGENT_WEB_TOOL_SERVICE_MANAGEMENT_REFERENCE`.
+
+**If the directory says no**, preflight generates a 256-bit key instead, stores it
+as `AGENT_WEB_TOOL_KEY`, prints that it did so, and the deploy continues in key
+mode. To move to managed identity later: have the registration created, `azd env
+set AGENT_WEB_TOOL_AUDIENCE api://<appId>` and `AGENT_WEB_TOOL_APP_ID <appId>`,
+clear the key with `azd env set AGENT_WEB_TOOL_KEY ""`, and `azd provision`.
+
+**Clean-up.** `azd down` does not delete Entra objects:
+`az ad app delete --id <appId>`.
 
 ## Startup credential pre-warm
 
