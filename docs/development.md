@@ -48,7 +48,8 @@ PyPI URL. **Do not point uv at the mirror** (`uv sync --index-url`,
 mirror, which breaks the image build for everyone outside that network. If it
 happens, `git checkout uv.lock`.
 
-Instead, install exactly what the lock pins, through the mirror pip already uses:
+Instead, install exactly what the lock pins, through the mirror pip already uses.
+**Once per clone:**
 
 ```powershell
 uv run --no-project python scripts/sync_via_mirror.py              # add --extra cosmos if you use it
@@ -56,9 +57,35 @@ uv run --no-project python scripts/sync_via_mirror.py              # add --extra
 
 It verifies every file against the lock's hashes, never writes `uv.lock`, and ends
 with an offline `uv sync --locked` to prove the venv matches. After that, `uv run`
-and `uv sync` work with no downloads. **Re-run it after any pull that changes
-`uv.lock`.** It reads the mirror from `--index-url`, `PIP_INDEX_URL` or pip's config
+and `uv sync` work with no downloads. Extras already installed (such as `cosmos`)
+are kept. It reads the mirror from `--index-url`, `PIP_INDEX_URL` or pip's config
 files, in that order.
+
+**It then keeps itself up to date.** The first successful run installs three git
+hooks (`post-checkout`, `post-merge`, `post-rewrite`) in this clone, so every
+checkout, pull, merge or rebase that changes `uv.lock` or `pyproject.toml` brings
+the venv back in line on its own. A new `git worktree` gets its venv the same
+way. Each hook:
+
+- does nothing (about 0.1 s) when neither file changed;
+- otherwise tries an offline `uv sync` first, and goes to the mirror only for
+  packages it does not already have;
+- never removes packages you added, and never fails or blocks the git command;
+- stands down on branches whose copy of the script predates the hooks.
+
+`SYNC_VIA_MIRROR_SKIP=1` skips it for one command, `--no-hooks` keeps a sync from
+installing it, and `--uninstall-hooks` removes it. If `core.hooksPath` points
+outside the clone's `.git` (a global hooks folder, or husky), a sync leaves it
+alone; `--install-hooks` installs there explicitly. Git never installs hooks from a
+clone by itself, which is why the one manual run is needed.
+
+Nothing here is tied to one company's network. It uses whatever index pip is
+configured with (Artifactory, Nexus, Azure Artifacts, devpi, …). If your pip has
+no mirror yet, set it once with `pip config set global.index-url <mirror>/simple/`.
+If the feed needs sign-in, give uv the same credentials pip uses: a token in the
+URL, `netrc`, or `UV_KEYRING_PROVIDER=subprocess` with `keyring` on `PATH`. With no
+mirror configured, the hooks just run a normal `uv sync`. Where PyPI is reachable
+you need none of this: plain `uv sync` works.
 
 Edits to `pyproject.toml` alone never need the mirror: the project builds with uv's
 built-in backend (`uv_build`), which runs inside uv and downloads nothing, provided
