@@ -159,6 +159,27 @@ def main() -> int:
         model_search not in agent_out and model_web not in agent_out,
     )
 
+    print("\nAgent mode with the Web IQ tool substitutes the name Foundry exposes")
+    webiq = agent_setup.AGENT_WEBIQ_TOOL_NAME
+    tool = agent_setup.build_webiq_tool("https://app.example", audience="api://x").as_dict()["openapi"]
+    operations = [op["operationId"] for path in tool["spec"]["paths"].values() for op in path.values()]
+    # Foundry names an OpenAPI function <tool name>_<operationId>.
+    check(
+        f"{webiq!r} is <tool name>_<operationId> of the tool actually built",
+        operations == [agent_setup.WEBIQ_OPERATION_ID] and webiq == f"{tool['name']}_{operations[0]}",
+        f"got name={tool['name']!r} operations={operations}",
+    )
+    webiq_out = agent_setup._apply_brand("{{AVATAR_NAME}} uses {{SEARCH_TOOL}} and {{WEB_TOOL}}.\n", webiq)
+    check("no unsubstituted placeholder", "{{" not in webiq_out)
+    check(f"agent resolves web -> {webiq!r}", webiq in webiq_out and agent_web not in webiq_out)
+    # Word boundaries: `search_web` is a substring of `webiq_search_web` but not a
+    # name the agent could call.
+    check(
+        "agent leaks no model names",
+        not re.search(rf"\b({re.escape(model_search)}|{re.escape(model_web)})\b", webiq_out),
+    )
+    check("agent != model web tool (Web IQ)", webiq != model_web)
+
     print(f"\n{checks - len(failures)}/{checks} checks passed")
     if failures:
         print("FAILED: " + ", ".join(failures))

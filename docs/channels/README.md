@@ -10,7 +10,8 @@
 
 The avatar is **one brain with several front doors**. Everything below shares the
 same core: the FastAPI backend, the Azure Voice Live session, the Foundry agent,
-and its grounding (AI Search over meeting minutes + Bing Custom Search for news).
+and its grounding (AI Search over meeting minutes + a site-scoped web tool for news:
+Web IQ, or Bing Custom Search).
 No channel re-implements answering.
 
 What differs between channels is only **how audio and video get in and out**, and
@@ -121,7 +122,7 @@ capability, so environments created before profiles existed are unaffected.
 | `MEETING_BOT_APP_ID` / `_DNS_LABEL` / `_ADMIN_PASSWORD` | you supply | Required for **D**; the host is skipped if any is missing. |
 | `ENABLE_ACS` | `in-call-browser` | Provisions `modules/communicationServices.bicep`. **Required by channel C**, the browser joiner at `/acs-join.html`, where a browser tab joins a meeting as an anonymous guest. Channels A–B and D do not need it: channel D joins via Graph calling, and the `acs` in `/ws/acs/audio` is the bridge protocol's name, not an ACS dependency. |
 | `ACS_AVATAR_VIDEO_ENABLED`, `BROWSER_JOIN_VIDEO_ENABLED` | `in-call-browser` | Give **C** a face. Without them the joiner still hears and answers, but publishes no video tile. |
-| `DEPLOY_BING_GROUNDING` | `true` | Provisions `modules/bingGrounding.bicep` (Bing account + site allow-list) and the Foundry connection to it, enabling the agent's web tool. On by default; set `false` to skip. Applies to every channel, but **only in agent mode** — see below. |
+| `DEPLOY_BING_GROUNDING` | `true` | Provisions `modules/bingGrounding.bicep` (Bing account + site allow-list) and the Foundry connection to it, enabling the agent's web tool. On by default; set `false` to skip. Applies to every channel, but **only in agent mode with `AGENT_WEB_TOOL=bing`**; the default web tool, `webiq`, deploys no Bing — see below. |
 
 > **Provisioning follows `VOICE_BINDING`.** Grounding with Bing is a *managed
 > Foundry tool*, and model mode has no agent for it to attach to, so under

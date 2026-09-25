@@ -142,8 +142,9 @@ BINDINGS: dict[str, Binding] = {
             "speech is transcribed before the agent sees it."
         ),
         tradeoff=(
-            "Grounding with Bing works here. Tools and prompt are editable in the "
-            "portal without redeploying. The answer waits on transcription."
+            "You choose the web tool: Grounding with Bing or Web IQ through the app. "
+            "Tools and prompt are editable in the portal without redeploying. The "
+            "answer waits on transcription."
         ),
     ),
     "model": Binding(
@@ -157,6 +158,97 @@ BINDINGS: dict[str, Binding] = {
         tradeoff=(
             "Lower time-to-first-token, but Grounding with Bing cannot follow — web "
             "search runs through Web IQ instead, and the prompt ships in the image."
+        ),
+    ),
+}
+
+
+@dataclass(frozen=True)
+class WebTool:
+    """Agent mode's web search tool. Recorded as AGENT_WEB_TOOL.
+
+    Only asked for agent mode: model mode always searches through Web IQ, because
+    Grounding with Bing has no agent to attach to there.
+    """
+
+    key: str
+    title: str
+    summary: str
+    tradeoff: str
+
+
+WEB_TOOL_ORDER = ["webiq", "bing"]
+# Must match agentWebTool's default in infra/main.bicep and main.parameters.json.
+DEFAULT_WEB_TOOL = "webiq"
+
+# Why resolve_web_tool() picked a tool.
+WEB_TOOL_SET = "set"
+WEB_TOOL_DEFAULT = "default"
+WEB_TOOL_EXISTING = "existing"
+WEB_TOOL_BYO_FOUNDRY = "byo-foundry"
+
+
+def resolve_web_tool(env) -> tuple[str, str]:
+    """The agent web tool an environment deploys, and why: ``(tool, reason)``.
+
+    AGENT_WEB_TOOL wins when set (lower-cased, not validated). Unset, Web IQ is
+    the default for NEW environments only; two kinds keep Bing, because Web IQ
+    would change or break them:
+
+    * ``existing``: agent mode and already deployed (SERVICE_APP_URI is a
+      provision output). The environment predates the choice, when Bing was the
+      only web tool, so defaulting it to Web IQ would silently swap a live
+      agent's tool. Preflight records the tool in agent mode, so a deployed
+      agent-mode environment with nothing recorded is always one of these.
+    * ``byo-foundry``: FOUNDRY_ACCOUNT_NAME is set, and Web IQ needs the Foundry
+      account this template creates.
+    """
+    raw = (env.get("AGENT_WEB_TOOL") or "").strip().lower()
+    if raw:
+        return raw, WEB_TOOL_SET
+    if (env.get("FOUNDRY_ACCOUNT_NAME") or "").strip():
+        return "bing", WEB_TOOL_BYO_FOUNDRY
+    agent = ((env.get("VOICE_BINDING") or "").strip().lower() or "agent") == "agent"
+    if agent and (env.get("SERVICE_APP_URI") or "").strip():
+        return "bing", WEB_TOOL_EXISTING
+    return DEFAULT_WEB_TOOL, WEB_TOOL_DEFAULT
+
+
+def web_tool_reason_note(reason: str) -> str:
+    """One line on why an unset AGENT_WEB_TOOL resolved to Bing, or ""."""
+    if reason == WEB_TOOL_EXISTING:
+        return ("kept: this environment was deployed before Web IQ became the default, "
+                "so its agent stays on Bing until you choose otherwise")
+    if reason == WEB_TOOL_BYO_FOUNDRY:
+        return "Web IQ needs the Foundry account this template creates, and FOUNDRY_ACCOUNT_NAME is set"
+    return ""
+
+
+WEB_TOOLS: dict[str, WebTool] = {
+    "bing": WebTool(
+        key="bing",
+        title="Grounding with Bing Custom Search",
+        summary=(
+            "A native Foundry tool. azd deploys the Bing account, its trusted-site "
+            "list and the connection."
+        ),
+        tradeoff=(
+            "Slower in our tests: 1.83 s per search, 13/15 good answers. The one to "
+            "use with an existing Foundry account (FOUNDRY_ACCOUNT_NAME)."
+        ),
+    ),
+    "webiq": WebTool(
+        key="webiq",
+        title="Web IQ through the app",
+        summary=(
+            "An OpenAPI tool that calls this app's /api/tools/search-web, which runs "
+            "Web IQ over the same trusted sites as model mode (TRUSTED_WEB_SITES; unset "
+            "means the open web). No Bing is deployed."
+        ),
+        tradeoff=(
+            "The default. Faster in our tests: 0.66 s per search, first token 1.2 s "
+            "sooner, 15/15 good answers. Needs WEBIQ_API_KEY (unless the app's identity is bound in "
+            "the Web IQ portal) and the Foundry account this template creates."
         ),
     ),
 }
@@ -190,7 +282,7 @@ def _core_costs() -> list[CostItem]:
         CostItem("Log Analytics + App Insights", HOURLY, "ingestion, 30-day retention"),
         CostItem("Voice Live minutes", PER_USE, "higher with avatar video; dominates a live session"),
         CostItem("Model tokens", PER_USE, "`GlobalStandard` chat + embeddings, billed per token"),
-        CostItem("Web searches", PER_USE, "Bing (agent mode) or Web IQ (model mode); either can be left off"),
+        CostItem("Web searches", PER_USE, "Bing or Web IQ in agent mode (AGENT_WEB_TOOL), Web IQ in model mode; either can be left off"),
     ]
 
 
@@ -218,14 +310,19 @@ def _core_steps() -> list[Step]:
             "Point the web tool at your own sources",
             YOU,
             BEFORE,
-            "The two bindings use different search engines. Agent mode: azd deploys "
-            "Grounding with Bing Custom Search for you — edit bingAllowedDomains in "
-            "infra/main.bicep, or set the flag below to false to skip it. Model mode: "
-            "Bing is never deployed (no agent to attach it to); set WEBIQ_API_KEY and "
-            "the same list is reused automatically, stripped to bare hosts, since "
-            "site: cannot match a path. Either way, skipping web "
-            "search is supported — the avatar then answers from your documents alone.",
-            "azd env set DEPLOY_BING_GROUNDING false   # agent mode only",
+            "Every web tool searches the same trusted-site list, TRUSTED_WEB_SITES: "
+            "comma-separated hosts or URLs, a leading + to rank a source first on Bing "
+            "(docs/configuration.md#trusted-web-sources). Agent mode uses the tool "
+            "set_profile.py recorded (AGENT_WEB_TOOL): with bing, azd deploys Grounding "
+            "with Bing Custom Search over the list, and with no list deploys no Bing, "
+            "because Bing has no open-web mode; with webiq, the agent calls the app's "
+            "Web IQ route and no Bing is deployed. Model mode always uses Web IQ (Bing "
+            "has no agent to attach to). Web IQ needs WEBIQ_API_KEY unless the app's "
+            "identity is bound in the Web IQ portal, reduces the list to bare hosts, "
+            "since site: cannot match a path, and with no list searches the open web. "
+            "Skipping web search is supported too — the avatar then answers from your "
+            "documents alone.",
+            'azd env set TRUSTED_WEB_SITES "+www.example.com/investors,news.example.com"',
         ),
         Step(
             "Provision + deploy Azure resources",

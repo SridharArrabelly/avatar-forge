@@ -26,7 +26,7 @@ flowchart LR
     end
 
     APP["FastAPI backend<br/><i>Azure Container Apps</i><br/>owns the Voice Live session"]
-    CORE["Azure Voice Live + Foundry agent<br/>AI Search corpus · Bing news"]
+    CORE["Azure Voice Live + Foundry agent<br/>AI Search corpus · web search"]
 
     U <--> BR
     BR <== "PCM16 over WSS<br/>question up · answer down" ==> APP
@@ -41,7 +41,7 @@ and the two Azure services behind it. Internals: [`../architecture.md`](../archi
 
 A browser page where the user speaks, the avatar listens, and it answers aloud
 with a lip-synced face — grounded in meeting minutes (AI Search) and curated news
-(Bing Custom Search) through the Foundry agent.
+(Web IQ by default, or Bing Custom Search with `AGENT_WEB_TOOL=bing`) through the Foundry agent.
 
 ## 3. What deploys
 
@@ -59,9 +59,12 @@ The default `azd up`, with **no flags set**:
 Nothing Teams-related is provisioned. `meetingBotHost.bicep` and
 `communicationServices.bicep` are both skipped.
 
-The web/news tool is deployed by default: `bingGrounding.bicep` adds
-a Bing account + curated site allow-list, and a Foundry connection
-to it — see section 4.
+The web/news tool is Web IQ by default: the agent calls the app's own
+`/api/tools/search-web`, filtered to your trusted sites, and no Bing is deployed.
+With `AGENT_WEB_TOOL=bing` (which an environment deployed before Web IQ became the
+default keeps), `bingGrounding.bicep` adds a Bing account + curated site allow-list,
+and a Foundry connection to it — see section 4
+([choosing the agent's web tool](../deployment.md#choosing-the-agents-web-tool)).
 
 ```powershell
 azd up
@@ -77,11 +80,14 @@ Deployment mechanics: [`../deployment.md`](../deployment.md).
 | Azure subscription + Contributor on the resource group | You |
 | Model quota in the target region | You / subscription owner |
 | Populate the AI Search index with minutes | You |
-| Edit the Bing site allow-list to your own sources — `bingAllowedDomains` in [`../../infra/main.bicep`](../../infra/main.bicep) | You, unless you set `DEPLOY_BING_GROUNDING=false` |
+| List your trusted web sources — `azd env set TRUSTED_WEB_SITES "..."` ([format](../configuration.md#trusted-web-sources)) | You; unset, Web IQ searches the open web |
 
-The web/news tool is **on by default**; `azd up` deploys the Bing account, the allow-list
-and the Foundry connection with no portal step and no `.env` edit. Edit `bingAllowedDomains`
-so it searches your sources. To skip it (it is billable), set `DEPLOY_BING_GROUNDING=false`;
+The web/news tool needs no portal step and no `.env` edit. With Web IQ, preflight
+creates the app registration Foundry uses to call the app, or a shared key if the
+directory refuses ([auth](../auth.md#the-agents-web-iq-tool-foundry-calls-the-app)).
+With Bing, `azd up` deploys the Bing account, the allow-list and the Foundry
+connection; Bing has no open-web mode, so it is deployed once `TRUSTED_WEB_SITES`
+lists your sources. To skip Bing (it is billable), set `DEPLOY_BING_GROUNDING=false`;
 the avatar then answers from your indexed documents alone.
 
 **No Entra admin. No Teams admin.** See

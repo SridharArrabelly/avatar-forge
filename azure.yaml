@@ -35,6 +35,9 @@ hooks:
       run: |
         if ($env:PREFLIGHT_SKIP -eq 'true') {
           Write-Host "PREFLIGHT_SKIP=true - skipping preflight checks." -ForegroundColor Yellow
+          # Still pin the agent's web tool, so an older environment keeps Bing.
+          uv run python scripts/preflight.py --record-web-tool
+          $global:LASTEXITCODE = 0
         } else {
           uv run python scripts/preflight.py
           if ($LASTEXITCODE -ne 0) {
@@ -47,6 +50,8 @@ hooks:
       run: |
         if [ "$PREFLIGHT_SKIP" = "true" ]; then
           echo "PREFLIGHT_SKIP=true - skipping preflight checks."
+          # Still pin the agent's web tool, so an older environment keeps Bing.
+          uv run python scripts/preflight.py --record-web-tool || true
         else
           uv run python scripts/preflight.py || {
             echo "Preflight failed. Fix the items above, or set PREFLIGHT_SKIP=true to bypass." >&2
@@ -151,9 +156,17 @@ hooks:
         switch ($agentState) {
           'ok'       { Write-Host "  Agent        : ready (search + web tools)" -ForegroundColor Green }
           'degraded' { Write-Host "  Agent        : ready, WEB TOOL OFF - answers from indexed documents only." -ForegroundColor Yellow
-                       Write-Host "                 To enable: add a Grounding-with-Bing-Custom-Search connection," -ForegroundColor Yellow
-                       Write-Host "                 set BING_CONNECTION_NAME + BING_CUSTOM_CONFIG_NAME, then re-run:" -ForegroundColor Yellow
-                       Write-Host "                 uv run python scripts/setup_foundry_agent.py" -ForegroundColor Yellow }
+                       if ($env:AGENT_WEB_TOOL -eq 'webiq') {
+                         Write-Host "                 To enable: fix the Web IQ tool WARNING above, then re-run:" -ForegroundColor Yellow
+                         Write-Host "                 uv run python scripts/setup_foundry_agent.py" -ForegroundColor Yellow
+                       } elseif (-not $env:TRUSTED_WEB_SITES -and $env:DEPLOY_BING_GROUNDING -ne 'false') {
+                         Write-Host "                 Bing was not deployed: it needs sites in TRUSTED_WEB_SITES. To enable:" -ForegroundColor Yellow
+                         Write-Host "                 azd env set TRUSTED_WEB_SITES `"<site>,<site>`"   then   azd provision" -ForegroundColor Yellow
+                       } else {
+                         Write-Host "                 To enable: add a Grounding-with-Bing-Custom-Search connection," -ForegroundColor Yellow
+                         Write-Host "                 set BING_CONNECTION_NAME + BING_CUSTOM_CONFIG_NAME, then re-run:" -ForegroundColor Yellow
+                         Write-Host "                 uv run python scripts/setup_foundry_agent.py" -ForegroundColor Yellow
+                       } }
           'failed'   { Write-Host "  Agent        : NOT CREATED" -ForegroundColor Red }
           'blocked'  { Write-Host "  Agent        : NOT CREATED - Search index setup failed first" -ForegroundColor Red }
           'not-applicable' { Write-Host "  Agent        : not used - VOICE_BINDING=model binds '$env:VOICELIVE_MODEL' directly" -ForegroundColor Cyan }
@@ -274,9 +287,17 @@ hooks:
         case "$agent_state" in
           ok)       echo "  Agent        : ready (search + web tools)" ;;
           degraded) echo "  Agent        : ready, WEB TOOL OFF - answers from indexed documents only."
-                    echo "                 To enable: add a Grounding-with-Bing-Custom-Search connection,"
-                    echo "                 set BING_CONNECTION_NAME + BING_CUSTOM_CONFIG_NAME, then re-run:"
-                    echo "                 uv run python scripts/setup_foundry_agent.py" ;;
+                    if [ "$AGENT_WEB_TOOL" = "webiq" ]; then
+                      echo "                 To enable: fix the Web IQ tool WARNING above, then re-run:"
+                      echo "                 uv run python scripts/setup_foundry_agent.py"
+                    elif [ -z "$TRUSTED_WEB_SITES" ] && [ "$DEPLOY_BING_GROUNDING" != "false" ]; then
+                      echo "                 Bing was not deployed: it needs sites in TRUSTED_WEB_SITES. To enable:"
+                      echo "                 azd env set TRUSTED_WEB_SITES \"<site>,<site>\"   then   azd provision"
+                    else
+                      echo "                 To enable: add a Grounding-with-Bing-Custom-Search connection,"
+                      echo "                 set BING_CONNECTION_NAME + BING_CUSTOM_CONFIG_NAME, then re-run:"
+                      echo "                 uv run python scripts/setup_foundry_agent.py"
+                    fi ;;
           failed)   echo "  Agent        : NOT CREATED" ;;
           blocked)  echo "  Agent        : NOT CREATED - Search index setup failed first" ;;
           not-applicable) echo "  Agent        : not used - VOICE_BINDING=model binds '$VOICELIVE_MODEL' directly" ;;

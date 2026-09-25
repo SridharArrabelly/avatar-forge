@@ -31,7 +31,8 @@ Conventions:
 
 ## Deployment profile *(provisioning only)*
 
-Set with `uv run python scripts/set_profile.py` rather than by hand.
+Set with `uv run python scripts/set_profile.py` rather than by hand. It also records
+the brain (`VOICE_BINDING`) and, for agent mode, the web tool (`AGENT_WEB_TOOL`).
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -73,9 +74,14 @@ agent-creation time; the runtime backend never talks to Bing directly.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `DEPLOY_BING_GROUNDING` | `true` | **Infra-only, agent mode only.** `azd up` deploys the whole web tool — the Bing account, the curated site allow-list and the Foundry connection — and sets the two variables below automatically. Set `false` to skip it (it is a billable resource); the agent then answers from AI Search alone. Only takes effect on a greenfield deploy (there must be a Foundry project to attach the connection to). **Ignored under `VOICE_BINDING=model`**, which has no agent to attach a managed tool to and uses Web IQ instead. |
+| `DEPLOY_BING_GROUNDING` | `true` | **Infra-only, agent mode only.** `azd up` deploys the whole web tool — the Bing account, the curated site allow-list and the Foundry connection — and sets the two variables below automatically. Set `false` to skip it (it is a billable resource); the agent then answers from AI Search alone. Only takes effect on a greenfield deploy (there must be a Foundry project to attach the connection to). **Ignored under `VOICE_BINDING=model`**, which has no agent to attach a managed tool to and uses Web IQ instead, and under `AGENT_WEB_TOOL=webiq` (the default), which replaces Bing. |
+| `AGENT_WEB_TOOL` | `webiq` on a new environment | **Agent mode only.** The agent's web tool: `webiq` — an OpenAPI tool that calls the app's own `/api/tools/search-web`, which runs the same trusted-site Web IQ search as model mode ([`backend/api/agent_tools.py`](../backend/api/agent_tools.py)) — or `bing` (Grounding with Bing Custom Search). With `webiq`, Bing is not deployed and the container gets the Web IQ settings below, including the site allow-list. Measured: tool step 0.66 s vs Bing's 1.83 s, first token 3.88 s vs 5.07 s, 15/15 good answers ([evaluation history](evaluation-history.md#web-iq-as-the-agents-web-tool-24-september-2026)). Web IQ needs the Foundry account this template creates, so unset it becomes `bing` with `FOUNDRY_ACCOUNT_NAME`, and also on an agent-mode environment deployed before Web IQ became the default (it has `SERVICE_APP_URI` but no recorded value), so a redeploy never swaps a live agent's tool. Preflight records the resolved value in the azd env. `scripts/set_profile.py` asks for it when you choose agent mode (Enter keeps that value) and accepts `--web-tool` for CI. Preflight rejects any other value. |
+| `AGENT_WEB_TOOL_KEY` | *(unset — managed identity)* | **`webiq` only.** A shared key for the route. Set it and it wins: bicep stores it as a container-app **secret** and in a Foundry project connection (`agent-web-tool-key`) that sends it as `x-tool-key`. At least 32 characters — the route is public. Leave unset for managed identity; preflight also generates one if the directory will not allow the app registration, and says so. |
+| `AGENT_WEB_TOOL_AUDIENCE` | *(set by preflight)* | **`webiq`, managed identity.** Token audience, `api://<appId>` of an Entra app registration. With no key and no audience, preflight creates the registration (`avatar-forge-web-tool-<env>`: single tenant, no secrets, no permissions) and sets this and `AGENT_WEB_TOOL_APP_ID`. Foundry's managed identity then calls with an Entra token; the app accepts it only if Entra signed it for this audience, in this tenant, **and** its `oid` is the Foundry account's or project's identity. `azd down` does not delete app registrations: `az ad app delete --id <appId>`. |
+| `AGENT_WEB_TOOL_SERVICE_MANAGEMENT_REFERENCE` | — | **Optional, preflight only.** Passed to `az ad app create --service-management-reference` for tenants that require one on every new app registration. Without it such tenants refuse, and preflight falls back to a key. |
+| `AGENT_WEB_TOOL_URL` | `SERVICE_APP_URI` | **Optional, `webiq` only.** The app's public `https://` URL the agent's tool calls. `azd up` provides `SERVICE_APP_URI`; set this only for a standalone setup run. `AGENT_WEB_TOOL_AUTH` and `AGENT_WEB_TOOL_CONNECTION_NAME` are deployment outputs the setup script reads to pick the auth mode; you do not set them. |
 | `BING_SKU_NAME` | `G2` | **Optional, infra-only.** Bing pricing tier when `DEPLOY_BING_GROUNDING=true`. `G2` is the tier this project has run on; `G1` is the lower tier. |
-| `BING_CONNECTION_NAME` | *(unset — web tool disabled)* | **Optional.** Foundry connection for Grounding with Bing Custom Search (the agent's only external tool). Set for you when `DEPLOY_BING_GROUNDING=true`; otherwise name an existing connection. Leave unset for a search-only agent; naming a connection that doesn't exist skips the tool with a warning rather than failing. |
+| `BING_CONNECTION_NAME` | *(unset — web tool disabled)* | **Optional.** Foundry connection for Grounding with Bing Custom Search (the agent's web tool when `AGENT_WEB_TOOL=bing`). Set for you when `DEPLOY_BING_GROUNDING=true`; otherwise name an existing connection. Leave unset for a search-only agent; naming a connection that doesn't exist skips the tool with a warning rather than failing. |
 | `BING_CUSTOM_CONFIG_NAME` | *(unset — web tool disabled)* | **Optional.** Bing Custom Search configuration name — the curated domain allow-list the web tool is restricted to. Set for you when `DEPLOY_BING_GROUNDING=true`; otherwise required alongside `BING_CONNECTION_NAME`. |
 | `AGENT_MODEL` | `gpt-5.6-terra` | Foundry model deployment the agent runs on. Greenfield derives it from the deployment name; standalone setup uses this default when unset. Override for a differently named BYO deployment, which must already exist. See the current [evaluation results](evaluation-results.md). |
 | `AGENT_REASONING_EFFORT` | `none` | Reasoning effort. **Model-dependent:** `gpt-4.x`/`gpt-4o` reject it; leave unset for those models. GPT-5 models use explicit `none` by default; supported alternatives depend on the deployed model. Latency and tool-call changes are measured in the evaluation report, not assumed to be a fixed delay. This does **not** select a different prompt. |
@@ -83,13 +89,102 @@ agent-creation time; the runtime backend never talks to Bing directly.
 | `AI_SEARCH_QUERY_TYPE` | `semantic` | Agent setup only: lexical/BM25 candidates plus semantic reranking, **without vector retrieval**. Also accepts `simple`, `vector`, `vector_simple_hybrid`, `vector_semantic_hybrid`. Invalid or explicitly blank values fail before publication. The index needs a compatible semantic configuration. |
 | `BING_COUNT` | `5` | Snippets returned from the Bing Custom Search allow-list per turn. Measured against `8` in a controlled A/B: identical routing (15/15 both arms) and answer length, 24% fewer total tokens, neutral-to-faster first token. Explicit `8` remains available. |
 
-> **The curated site allow-list is not an environment variable.** It is the
-> `bingAllowedDomains` parameter in [`infra/main.bicep`](../infra/main.bicep) — a list of
-> `{ domain, includeSubPages, boostLevel }` entries, where `boostLevel` is `SuperBoost` or
-> `Boosted`. It lives in bicep because it is a security boundary: Bing enforces it as a
-> hard allow-list, so nothing outside it is reachable, which is what makes an open-web tool
-> safe to hand an executive assistant. Edit it there before deploying so it points at your
-> own sources — the checked-in list is a sample.
+> **The trusted sites every web tool may search are one variable, `TRUSTED_WEB_SITES`.**
+> See [Trusted web sources](#trusted-web-sources).
+
+---
+
+## Trusted web sources
+
+The assistant searches the web only inside one list of trusted sites, whichever web
+tool is in use. Set it before you deploy:
+
+```powershell
+azd env set TRUSTED_WEB_SITES "+www.example.com/investors,news.example.com,www.regulator.example"
+```
+
+The list is comma-separated. Each entry is a host or a URL, optionally with a path. A
+leading `+` marks a **SuperBoost** source, which Bing ranks first; every other entry is
+**Boosted**. `https://` is assumed when there is no scheme. Entries starting with `-`
+are skipped, because Bing's allow-list has no exclusions.
+
+**Unset, Web IQ searches the open web.** That is a supported choice. Bing Custom Search
+has no open-web mode, so with no list Bing is not deployed and an agent on
+`AGENT_WEB_TOOL=bing` answers from your documents alone. Preflight warns about both.
+
+| Web tool | How the list is applied |
+|---|---|
+| Agent mode, `AGENT_WEB_TOOL=bing` | Verbatim, by Bing Custom Search. `main.bicep` turns each entry into a `{ domain, includeSubPages, boostLevel }` row of a hard server-side allow-list, which honours paths (`/investors`) and boost levels. |
+| Agent mode, `AGENT_WEB_TOOL=webiq`, and model mode | As bare hosts. The container gets the list as written. [`backend/trusted_sites.py`](../backend/trusted_sites.py) reduces each entry to its host, drops `www.` and duplicates, and the app adds the hosts to every Web IQ query as `site:` operators and drops `dev.`/`staging.` copies from the results. Paths and boosts can't be expressed that way, so `www.mtn.com/investors` becomes `mtn.com`. That is a gain, not a compromise: in the [Web IQ A/B](evaluation-history.md#web-iq-as-the-agents-web-tool-24-september-2026) 11 of 60 results were outside every path on the list, including the CFO's profile page (`mtn.com/executivecommittee/...`) and MTN's FY2025 results announcement. |
+
+The two parsers are tested against each other
+([`tests/test_trusted_web_sites.py`](../tests/test_trusted_web_sites.py)), so the tools
+can't quietly search different sites for the same deployment.
+
+To change it:
+
+1. `azd env set TRUSTED_WEB_SITES "..."`. Keep it short: every host is spent from Web
+   IQ's 1000-character query budget, and `site:` operators reduce relevance (see the
+   Web IQ notes under [Voice Live binding](#voice-live-binding--agent-mode--model-mode)).
+   Preflight shows what the list costs. Prefer dropping a source that has stopped
+   earning its place to growing the list.
+2. Apply it with `azd up`, or `azd provision` followed by `azd deploy`. Never run
+   `azd provision` alone on a live environment ([why](deployment.md#runtime-config--model-deployment-overrides)).
+   The Bing configuration and the container's `TRUSTED_WEB_SITES` are both updated.
+
+For a local run, put the same `TRUSTED_WEB_SITES=...` line in `.env`. Without it, a
+local run searches the **open web**.
+
+> **Environments deployed before `TRUSTED_WEB_SITES` existed** searched MTN's list,
+> which used to be built into `infra/main.bicep`. Set the variable before their next
+> deploy, or that deploy opens Web IQ to the whole web and removes Bing from an agent.
+> The Bing account itself is not deleted, and keeps billing. To keep the open web on
+> purpose, and silence preflight's warning, set it empty:
+> `azd env set TRUSTED_WEB_SITES ""`.
+>
+> `WEBIQ_ALLOWED_DOMAINS`, the older Web IQ-only override, is no longer read by
+> deployments. The app still reads it when `TRUSTED_WEB_SITES` is unset, so an older
+> local `.env` keeps its scope.
+
+### MTN's list
+
+This is the list the template was built and measured with, in the order of the live
+Bing configuration it was imported from. Use it as a starting point, or to keep an
+existing MTN environment unchanged:
+
+<!-- mtn-trusted-sites: tests/test_docs.py checks the counts below against this line -->
+```powershell
+azd env set TRUSTED_WEB_SITES "+www.mtn.com/investors,+www.mtn.com/media-centre,+www.mtn.com/leadership,+www.mtn.com/financial-results/#,+www.jse.co.za/market-data,www.ft.com/telecoms,www.itweb.co.za,mybroadband.co.za,www.news24.com/fin24,africanwirelesscomms.com,www.itnewsafrica.com,www.icasa.org.za,www.mtn.com/newsroom,+www.reuters.com/world/africa,techcentral.co.za,+www.moneyweb.co.za/tools-and-data,+sashares.co.za/mtn-shares,+www.mtn-investor.com,punchng.com,businessday.ng,africa.businessinsider.com,techcabal.com,www.sbmintel.com,quartr.com,www.investing.com"
+```
+
+It has **25 path-scoped entries** on **21 hosts**, which cost 471 of Web IQ's 1000
+query characters.
+
+Why these sources:
+
+- **SuperBoost** is for sources that should win a tie: MTN's own investor, results and
+  leadership pages, the share-price and market-data sources, and Reuters Africa.
+  **Boosted** is the industry and regulator press that supplies context.
+- The first 17 entries are the original configuration. The rest, from
+  `www.mtn-investor.com` on, came from a 30-call A/B benchmark of the same 10
+  questions against those 17 entries (a 13-host list in Web IQ) and against the open
+  web. The narrow list was measurably worse, not just narrower. It fell back on a
+  single publisher for 3 of 10 questions (62% mean single-source concentration), and
+  its results were a mean 414 days old. Asked how MTN is addressing its Nigerian FX
+  losses, it returned 2024 articles about the naira devaluation, while the open web
+  led with MTN Nigeria having *cleared* the FX debt. The open web also surfaced
+  LinkedIn posts and SEO blogs, which is why the list was widened rather than dropped.
+- `www.mtn-investor.com` is MTN's investor-relations site, separate from `mtn.com`. It
+  carries the FY2025 summary income statement the narrow list couldn't find.
+- `punchng.com` and `businessday.ng`: Nigeria is MTN's largest market and the source
+  of its FX exposure, and the original list had no Nigerian publication.
+- `africa.businessinsider.com` is scoped to the Africa subdomain on purpose. `site:`
+  matches subdomains downward, so this admits Business Insider Africa without all of
+  businessinsider.com.
+- `quartr.com` carries earnings-call and capital-markets-day summaries.
+- The trailing `/#` on `/financial-results/#` is verbatim from the working Bing
+  configuration. A fragment shouldn't affect scoping; simplify it to
+  `/financial-results` if it ever seems to match nothing.
 
 ---
 
@@ -224,14 +319,15 @@ startup can obtain a Web IQ token.
 |---|---|---|
 | `WEBIQ_API_KEY` | — | Enables the `search_web` tool in model mode without a startup check. Passed to the container app as a **secret**, never as a plain environment variable. Leave it unset and the app authenticates with its managed identity instead, enabling the tool only if a token comes back — but a token is not the same as being authorised, see the notes under the table. Required, in Azure as well as locally, when the identity cannot be bound with Web IQ. If neither route works the web tool stays off and the assistant answers from the meeting-minutes corpus alone. |
 | `WEBIQ_BASE_URL` | `https://api.microsoft.ai/v3` | Web IQ endpoint. |
-| `WEBIQ_ALLOWED_DOMAINS` | *derived from `bingAllowedDomains`* | Comma-separated hosts that scope the search, e.g. `jse.co.za,mtn.com`. Web IQ has no server-side allow-list — its request model exposes no `site` field — so [`build_query()`](../backend/voice/tools.py) compiles these into `site:a OR site:b` operators on the query, which is the mechanism the Web IQ API documents. Same intent as `bingAllowedDomains`, and by default the **same sources**: leave this empty and `main.bicep` derives the bare hosts from `bingAllowedDomains`, so the two bindings cannot drift apart. Set it only to make model mode diverge deliberately. **Write bare hosts, not URLs and not `www.`** — see the two notes below. It is emitted **unconditionally**, whether or not a key is set, because the app can enable `search_web` on its own — so an enabled `search_web` is never an unscoped open-web search. |
+| `TRUSTED_WEB_SITES` | *(unset: the open web)* | The trusted sites, the same list Bing is built from; see [Trusted web sources](#trusted-web-sources). Web IQ has no server-side allow-list (its request model exposes no `site` field), so [`build_query()`](../backend/voice/tools.py) compiles the bare hosts into `site:a OR site:b` operators on the query, which is the mechanism the Web IQ API documents. Emitted whenever it is set, with or without a key, because the app can enable `search_web` on its own; the scope never depends on how the app authenticates. When it is unset, the app falls back to the older `WEBIQ_ALLOWED_DOMAINS` (bare hosts), if set. |
 | `WEBIQ_LANGUAGE` | `en` | Result language hint. Configurable through `azd env set` and passed to the model-mode container. |
 | `WEBIQ_REGION` | `ZA` | Result region hint. Configurable through `azd env set` and passed to the model-mode container. |
 
-Web IQ settings are emitted only in model-mode containers. The base URL, language,
-and region are explicit even when unset or empty; the domain list is emitted
-independently of authentication. Agent-mode containers receive neither Web IQ
-settings nor its API-key secret.
+Web IQ settings are emitted only in model-mode containers and in agent-mode
+containers with `AGENT_WEB_TOOL=webiq`, where the agent's tool runs the same
+`search_web()`. The base URL, language, and region are explicit even when unset
+or empty; the trusted sites are emitted independently of authentication. Other
+agent-mode containers receive neither Web IQ settings nor its API-key secret.
 
 Manage these settings in the selected **azd environment**, not only in the Azure
 portal. Manual container changes are not imported into azd and may be overwritten
@@ -264,9 +360,10 @@ environment file or paste the key into logs or chat.
 > **`site:` matches a domain and every subdomain under it — it is not a hostname
 > filter.** Two consequences, both measured against the live API:
 >
-> - **Do not prefix with `www.`.** `site:www.jse.co.za` excludes `senspdf.jse.co.za`,
->   which is where the JSE's SENS filings live — 9 of 10 results for a SENS query.
->   The bare host keeps them.
+> - **`www.` is dropped from every host.** `site:www.jse.co.za` would exclude
+>   `senspdf.jse.co.za`, which is where the JSE's SENS filings live — 9 of 10 results
+>   for a SENS query. The bare host keeps them, so `www.jse.co.za/market-data` in the
+>   list scopes Web IQ to `jse.co.za`.
 > - **Staging mirrors come in for free.** `site:sashares.co.za` returns hits on
 >   `dev.sashares.co.za`, and Web IQ once ranked that mirror *first* for a share-price
 >   question, quoting a two-month-old figure. `search_web` drops results whose host is
@@ -274,11 +371,11 @@ environment file or paste the key into logs or chat.
 >   non-production markers (`dev`, `staging`, `uat`, …). Markers are matched on a
 >   normalised stem, so numbered environments (`stg18326`, `dev2`, `staging-01`)
 >   are caught too — a live search returned `stg18326.businessday.ng` before that
->   was the case. Note this check is anchored to the allow-list, so **emptying the
->   allow-list disables it entirely** rather than merely loosening it.
+>   was the case. Note this check is anchored to the trusted sites, so **the open web
+>   (no `TRUSTED_WEB_SITES`) disables it entirely** rather than merely loosening it.
 > - **The allow-list and the question share one 1000-character budget.** The
 >   operators are part of the query text, and Web IQ rejects anything longer with
->   `HTTP 400` — it does not truncate. The 21 hosts render to 471 characters,
+>   `HTTP 400` — it does not truncate. MTN's 21 hosts render to 471 characters,
 >   leaving 529 for the question. `build_query()` enforces the cap by trimming the
 >   **question**, never the scope: a shorter question searches worse, but a dropped
 >   domain searches somewhere it was told not to. Adding hosts spends this budget,
@@ -286,12 +383,12 @@ environment file or paste the key into logs or chat.
 >   result relevance" — so keep the list as short as the boundary allows.
 >
 > This is also where model mode is structurally weaker than agent mode — though not
-> in *which* sources it may cite. Both bindings work from the same list: `main.bicep`
-> derives this allow-list from `bingAllowedDomains` by stripping each entry to its
-> bare host and de-duplicating (25 URLs → 21 hosts), so a source added for one
-> binding is available to both. What does not survive the trip is **precision**:
-> entries in `bingAllowedDomains` are **path-scoped and boosted** (`/investors`,
-> `/mtn-shares`), and `site:` can express neither. Model mode reads whole hosts where
+> in *which* sources it may cite. Both bindings work from the same list,
+> `TRUSTED_WEB_SITES`: Bing takes each entry as written, and Web IQ takes the bare host
+> it sits on (MTN's 25 URLs become 21 hosts), so a source added for one binding is
+> available to both. What does not survive the trip is **precision**: Bing's
+> entries are **path-scoped and boosted** (`/investors`, `/mtn-shares`), and `site:`
+> can express neither. Model mode reads whole hosts where
 > agent mode reads curated, rank-adjusted sections — so `reuters.com` stands in for
 > `reuters.com/world/africa`. Web-grounded answers are therefore not strictly
 > comparable between bindings even though the source set matches.

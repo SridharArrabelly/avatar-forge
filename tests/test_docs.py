@@ -19,10 +19,11 @@ test suite would otherwise catch:
    constant; it has to be pinned. Any doc that names regions is now checked
    against `preflight.py`, the authoritative copy.
 
-4. **Counts quoted for the Bing allow-list drifting from `infra/main.bicep`.** Same
+4. **Counts quoted for MTN's trusted-site list drifting from the list itself.** Same
    one-fact-many-copies shape as (3): the list grew from 7 entries to 17 while three
-   separate sentences went on saying 7. The bicep parameter is what actually deploys,
-   so it is the source of truth and the prose is checked against it.
+   separate sentences went on saying 7. The list is the `azd env set TRUSTED_WEB_SITES`
+   example in docs/configuration.md, so that line is the source of truth, parsed the
+   way the app parses it, and the prose is checked against it.
 
 Run:  uv run python tests/test_docs.py
 """
@@ -35,9 +36,12 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from preflight import AVATAR_REGIONS, VOICELIVE_REGIONS  # noqa: E402
+
+from backend import trusted_sites  # noqa: E402
 
 LINK = re.compile(r"\[[^\]]*\]\(([^)#\s]+)(?:#[^)]*)?\)")
 BLOCK = re.compile(r"```mermaid\n(.*?)```", re.S)
@@ -45,20 +49,21 @@ BLOCK = re.compile(r"```mermaid\n(.*?)```", re.S)
 # appear anywhere on a line, including on both sides of an edge.
 DEF = re.compile(r"([A-Za-z][A-Za-z0-9_]*)\s*[\[\(\{]")
 SUBGRAPH = re.compile(r"^\s*subgraph\s+([A-Za-z][A-Za-z0-9_]*)")
-# Prose that states how many entries the Bing allow-list has. Both phrasings the docs
-# actually use are listed, and at least one match is REQUIRED (see check_bing_allowlist)
-# so that rewording the prose fails loudly instead of silently disabling the check.
+# Prose that states how many entries MTN's list has. Both phrasings the docs actually
+# use are listed, and at least one match is REQUIRED (see check_bing_allowlist) so that
+# rewording the prose fails loudly instead of silently disabling the check.
 ALLOWLIST_COUNT = re.compile(
     r"\*{0,2}(\d+)\s+(?:path-scoped[^.\n]{0,40}?entries|entries with boost levels)"
 )
-# Counts the `{ domain: ... }` rows inside the `bingAllowedDomains` array in main.bicep.
-BICEP_DOMAIN = re.compile(r"^\s*\{\s*domain:", re.M)
-# Prose stating how many BARE HOSTS the Web IQ allow-list derives to. Same required-match
-# rule as ALLOWLIST_COUNT: this number is a function of bingAllowedDomains, so it drifts
-# the moment an entry is added on a host that is not already covered.
+# Prose stating how many BARE HOSTS Web IQ reduces that list to. Same required-match
+# rule as ALLOWLIST_COUNT: this number drifts the moment an entry is added on a host
+# that is not already covered.
 DERIVED_HOST_COUNT = re.compile(r"\*{0,2}(\d+)\s+(?:bare\s+)?hosts")
-# Pulls the URL out of each `domain: '...'` row, for the host derivation.
-BICEP_DOMAIN_URL = re.compile(r"domain:\s*'([^']+)'")
+# MTN's list: the `azd env set` line in the code block after this marker.
+MTN_SITES_DOC = "docs/configuration.md"
+MTN_SITES = re.compile(
+    r"<!-- mtn-trusted-sites\b[^>]*-->\s*```\w*\n\s*azd env set TRUSTED_WEB_SITES \"([^\"]*)\""
+)
 EDGE = re.compile(
     r"([A-Za-z][A-Za-z0-9_]*)\s*(?:<-->|-\.->|-->|---|<--|-\.-)\s*"
     r'(?:\|[^|]*\|\s*)?(?:"[^"]*"\s*(?:-->|-\.->)?\s*)?([A-Za-z][A-Za-z0-9_]*)'
@@ -205,69 +210,60 @@ def check_regions(files: list[str]) -> int:
 
 
 def check_bing_allowlist(files: list[str]) -> int:
-    """Any count the docs quote for the Bing allow-list must match `infra/main.bicep`.
+    """Any count the docs quote for MTN's trusted-site list must match the list.
 
-    Guards two numbers, both functions of the same array: the entry count agent mode
-    deploys, and the bare-host count model mode's Web IQ list derives to.
+    Guards two numbers, both functions of the same list: the entries Bing deploys, and
+    the bare hosts Web IQ reduces them to. The list is the documented
+    `azd env set TRUSTED_WEB_SITES` example, parsed by backend/trusted_sites.py, which
+    tests/test_trusted_web_sites.py pins to main.bicep's parser.
 
-    The bicep parameter is the thing that actually deploys, so it is the source of
-    truth. This guard exists because the list grew from 7 entries to 17 while three
-    separate sentences went on saying 7 — the same one-fact-many-copies drift that
-    put a region in the docs the code never supported.
+    This guard exists because the list grew from 7 entries to 17 while three separate
+    sentences went on saying 7 — the same one-fact-many-copies drift that put a region
+    in the docs the code never supported.
     """
-    bicep = (ROOT / "infra" / "main.bicep").read_text(encoding="utf-8")
-    array = re.search(
-        r"param bingAllowedDomains array = \[(.*?)^\]", bicep, re.S | re.M
-    )
-    if not array:
+    match = MTN_SITES.search((ROOT / MTN_SITES_DOC).read_text(encoding="utf-8"))
+    if not match:
         failures.append(
-            "could not find `param bingAllowedDomains array = [...]` in "
-            "infra/main.bicep — update the pattern in tests/test_docs.py"
+            f"could not find the `<!-- mtn-trusted-sites -->` example in {MTN_SITES_DOC} "
+            "— update MTN_SITES in tests/test_docs.py"
         )
         return 0
+    raw = match.group(1)
+    sites = trusted_sites.entries(raw)
+    hosts = trusted_sites.hosts(raw)
+    unusable = [item.strip() for item in raw.split(",") if not item.strip() or item.strip().startswith("-")]
+    if unusable or any(not trusted_sites.host(site) for site, _ in sites):
+        failures.append(f"MTN's list in {MTN_SITES_DOC} has blank, skipped or malformed entries")
 
-    actual = len(BICEP_DOMAIN.findall(array.group(1)))
     mentions = 0
     for rel in files:
         text = (ROOT / rel).read_text(encoding="utf-8")
-        for match in ALLOWLIST_COUNT.finditer(text):
+        for found in ALLOWLIST_COUNT.finditer(text):
             mentions += 1
-            claimed = int(match.group(1))
-            if claimed != actual:
+            claimed = int(found.group(1))
+            if claimed != len(sites):
                 failures.append(
-                    f"stale allow-list count in {rel}: says {claimed} entries, but "
-                    f"`bingAllowedDomains` in infra/main.bicep has {actual}"
+                    f"stale allow-list count in {rel}: says {claimed} entries, but MTN's "
+                    f"list in {MTN_SITES_DOC} has {len(sites)}"
                 )
 
     if not mentions:
         failures.append(
-            "no doc states the Bing allow-list size any more. If the wording changed, "
+            "no doc states the size of MTN's list any more. If the wording changed, "
             "update ALLOWLIST_COUNT in tests/test_docs.py — otherwise this check "
             "silently stops guarding anything."
         )
 
-    # Model mode's Web IQ list is derived from the same array (main.bicep strips each
-    # entry to its bare host and de-duplicates), so the docs quote a second number that
-    # can drift independently. Mirror the ARM expression exactly.
-    hosts: list[str] = []
-    for url in BICEP_DOMAIN_URL.findall(array.group(1)):
-        host = url.replace("https://", "").replace("http://", "").split("/")[0]
-        if host.startswith("www."):
-            host = host[4:]
-        if host not in hosts:
-            hosts.append(host)
-
     host_mentions = 0
     for rel in files:
         text = (ROOT / rel).read_text(encoding="utf-8")
-        for match in DERIVED_HOST_COUNT.finditer(text):
+        for found in DERIVED_HOST_COUNT.finditer(text):
             host_mentions += 1
-            claimed = int(match.group(1))
+            claimed = int(found.group(1))
             if claimed != len(hosts):
                 failures.append(
-                    f"stale derived-host count in {rel}: says {claimed} hosts, but "
-                    f"`bingAllowedDomains` in infra/main.bicep derives to "
-                    f"{len(hosts)} ({', '.join(hosts)})"
+                    f"stale derived-host count in {rel}: says {claimed} hosts, but MTN's "
+                    f"list in {MTN_SITES_DOC} reduces to {len(hosts)} ({', '.join(hosts)})"
                 )
 
     if not host_mentions:

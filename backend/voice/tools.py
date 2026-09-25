@@ -37,6 +37,7 @@ import httpx
 from azure.ai.projects.models import AzureAISearchQueryType
 from azure.search.documents.models import VectorizableTextQuery
 
+from .. import trusted_sites
 from ..document_titles import display_document_title
 from ..logsafe import fingerprint
 from .catalog import get_search_client
@@ -161,19 +162,17 @@ WEBIQ_API_SCOPE = "https://api.microsoft.ai/.default"
 
 
 def _allowed_domains() -> list[str]:
-    """Same security boundary the Bing custom-search allow-list provided.
+    """Bare hosts from TRUSTED_WEB_SITES, the list Bing is built from too.
 
-    An open-web tool answering to an executive should not be able to cite
-    anywhere at all. Comma-separated hostnames; empty means the open web.
+    Empty means the open web. See backend/trusted_sites.py for how entries with
+    paths and boosts reduce to hosts.
 
     Read per call rather than at import so the value tracks the environment the
     process is actually running in — a module-level read bakes in whatever was
     set at import time, which is the bug class that made `setup_foundry_agent`
     silently ignore `.env`.
     """
-    return [
-        d.strip() for d in os.getenv("WEBIQ_ALLOWED_DOMAINS", "").split(",") if d.strip()
-    ]
+    return trusted_sites.configured_hosts()
 
 # Deliberately tighter than the Web IQ defaults (5 results x 2000 chars). Every
 # character here is prefill the model reads before it starts speaking, and a
@@ -205,6 +204,15 @@ WEB_MAX_LENGTH = 800
 WEBIQ_MAX_QUERY_CHARS = 1000
 
 WEBIQ_TIMEOUT = httpx.Timeout(connect=3.0, read=8.0, write=3.0, pool=3.0)
+
+# How long an idle pooled connection is kept for reuse. httpx's default is 5 s,
+# but searches in a conversation arrive 15-40 s apart, so with the default
+# almost every one paid a fresh TCP+TLS handshake: measured from a laptop, a
+# call after 20 s idle took 1014-1120 ms against 346-410 ms back to back. With a
+# long expiry, reuse held at 20 s and 60 s gaps (328-396 ms) and was lost
+# between 60 and 120 s (1041-1180 ms) — something in the path drops idle
+# connections there, and httpx then reconnects cleanly. 55 s stays under that.
+WEBIQ_KEEPALIVE_EXPIRY_S = 55.0
 
 # Cap on the startup capability probe. Generous next to WEBIQ_TIMEOUT because a
 # cold credential chain legitimately takes seconds, but finite because the
@@ -523,7 +531,7 @@ def build_query(query: str, domains: list[str]) -> str:
         # results rather than an error.
         logger.error(
             "Web IQ allow-list is %d chars, at or over the %d-char query cap: "
-            "no room is left for the question. Shorten WEBIQ_ALLOWED_DOMAINS.",
+            "no room is left for the question. Shorten TRUSTED_WEB_SITES.",
             len(suffix), WEBIQ_MAX_QUERY_CHARS,
         )
         return suffix[:WEBIQ_MAX_QUERY_CHARS]
@@ -544,7 +552,9 @@ async def _get_web_client() -> httpx.AsyncClient:
         async with _web_client_lock:
             if _web_client is None:
                 _web_client = httpx.AsyncClient(
-                    base_url=WEBIQ_BASE_URL, timeout=WEBIQ_TIMEOUT
+                    base_url=WEBIQ_BASE_URL,
+                    timeout=WEBIQ_TIMEOUT,
+                    limits=httpx.Limits(keepalive_expiry=WEBIQ_KEEPALIVE_EXPIRY_S),
                 )
     return _web_client
 

@@ -44,17 +44,30 @@ param webIqBaseUrl string = ''
 param webIqLanguage string = 'en'
 @description('Web IQ result region hint in model mode.')
 param webIqRegion string = 'ZA'
-@description('Comma-separated host allow-list for Web IQ results.')
-param webIqAllowedDomains string = ''
+@description('The trusted sites, as TRUSTED_WEB_SITES. Given to the app as written; empty = Web IQ searches the open web. See main.bicep.')
+param trustedWebSites string = ''
 @description('Web IQ API key, passed to the container app as a secret.')
 @secure()
 param webIqApiKey string = ''
+
+@description('The agent\'s web tool in agent mode: "bing" or "webiq". See main.bicep.')
+@allowed([ 'bing', 'webiq' ])
+param agentWebTool string = 'webiq'
+@description('Key mode for the Web IQ agent tool. Wins over the audience when both are set.')
+@secure()
+param agentWebToolKey string = ''
+@description('Entra mode for the Web IQ agent tool: the Application ID URI Foundry requests a token for.')
+param agentWebToolAudience string = ''
+@description('Entra mode, optional: the app registration\'s client ID.')
+param agentWebToolAppId string = ''
+@description('Name of the project connection that holds the key in key mode.')
+param agentWebToolConnectionName string = ''
 
 @description('Deploy Grounding with Bing Custom Search (account + site allow-list + Foundry connection). Opt-in: when false nothing Bing-related is created and the agent uses AI Search alone.')
 param deployBingGrounding bool = false
 @allowed([ 'G1', 'G2' ])
 param bingSkuName string = 'G2'
-@description('The curated site allow-list. See modules/bingGrounding.bicep for the entry shape.')
+@description('The trusted sites as Bing entries, parsed from TRUSTED_WEB_SITES in main.bicep. See modules/bingGrounding.bicep for the entry shape.')
 param bingAllowedDomains array = []
 
 // Bing is only created when it is asked for AND there is a Foundry project to
@@ -68,7 +81,20 @@ param bingAllowedDomains array = []
 // Bing account under `voiceBinding=model` bills a G2 SKU for a resource nothing
 // can reach.
 var agentBinding = toLower(voiceBinding) != 'model'
-var createBing = deployBingGrounding && createFoundry && agentBinding
+// Web IQ as the agent's web tool, through this app's /api/tools/search-web. Same
+// greenfield-only rule as Bing: the setup script that attaches the tool to the
+// agent only runs against a Foundry project this template created, and the
+// caller check needs that account's identity. It REPLACES Bing, so choosing it
+// stops Bing being deployed.
+//
+// Bing also needs a site list. Custom Search has no open-web mode — with no allowed
+// domains it rejects the configuration or finds nothing — so an empty
+// TRUSTED_WEB_SITES deploys no Bing and the agent has no web tool. Preflight warns.
+var agentWebIq = agentBinding && createFoundry && toLower(agentWebTool) == 'webiq'
+var agentWebToolKeyed = agentWebIq && !empty(agentWebToolKey)
+var agentWebToolEntra = agentWebIq && !agentWebToolKeyed && !empty(agentWebToolAudience)
+var agentWebToolConnectionNameEffective = empty(agentWebToolConnectionName) ? 'agent-web-tool-key' : agentWebToolConnectionName
+var createBing = deployBingGrounding && createFoundry && agentBinding && !agentWebIq && !empty(bingAllowedDomains)
 // Deployed names are generated when not pinned, so a first-time deploy needs no
 // prior knowledge of them — they come back as outputs and land in the azd env.
 var bingConnectionNameEffective = empty(bingConnectionName) ? 'bing-grounding-connection' : bingConnectionName
@@ -371,8 +397,19 @@ module app 'modules/containerApp.bicep' = {
     webIqBaseUrl: webIqBaseUrl
     webIqLanguage: webIqLanguage
     webIqRegion: webIqRegion
-    webIqAllowedDomains: webIqAllowedDomains
+    trustedWebSites: trustedWebSites
     webIqApiKey: webIqApiKey
+    agentWebIq: agentWebIq
+    agentWebToolKey: agentWebToolKeyed ? agentWebToolKey : ''
+    agentWebToolAudience: agentWebToolEntra ? agentWebToolAudience : ''
+    agentWebToolAppId: agentWebToolEntra ? agentWebToolAppId : ''
+    // Both Foundry identities. The docs say tool calls are signed by the
+    // account's identity; the project's is allowed as well so a service-side
+    // change of signer does not silently break the tool. Both belong to the same
+    // Foundry project boundary: anyone able to make either identity call this
+    // route can already make the agent call it.
+    agentWebToolCallerOids: agentWebToolEntra ? '${foundry!.outputs.accountPrincipalId},${foundry!.outputs.projectPrincipalId}' : ''
+    agentWebToolTenantId: agentWebToolEntra ? tenant().tenantId : ''
     appInsightsConnectionString: appInsightsConnectionStringEffective
     agentModel: agentModel
     embeddingDeployment: embeddingDeployment
@@ -398,6 +435,18 @@ module app 'modules/containerApp.bicep' = {
   }
 }
 
+// Key mode for the Web IQ agent tool: the same key, held by Foundry.
+module agentWebToolConnection 'modules/agentWebToolConnection.bicep' = if (agentWebToolKeyed) {
+  name: 'agent-web-tool-connection'
+  params: {
+    accountName: foundry!.outputs.accountName
+    projectName: foundry!.outputs.projectName
+    connectionName: agentWebToolConnectionNameEffective
+    target: app.outputs.uri
+    key: agentWebToolKey
+  }
+}
+
 // ───────── Outputs ─────────
 output acrName string = acr.outputs.name
 output acrLoginServer string = acr.outputs.loginServer
@@ -419,3 +468,10 @@ output auditCosmosEndpoint string = auditEnabled ? cosmosAudit!.outputs.endpoint
 // they pass through whatever was supplied (possibly empty = web tool disabled).
 output bingConnectionName string = createBing ? bingConnectionNameEffective : bingConnectionName
 output bingCustomConfigName string = createBing ? bingCustomConfigNameEffective : bingCustomConfigName
+
+// What the setup script needs to attach the Web IQ tool: which caller check the
+// app was deployed with, and in key mode the connection holding the key. Empty
+// auth = the tool was not deployed (bing selected, model mode, BYO Foundry, or
+// no credential), and the script leaves it off.
+output agentWebToolAuth string = agentWebToolKeyed ? 'key' : (agentWebToolEntra ? 'entra' : '')
+output agentWebToolConnectionName string = agentWebToolKeyed ? agentWebToolConnection!.outputs.name : ''

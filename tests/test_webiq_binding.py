@@ -11,21 +11,23 @@ That was safe only while the key was the sole way to switch the tool on. It no
 longer is. ``web_search_available()`` in ``backend/voice/tools.py`` decides at
 startup by asking for a Web IQ token, so a deployment with **no key at all** can
 legitimately enable ``search_web`` -- and under the old gate that deployment got
-no ``WEBIQ_ALLOWED_DOMAINS`` either.
+no site list either.
 
-That combination is the one genuinely dangerous state. ``_allowed_domains()``
-returns empty, ``build_query()`` adds no ``site:`` operators, and an open-web
-tool answering to an executive assistant can cite anywhere at all, while agent
-mode stays scoped to ``bingAllowedDomains``.
+Searching the open web is a supported choice: leave ``TRUSTED_WEB_SITES`` empty.
+What must never happen is getting it by accident, because of how the app
+authenticates. ``_allowed_domains()`` would return empty, ``build_query()`` would
+add no ``site:`` operators, and a deployment that asked for trusted sites would
+cite anywhere at all.
 
-So the allow-list must not depend on the credential. What this pins, by
-evaluating the expression in the *generated* ``infra/main.json`` rather than
-re-implementing it here:
+So the list must not depend on the credential. What this pins, by evaluating the
+expression in the *generated* ``infra/main.json`` rather than re-implementing it
+here:
 
-* no key                 -> allow-list still present, no empty secret
-* API key                -> key as a secretRef, allow-list present
+* no key                 -> the list still present, no empty secret
+* API key                -> key as a secretRef, the list present
 * base URL               -> passes through under either
-* **the invariant**: the allow-list is emitted for every credential combination
+* **the invariant**: the list is emitted for every credential combination
+* an empty list emits no TRUSTED_WEB_SITES at all (the open web), key or not
 * model mode emits realtime/Web IQ defaults, never AGENT_MODEL
 * agent mode emits AGENT_MODEL, never realtime/Web IQ settings or secrets
 * azd inputs pass through both module boundaries into the container
@@ -85,11 +87,38 @@ def _split_args(body: str) -> list[str]:
     return args
 
 
-def evaluate(expr: str, params: dict[str, str], variables: dict[str, str]) -> object:
+def _property_access(expr: str) -> tuple[str, str] | None:
+    """Split ``call(...).name`` into the call and the property, or return None."""
+    match = re.match(r"^(.*\))\.([A-Za-z_][A-Za-z0-9_]*)$", expr, re.DOTALL)
+    if not match:
+        return None
+    depth, quoted = 0, False
+    for char in match.group(1):
+        if char == "'":
+            quoted = not quoted
+        elif not quoted:
+            depth += {"(": 1, ")": -1}.get(char, 0)
+    return (match.group(1), match.group(2)) if depth == 0 and not quoted else None
+
+
+def evaluate(
+    expr: str,
+    params: dict[str, str],
+    variables: dict[str, str],
+    lambdas: dict[str, object] | None = None,
+) -> object:
+    lambdas = lambdas or {}
     expr = expr.strip()
+
+    def ev(argument: str) -> object:
+        return evaluate(argument, params, variables, lambdas)
 
     if expr.startswith("'") and expr.endswith("'"):
         return expr[1:-1]
+
+    access = _property_access(expr)
+    if access:
+        return ev(access[0])[access[1]]
 
     match = re.match(r"^([a-zA-Z]+)\((.*)\)$", expr, re.DOTALL)
     if not match:
@@ -99,40 +128,69 @@ def evaluate(expr: str, params: dict[str, str], variables: dict[str, str]) -> ob
     args = _split_args(body)
 
     if name == "parameters":
-        key = evaluate(args[0], params, variables)
+        key = ev(args[0])
         if key not in params:
             raise ValueError(f"template reads unknown parameter {key!r}")
         return params[key]
     if name == "variables":
-        key = evaluate(args[0], params, variables)
+        key = ev(args[0])
         if key not in variables:
             raise ValueError(f"template reads unknown variable {key!r}")
         value = variables[key]
         return evaluate(value, params, variables) if isinstance(value, str) else render(value, params, variables)
+    if name == "true":
+        return True
+    if name == "false":
+        return False
     if name == "empty":
-        return evaluate(args[0], params, variables) == ""
+        return ev(args[0]) in ("", [], {}, None)
     if name == "not":
-        return not evaluate(args[0], params, variables)
+        return not ev(args[0])
     if name == "or":
-        return any(evaluate(a, params, variables) for a in args)
+        return any(ev(a) for a in args)
     if name == "and":
-        return all(evaluate(a, params, variables) for a in args)
+        return all(ev(a) for a in args)
     if name == "equals":
-        return evaluate(args[0], params, variables) == evaluate(args[1], params, variables)
+        return ev(args[0]) == ev(args[1])
     if name == "toLower":
-        return str(evaluate(args[0], params, variables)).lower()
+        return str(ev(args[0])).lower()
+    if name == "trim":
+        return str(ev(args[0])).strip()
+    if name == "split":
+        return str(ev(args[0])).split(str(ev(args[1])))
+    if name == "startsWith":
+        # ARM compares case-insensitively.
+        return str(ev(args[0])).lower().startswith(str(ev(args[1])).lower())
+    if name == "contains":
+        return str(ev(args[1])) in str(ev(args[0]))
+    if name == "substring":
+        text, begin = str(ev(args[0])), int(args[1])
+        return text[begin:] if len(args) == 2 else text[begin:begin + int(args[2])]
+    if name == "format":
+        return str(ev(args[0])).format(*(ev(a) for a in args[1:]))
+    if name == "lambda":
+        variable, lambda_body = ev(args[0]), args[1]
+        return lambda value: evaluate(lambda_body, params, variables, {**lambdas, variable: value})
+    if name == "lambdaVariables":
+        return lambdas[ev(args[0])]
+    if name == "map":
+        function = ev(args[1])
+        return [function(item) for item in ev(args[0])]
+    if name == "filter":
+        function = ev(args[1])
+        return [item for item in ev(args[0]) if function(item)]
     if name == "if":
-        condition = evaluate(args[0], params, variables)
-        return evaluate(args[1] if condition else args[2], params, variables)
+        condition = ev(args[0])
+        return ev(args[1] if condition else args[2])
     if name == "createArray":
-        return [evaluate(a, params, variables) for a in args]
+        return [ev(a) for a in args]
     if name == "createObject":
-        values = [evaluate(a, params, variables) for a in args]
+        values = [ev(a) for a in args]
         return dict(zip(values[::2], values[1::2]))
     if name == "concat":
         out: list[object] = []
         for a in args:
-            out.extend(evaluate(a, params, variables))
+            out.extend(ev(a))
         return out
 
     raise ValueError(f"unsupported ARM function {name!r} in {expr!r}")
@@ -203,14 +261,14 @@ def secret_names(defaults: dict[str, str], variables: dict[str, str], **override
     return [entry["name"] for entry in emitted]
 
 
-# A realistic allow-list: main.bicep derives these from bingAllowedDomains.
-DOMAINS = {"webIqAllowedDomains": "mtn.com,sashares.co.za"}
+# A realistic list, with the path and boost Bing uses; the app derives hosts.
+DOMAINS = {"trustedWebSites": "+www.mtn.com/investors,sashares.co.za/mtn-shares"}
 
 
 def main() -> int:
     defaults, variables = load_webiq_scope()
     defaults["voiceBinding"] = "model"
-    base_names = ["WEBIQ_BASE_URL", "WEBIQ_LANGUAGE", "WEBIQ_REGION", "WEBIQ_ALLOWED_DOMAINS"]
+    base_names = ["WEBIQ_BASE_URL", "WEBIQ_LANGUAGE", "WEBIQ_REGION", "TRUSTED_WEB_SITES"]
 
     print("Web IQ env gating (infra/main.json)")
     print("-" * 62)
@@ -251,10 +309,20 @@ def main() -> int:
     ):
         names = env_names(defaults, variables, **overrides, **DOMAINS)
         check(
-            f"{label}: WEBIQ_ALLOWED_DOMAINS present",
-            "WEBIQ_ALLOWED_DOMAINS" in names,
+            f"{label}: TRUSTED_WEB_SITES present",
+            "TRUSTED_WEB_SITES" in names,
             True,
         )
+        check(
+            f"{label}, no list: no TRUSTED_WEB_SITES, so the open web",
+            env_names(defaults, variables, **overrides, trustedWebSites=""),
+            base_names[:-1] if not overrides else ["WEBIQ_API_KEY", *base_names[:-1]],
+        )
+    check(
+        "the old name is no longer emitted",
+        "WEBIQ_ALLOWED_DOMAINS" in env_names(defaults, variables, **DOMAINS),
+        False,
+    )
 
     # The base URL is optional -- the code defaults it -- but when supplied it
     # must reach the app whether or not a key is set.
@@ -298,7 +366,7 @@ def main() -> int:
         "WEBIQ_BASE_URL": "https://api.microsoft.ai/v3",
         "WEBIQ_LANGUAGE": "en",
         "WEBIQ_REGION": "ZA",
-        "WEBIQ_ALLOWED_DOMAINS": DOMAINS["webIqAllowedDomains"],
+        "TRUSTED_WEB_SITES": DOMAINS["trustedWebSites"],
     }
     for name, value in expected_defaults.items():
         check(f"model default {name}", model.get(name), {"name": name, "value": value})
@@ -321,14 +389,14 @@ def main() -> int:
     custom = settings(
         voiceLiveModel="gpt-realtime", webIqBaseUrl="https://example.invalid/v3",
         webIqLanguage="fr", webIqRegion="FR", webIqApiKey="test-key",
-        webIqAllowedDomains="example.org",
+        trustedWebSites="example.org",
     )
     for name, value in {
         "VOICELIVE_MODEL": "gpt-realtime",
         "WEBIQ_BASE_URL": "https://example.invalid/v3",
         "WEBIQ_LANGUAGE": "fr",
         "WEBIQ_REGION": "FR",
-        "WEBIQ_ALLOWED_DOMAINS": "example.org",
+        "TRUSTED_WEB_SITES": "example.org",
     }.items():
         check(f"override {name}", custom.get(name), {"name": name, "value": value})
     check(
@@ -360,7 +428,7 @@ def main() -> int:
     for parameter, substitution in {
         "voiceLiveModel": "${VOICELIVE_MODEL=}",
         "webIqBaseUrl": "${WEBIQ_BASE_URL=}",
-        "webIqAllowedDomains": "${WEBIQ_ALLOWED_DOMAINS=}",
+        "trustedWebSites": "${TRUSTED_WEB_SITES=}",
         "webIqApiKey": "${WEBIQ_API_KEY=}",
         "webIqLanguage": "${WEBIQ_LANGUAGE=en}",
         "webIqRegion": "${WEBIQ_REGION=ZA}",
@@ -375,10 +443,8 @@ def main() -> int:
                 if value is not None:
                     forwarding.append(value["value"])
         expression = f"[parameters('{parameter}')]"
-        expected = [expression, expression]
-        if parameter == "webIqAllowedDomains":
-            expected[0] = "[variables('webIqEffectiveDomains')]"
-        check(f"{parameter} crosses both module boundaries", forwarding, expected)
+        check(f"{parameter} crosses both module boundaries", forwarding, [expression, expression])
+    check("the old webIqAllowedDomains parameter is gone", "webIqAllowedDomains" in parameter_file["parameters"], False)
     for body in (template, scope):
         check("API key parameter stays secure", body["parameters"]["webIqApiKey"]["type"].lower(), "securestring")
 

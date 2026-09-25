@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.43.8.12551",
-      "templateHash": "17740230605317488593"
+      "templateHash": "11199472528455680459"
     }
   },
   "parameters": {
@@ -118,7 +118,7 @@
       "type": "string",
       "defaultValue": "true",
       "metadata": {
-        "description": "Deploy Grounding with Bing Custom Search: the Bing account, the curated site allow-list, and the Foundry connection. Opt-in and additive — when false nothing Bing-related is created and the agent runs on AI Search alone."
+        "description": "Deploy Grounding with Bing Custom Search: the Bing account, the curated site allow-list, and the Foundry connection. Opt-in and additive — when false nothing Bing-related is created and the agent runs on AI Search alone. Also needs TRUSTED_WEB_SITES: with no site list Bing is not deployed."
       }
     },
     "voiceBinding": {
@@ -171,18 +171,43 @@
         "description": "Web IQ result region hint in model mode."
       }
     },
-    "webIqAllowedDomains": {
-      "type": "string",
-      "defaultValue": "",
-      "metadata": {
-        "description": "Comma-separated hosts that scope Web IQ searches, e.g. \"mtn.com,sashares.co.za\". Web IQ has no server-side allow-list, so these are compiled into site: operators on the query. Same intent as bingAllowedDomains — an open-web tool answering to an executive should not be able to cite anywhere at all. LEAVE EMPTY to derive the hosts from bingAllowedDomains, which is what keeps the two bindings searching the same sources; set it only to make model mode diverge deliberately."
-      }
-    },
     "webIqApiKey": {
       "type": "securestring",
       "defaultValue": "",
       "metadata": {
         "description": "Web IQ API key. Stored as a container-app secret, never as a plain env var. Set it with: azd env set WEBIQ_API_KEY <key>"
+      }
+    },
+    "agentWebTool": {
+      "type": "string",
+      "defaultValue": "webiq",
+      "allowedValues": [
+        "bing",
+        "webiq"
+      ],
+      "metadata": {
+        "description": "The agent's web tool, agent mode only. Model mode always uses Web IQ in-process.\n\n\"webiq\" (default): Web IQ, called through this app's /api/tools/search-web as an\nOpenAPI tool. It runs the model-mode search_web() unchanged, so the same trusted\nsites (TRUSTED_WEB_SITES, reduced to hosts; empty = open web) and filtering apply.\nReplaces Bing: nothing Bing-related is deployed. Greenfield Foundry only.\nMeasured against Bing on the same agent: faster tool step (0.66 s vs 1.83 s)\nand 15/15 good answers; see docs/evaluation-history.md.\n\n\"bing\": Grounding with Bing Custom Search, a managed Foundry tool with a\nserver-side site allow-list (TRUSTED_WEB_SITES). Not deployed when that list is\nempty, because Bing Custom Search has no open-web mode.\n\nThe preprovision hook records the value before this is read: \"webiq\" for a new\nenvironment, \"bing\" for one deployed before Web IQ became the default or using\nan existing Foundry account.\n\nFoundry's calls to the app are authenticated with agentWebToolKey when set,\notherwise with a managed-identity token for agentWebToolAudience. The\npreprovision hook settles one of the two; see docs/auth.md.\n"
+      }
+    },
+    "agentWebToolKey": {
+      "type": "securestring",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Shared key Foundry presents to the app for the Web IQ agent tool. Stored as a container-app secret and in a Foundry project connection. Wins over agentWebToolAudience. Empty in the normal case: preflight creates an app registration instead, and generates this only if it cannot."
+      }
+    },
+    "agentWebToolAudience": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Application ID URI (api://<client-id>) of the Entra app registration the agent's managed-identity token is issued for. Set by preflight."
+      }
+    },
+    "agentWebToolAppId": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Client ID of that app registration. Optional; accepted as a v2-token audience. Set by preflight."
       }
     },
     "bingSkuName": {
@@ -196,137 +221,11 @@
         "description": "Bing pricing tier. G2 is the tier this project has run on; G1 is the lower tier."
       }
     },
-    "bingAllowedDomains": {
-      "type": "array",
-      "defaultValue": [
-        {
-          "domain": "https://www.mtn.com/investors",
-          "includeSubPages": true,
-          "boostLevel": "SuperBoost"
-        },
-        {
-          "domain": "https://www.mtn.com/media-centre",
-          "includeSubPages": true,
-          "boostLevel": "SuperBoost"
-        },
-        {
-          "domain": "https://www.mtn.com/leadership",
-          "includeSubPages": true,
-          "boostLevel": "SuperBoost"
-        },
-        {
-          "domain": "https://www.mtn.com/financial-results/#",
-          "includeSubPages": true,
-          "boostLevel": "SuperBoost"
-        },
-        {
-          "domain": "https://www.jse.co.za/market-data",
-          "includeSubPages": true,
-          "boostLevel": "SuperBoost"
-        },
-        {
-          "domain": "https://www.ft.com/telecoms",
-          "includeSubPages": true,
-          "boostLevel": "Boosted"
-        },
-        {
-          "domain": "https://www.itweb.co.za",
-          "includeSubPages": true,
-          "boostLevel": "Boosted"
-        },
-        {
-          "domain": "https://mybroadband.co.za",
-          "includeSubPages": true,
-          "boostLevel": "Boosted"
-        },
-        {
-          "domain": "https://www.news24.com/fin24",
-          "includeSubPages": true,
-          "boostLevel": "Boosted"
-        },
-        {
-          "domain": "https://africanwirelesscomms.com",
-          "includeSubPages": true,
-          "boostLevel": "Boosted"
-        },
-        {
-          "domain": "https://www.itnewsafrica.com",
-          "includeSubPages": true,
-          "boostLevel": "Boosted"
-        },
-        {
-          "domain": "https://www.icasa.org.za",
-          "includeSubPages": true,
-          "boostLevel": "Boosted"
-        },
-        {
-          "domain": "https://www.mtn.com/newsroom",
-          "includeSubPages": true,
-          "boostLevel": "Boosted"
-        },
-        {
-          "domain": "https://www.reuters.com/world/africa",
-          "includeSubPages": true,
-          "boostLevel": "SuperBoost"
-        },
-        {
-          "domain": "https://techcentral.co.za",
-          "includeSubPages": true,
-          "boostLevel": "Boosted"
-        },
-        {
-          "domain": "https://www.moneyweb.co.za/tools-and-data",
-          "includeSubPages": true,
-          "boostLevel": "SuperBoost"
-        },
-        {
-          "domain": "https://sashares.co.za/mtn-shares",
-          "includeSubPages": true,
-          "boostLevel": "SuperBoost"
-        },
-        {
-          "domain": "https://www.mtn-investor.com",
-          "includeSubPages": true,
-          "boostLevel": "SuperBoost"
-        },
-        {
-          "domain": "https://punchng.com",
-          "includeSubPages": true,
-          "boostLevel": "Boosted"
-        },
-        {
-          "domain": "https://businessday.ng",
-          "includeSubPages": true,
-          "boostLevel": "Boosted"
-        },
-        {
-          "domain": "https://africa.businessinsider.com",
-          "includeSubPages": true,
-          "boostLevel": "Boosted"
-        },
-        {
-          "domain": "https://techcabal.com",
-          "includeSubPages": true,
-          "boostLevel": "Boosted"
-        },
-        {
-          "domain": "https://www.sbmintel.com",
-          "includeSubPages": true,
-          "boostLevel": "Boosted"
-        },
-        {
-          "domain": "https://quartr.com",
-          "includeSubPages": true,
-          "boostLevel": "Boosted"
-        },
-        {
-          "domain": "https://www.investing.com",
-          "includeSubPages": true,
-          "boostLevel": "Boosted"
-        }
-      ],
+    "trustedWebSites": {
+      "type": "string",
+      "defaultValue": "",
       "metadata": {
-        "description": "The curated allow-list the web tool is restricted to — a HARD boundary enforced by\nBing, which is what makes an open-web tool safe for an executive assistant. Replace\nthese with your own sources.\n\nboostLevel is SuperBoost or Boosted — those are the API values. The portal renders\nthem as \"Super Boost\" and \"Boost\", which are display labels and are NOT accepted here.\n\nSuperBoost is for sources that should win a tie: MTN's own investor, results and\nleadership pages, plus the share-price / market-data sources and Reuters Africa.\nBoosted is the industry and regulator press that supplies context.\n\nOrder below is kept identical to the live configuration this was taken from, so the\ntwo can be diffed line by line:\n  az rest --method get --url \"https://management.azure.com<configId>?api-version=2025-05-01-preview\"\n"
+        "description": "The trusted sites every web tool may search: TRUSTED_WEB_SITES. Comma-separated; each\nentry is a host or a URL, optionally with a path, e.g.\n\"+www.mtn.com/investors,www.itweb.co.za,mybroadband.co.za\". A leading + marks a\nSuperBoost source, which Bing ranks first; the rest are Boosted.\n\nEMPTY MEANS THE OPEN WEB for Web IQ (model mode, and AGENT_WEB_TOOL=webiq). Bing Custom\nSearch has no open-web mode, so with an empty list Bing is not deployed and an agent on\nAGENT_WEB_TOOL=bing gets no web tool. See \"Trusted web sources\" in docs/configuration.md.\n"
       }
     },
     "agentModel": {
@@ -539,9 +438,9 @@
     }
   },
   "variables": {
-    "bingHostsRaw": "[map(parameters('bingAllowedDomains'), lambda('d', split(replace(replace(lambdaVariables('d').domain, 'https://', ''), 'http://', ''), '/')[0]))]",
-    "bingHosts": "[map(variables('bingHostsRaw'), lambda('h', if(startsWith(lambdaVariables('h'), 'www.'), substring(lambdaVariables('h'), 4), lambdaVariables('h'))))]",
-    "webIqEffectiveDomains": "[if(empty(parameters('webIqAllowedDomains')), join(union(variables('bingHosts'), variables('bingHosts')), ','), parameters('webIqAllowedDomains'))]",
+    "trustedSiteEntries": "[filter(map(split(parameters('trustedWebSites'), ','), lambda('e', trim(lambdaVariables('e')))), lambda('e', and(and(not(empty(lambdaVariables('e'))), not(equals(lambdaVariables('e'), '+'))), not(startsWith(lambdaVariables('e'), '-')))))]",
+    "trustedSites": "[map(variables('trustedSiteEntries'), lambda('e', createObject('site', if(startsWith(lambdaVariables('e'), '+'), trim(substring(lambdaVariables('e'), 1)), lambdaVariables('e')), 'superBoost', startsWith(lambdaVariables('e'), '+'))))]",
+    "bingAllowedDomains": "[map(variables('trustedSites'), lambda('s', createObject('domain', if(contains(lambdaVariables('s').site, '://'), lambdaVariables('s').site, format('https://{0}', lambdaVariables('s').site)), 'includeSubPages', true(), 'boostLevel', if(lambdaVariables('s').superBoost, 'SuperBoost', 'Boosted'))))]",
     "resolvedAvatarType": "[toLower(trim(parameters('avatarType')))]",
     "resolvedAvatarModel": "[trim(parameters('avatarModel'))]",
     "resourceToken": "[toLower(uniqueString(subscription().id, parameters('environmentName'), parameters('location')))]",
@@ -660,11 +559,23 @@
           "webIqRegion": {
             "value": "[parameters('webIqRegion')]"
           },
-          "webIqAllowedDomains": {
-            "value": "[variables('webIqEffectiveDomains')]"
+          "trustedWebSites": {
+            "value": "[parameters('trustedWebSites')]"
           },
           "webIqApiKey": {
             "value": "[parameters('webIqApiKey')]"
+          },
+          "agentWebTool": {
+            "value": "[parameters('agentWebTool')]"
+          },
+          "agentWebToolKey": {
+            "value": "[parameters('agentWebToolKey')]"
+          },
+          "agentWebToolAudience": {
+            "value": "[parameters('agentWebToolAudience')]"
+          },
+          "agentWebToolAppId": {
+            "value": "[parameters('agentWebToolAppId')]"
           },
           "deployBingGrounding": {
             "value": "[equals(toLower(parameters('deployBingGrounding')), 'true')]"
@@ -673,7 +584,7 @@
             "value": "[parameters('bingSkuName')]"
           },
           "bingAllowedDomains": {
-            "value": "[parameters('bingAllowedDomains')]"
+            "value": "[variables('bingAllowedDomains')]"
           },
           "modelName": {
             "value": "[parameters('modelName')]"
@@ -753,7 +664,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.43.8.12551",
-              "templateHash": "1498067602193665293"
+              "templateHash": "80386075869770131"
             }
           },
           "parameters": {
@@ -876,11 +787,11 @@
                 "description": "Web IQ result region hint in model mode."
               }
             },
-            "webIqAllowedDomains": {
+            "trustedWebSites": {
               "type": "string",
               "defaultValue": "",
               "metadata": {
-                "description": "Comma-separated host allow-list for Web IQ results."
+                "description": "The trusted sites, as TRUSTED_WEB_SITES. Given to the app as written; empty = Web IQ searches the open web. See main.bicep."
               }
             },
             "webIqApiKey": {
@@ -888,6 +799,45 @@
               "defaultValue": "",
               "metadata": {
                 "description": "Web IQ API key, passed to the container app as a secret."
+              }
+            },
+            "agentWebTool": {
+              "type": "string",
+              "defaultValue": "webiq",
+              "allowedValues": [
+                "bing",
+                "webiq"
+              ],
+              "metadata": {
+                "description": "The agent's web tool in agent mode: \"bing\" or \"webiq\". See main.bicep."
+              }
+            },
+            "agentWebToolKey": {
+              "type": "securestring",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Key mode for the Web IQ agent tool. Wins over the audience when both are set."
+              }
+            },
+            "agentWebToolAudience": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Entra mode for the Web IQ agent tool: the Application ID URI Foundry requests a token for."
+              }
+            },
+            "agentWebToolAppId": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Entra mode, optional: the app registration's client ID."
+              }
+            },
+            "agentWebToolConnectionName": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Name of the project connection that holds the key in key mode."
               }
             },
             "deployBingGrounding": {
@@ -909,7 +859,7 @@
               "type": "array",
               "defaultValue": [],
               "metadata": {
-                "description": "The curated site allow-list. See modules/bingGrounding.bicep for the entry shape."
+                "description": "The trusted sites as Bing entries, parsed from TRUSTED_WEB_SITES in main.bicep. See modules/bingGrounding.bicep for the entry shape."
               }
             },
             "modelName": {
@@ -1047,7 +997,11 @@
               "resourceGroup": "rg"
             },
             "agentBinding": "[not(equals(toLower(parameters('voiceBinding')), 'model'))]",
-            "createBing": "[and(and(parameters('deployBingGrounding'), parameters('createFoundry')), variables('agentBinding'))]",
+            "agentWebIq": "[and(and(variables('agentBinding'), parameters('createFoundry')), equals(toLower(parameters('agentWebTool')), 'webiq'))]",
+            "agentWebToolKeyed": "[and(variables('agentWebIq'), not(empty(parameters('agentWebToolKey'))))]",
+            "agentWebToolEntra": "[and(and(variables('agentWebIq'), not(variables('agentWebToolKeyed'))), not(empty(parameters('agentWebToolAudience'))))]",
+            "agentWebToolConnectionNameEffective": "[if(empty(parameters('agentWebToolConnectionName')), 'agent-web-tool-key', parameters('agentWebToolConnectionName'))]",
+            "createBing": "[and(and(and(and(parameters('deployBingGrounding'), parameters('createFoundry')), variables('agentBinding')), not(variables('agentWebIq'))), not(empty(parameters('bingAllowedDomains'))))]",
             "bingConnectionNameEffective": "[if(empty(parameters('bingConnectionName')), 'bing-grounding-connection', parameters('bingConnectionName'))]",
             "bingCustomConfigNameEffective": "[if(empty(parameters('bingCustomConfigName')), 'avatar-web-search', parameters('bingCustomConfigName'))]",
             "bingEnvSegment": "[take(parameters('environmentName'), 45)]",
@@ -1549,7 +1503,7 @@
                     "_generator": {
                       "name": "bicep",
                       "version": "0.43.8.12551",
-                      "templateHash": "885384303716343834"
+                      "templateHash": "4819548604690973546"
                     }
                   },
                   "parameters": {
@@ -1846,6 +1800,13 @@
                     "projectPrincipalId": {
                       "type": "string",
                       "value": "[reference(resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('accountName'), parameters('projectName')), '2025-04-01-preview', 'full').identity.principalId]"
+                    },
+                    "accountPrincipalId": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "The account's system-assigned identity. Foundry signs OpenAPI tool calls made with managed-identity auth as this identity."
+                      },
+                      "value": "[reference(resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName')), '2025-04-01-preview', 'full').identity.principalId]"
                     },
                     "accountId": {
                       "type": "string",
@@ -2870,12 +2831,20 @@
                   "webIqRegion": {
                     "value": "[parameters('webIqRegion')]"
                   },
-                  "webIqAllowedDomains": {
-                    "value": "[parameters('webIqAllowedDomains')]"
+                  "trustedWebSites": {
+                    "value": "[parameters('trustedWebSites')]"
                   },
                   "webIqApiKey": {
                     "value": "[parameters('webIqApiKey')]"
                   },
+                  "agentWebIq": {
+                    "value": "[variables('agentWebIq')]"
+                  },
+                  "agentWebToolKey": "[if(variables('agentWebToolKeyed'), createObject('value', parameters('agentWebToolKey')), createObject('value', ''))]",
+                  "agentWebToolAudience": "[if(variables('agentWebToolEntra'), createObject('value', parameters('agentWebToolAudience')), createObject('value', ''))]",
+                  "agentWebToolAppId": "[if(variables('agentWebToolEntra'), createObject('value', parameters('agentWebToolAppId')), createObject('value', ''))]",
+                  "agentWebToolCallerOids": "[if(variables('agentWebToolEntra'), createObject('value', format('{0},{1}', reference(resourceId('Microsoft.Resources/deployments', 'foundry'), '2025-04-01').outputs.accountPrincipalId.value, reference(resourceId('Microsoft.Resources/deployments', 'foundry'), '2025-04-01').outputs.projectPrincipalId.value)), createObject('value', ''))]",
+                  "agentWebToolTenantId": "[if(variables('agentWebToolEntra'), createObject('value', tenant().tenantId), createObject('value', ''))]",
                   "appInsightsConnectionString": "[if(empty(parameters('existingAppInsightsName')), createObject('value', reference(resourceId('Microsoft.Resources/deployments', 'appi'), '2025-04-01').outputs.connectionString.value), createObject('value', reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, if(empty(parameters('existingAppInsightsResourceGroup')), resourceGroup().name, parameters('existingAppInsightsResourceGroup'))), 'Microsoft.Insights/components', parameters('existingAppInsightsName')), '2020-02-02').ConnectionString))]",
                   "agentModel": {
                     "value": "[parameters('agentModel')]"
@@ -2940,7 +2909,7 @@
                     "_generator": {
                       "name": "bicep",
                       "version": "0.43.8.12551",
-                      "templateHash": "16533707393253130127"
+                      "templateHash": "9663862989989215897"
                     }
                   },
                   "parameters": {
@@ -3015,11 +2984,11 @@
                         "description": "Web IQ endpoint in model mode. Empty resolves to https://api.microsoft.ai/v3."
                       }
                     },
-                    "webIqAllowedDomains": {
+                    "trustedWebSites": {
                       "type": "string",
                       "defaultValue": "",
                       "metadata": {
-                        "description": "Comma-separated host allow-list applied to Web IQ results. Same security boundary as bingAllowedDomains — and by default the same sources: main.bicep derives these bare hosts from bingAllowedDomains, because site: cannot express the paths and boost levels Bing Custom Search enforces."
+                        "description": "The trusted sites (TRUSTED_WEB_SITES), as written. The app reduces them to bare hosts for Web IQ, because site: cannot express the paths and boost levels Bing enforces. Empty = the open web."
                       }
                     },
                     "webIqLanguage": {
@@ -3041,6 +3010,48 @@
                       "defaultValue": "",
                       "metadata": {
                         "description": "Web IQ API key. Passed as a container-app SECRET, never as a plain env var. Optional: with no key the app authenticates to Web IQ with its managed identity, and decides at startup whether that works."
+                      }
+                    },
+                    "agentWebIq": {
+                      "type": "bool",
+                      "defaultValue": false,
+                      "metadata": {
+                        "description": "Agent mode only: serve the agent's web tool — Web IQ behind /api/tools/search-web. resources.bicep decides this; see agentWebTool in main.bicep."
+                      }
+                    },
+                    "agentWebToolKey": {
+                      "type": "securestring",
+                      "defaultValue": "",
+                      "metadata": {
+                        "description": "Shared key the Foundry agent presents in x-tool-key. Set = key mode; it then wins over the Entra settings below."
+                      }
+                    },
+                    "agentWebToolAudience": {
+                      "type": "string",
+                      "defaultValue": "",
+                      "metadata": {
+                        "description": "Entra mode: Application ID URI the agent's token must be issued for."
+                      }
+                    },
+                    "agentWebToolAppId": {
+                      "type": "string",
+                      "defaultValue": "",
+                      "metadata": {
+                        "description": "Entra mode, optional: the app registration's client ID, accepted as a v2-token audience."
+                      }
+                    },
+                    "agentWebToolCallerOids": {
+                      "type": "string",
+                      "defaultValue": "",
+                      "metadata": {
+                        "description": "Entra mode: comma-separated object IDs allowed to call — the Foundry identities that sign the agent's calls."
+                      }
+                    },
+                    "agentWebToolTenantId": {
+                      "type": "string",
+                      "defaultValue": "",
+                      "metadata": {
+                        "description": "Entra mode: tenant whose tokens are accepted."
                       }
                     },
                     "appInsightsConnectionString": {
@@ -3202,9 +3213,14 @@
                     "auditEnv": "[if(equals(toLower(parameters('enableAudit')), 'true'), createArray(createObject('name', 'ENABLE_AUDIT', 'value', 'true'), createObject('name', 'AUDIT_SINK', 'value', 'cosmos'), createObject('name', 'AUDIT_COSMOS_ENDPOINT', 'value', parameters('auditCosmosEndpoint')), createObject('name', 'AUDIT_COSMOS_DATABASE', 'value', parameters('auditCosmosDatabase')), createObject('name', 'AUDIT_COSMOS_CONTAINER', 'value', parameters('auditCosmosContainer')), createObject('name', 'AUDIT_RETENTION_DAYS', 'value', parameters('auditRetentionDays'))), createArray())]",
                     "modelBinding": "[equals(toLower(parameters('voiceBinding')), 'model')]",
                     "voiceBindingEnv": "[concat(createArray(createObject('name', 'VOICE_BINDING', 'value', parameters('voiceBinding'))), if(variables('modelBinding'), createArray(createObject('name', 'VOICELIVE_MODEL', 'value', if(empty(parameters('voiceLiveModel')), 'gpt-realtime-2.1', parameters('voiceLiveModel')))), createArray(createObject('name', 'AGENT_MODEL', 'value', parameters('agentModel')))))]",
-                    "webIqKeyed": "[and(variables('modelBinding'), not(empty(parameters('webIqApiKey'))))]",
+                    "webIqOn": "[or(variables('modelBinding'), parameters('agentWebIq'))]",
+                    "webIqKeyed": "[and(variables('webIqOn'), not(empty(parameters('webIqApiKey'))))]",
                     "webIqSecrets": "[if(variables('webIqKeyed'), createArray(createObject('name', 'webiq-api-key', 'value', parameters('webIqApiKey'))), createArray())]",
-                    "webIqEnv": "[if(variables('modelBinding'), concat(if(variables('webIqKeyed'), createArray(createObject('name', 'WEBIQ_API_KEY', 'secretRef', 'webiq-api-key')), createArray()), createArray(createObject('name', 'WEBIQ_BASE_URL', 'value', if(empty(parameters('webIqBaseUrl')), 'https://api.microsoft.ai/v3', parameters('webIqBaseUrl'))), createObject('name', 'WEBIQ_LANGUAGE', 'value', if(empty(parameters('webIqLanguage')), 'en', parameters('webIqLanguage'))), createObject('name', 'WEBIQ_REGION', 'value', if(empty(parameters('webIqRegion')), 'ZA', parameters('webIqRegion')))), if(empty(parameters('webIqAllowedDomains')), createArray(), createArray(createObject('name', 'WEBIQ_ALLOWED_DOMAINS', 'value', parameters('webIqAllowedDomains'))))), createArray())]",
+                    "webIqEnv": "[if(variables('webIqOn'), concat(if(variables('webIqKeyed'), createArray(createObject('name', 'WEBIQ_API_KEY', 'secretRef', 'webiq-api-key')), createArray()), createArray(createObject('name', 'WEBIQ_BASE_URL', 'value', if(empty(parameters('webIqBaseUrl')), 'https://api.microsoft.ai/v3', parameters('webIqBaseUrl'))), createObject('name', 'WEBIQ_LANGUAGE', 'value', if(empty(parameters('webIqLanguage')), 'en', parameters('webIqLanguage'))), createObject('name', 'WEBIQ_REGION', 'value', if(empty(parameters('webIqRegion')), 'ZA', parameters('webIqRegion')))), if(empty(parameters('trustedWebSites')), createArray(), createArray(createObject('name', 'TRUSTED_WEB_SITES', 'value', parameters('trustedWebSites'))))), createArray())]",
+                    "agentWebToolKeyed": "[and(parameters('agentWebIq'), not(empty(parameters('agentWebToolKey'))))]",
+                    "agentWebToolEntra": "[and(and(and(and(parameters('agentWebIq'), not(variables('agentWebToolKeyed'))), not(empty(parameters('agentWebToolAudience')))), not(empty(parameters('agentWebToolCallerOids')))), not(empty(parameters('agentWebToolTenantId'))))]",
+                    "agentWebToolSecrets": "[if(variables('agentWebToolKeyed'), createArray(createObject('name', 'agent-web-tool-key', 'value', parameters('agentWebToolKey'))), createArray())]",
+                    "agentWebToolEnv": "[concat(if(variables('agentWebToolKeyed'), createArray(createObject('name', 'AGENT_WEB_TOOL_KEY', 'secretRef', 'agent-web-tool-key')), createArray()), if(variables('agentWebToolEntra'), concat(createArray(createObject('name', 'AGENT_WEB_TOOL_AUDIENCE', 'value', parameters('agentWebToolAudience')), createObject('name', 'AGENT_WEB_TOOL_CALLER_OIDS', 'value', parameters('agentWebToolCallerOids')), createObject('name', 'AGENT_WEB_TOOL_TENANT_ID', 'value', parameters('agentWebToolTenantId'))), if(empty(parameters('agentWebToolAppId')), createArray(), createArray(createObject('name', 'AGENT_WEB_TOOL_APP_ID', 'value', parameters('agentWebToolAppId'))))), createArray()))]",
                     "meetingBotOn": "[equals(toLower(parameters('meetingBotEnabled')), 'true')]",
                     "meetingBotEnv": "[concat(if(variables('meetingBotOn'), createArray(createObject('name', 'MEETING_BOT_ENABLED', 'value', 'true')), createArray()), if(not(empty(parameters('acsAudioSampleRate'))), createArray(createObject('name', 'ACS_AUDIO_SAMPLE_RATE', 'value', parameters('acsAudioSampleRate'))), createArray()), if(not(empty(parameters('acsRequireWakePhrase'))), createArray(createObject('name', 'ACS_REQUIRE_WAKE_PHRASE', 'value', parameters('acsRequireWakePhrase'))), createArray()), if(not(empty(parameters('acsAvatarVideoEnabled'))), createArray(createObject('name', 'ACS_AVATAR_VIDEO_ENABLED', 'value', parameters('acsAvatarVideoEnabled'))), createArray()), if(not(empty(parameters('browserJoinVideoEnabled'))), createArray(createObject('name', 'BROWSER_JOIN_VIDEO_ENABLED', 'value', parameters('browserJoinVideoEnabled'))), createArray()))]"
                   },
@@ -3225,7 +3241,7 @@
                         "managedEnvironmentId": "[parameters('containerAppsEnvironmentId')]",
                         "configuration": {
                           "activeRevisionsMode": "Single",
-                          "secrets": "[variables('webIqSecrets')]",
+                          "secrets": "[concat(variables('webIqSecrets'), variables('agentWebToolSecrets'))]",
                           "ingress": {
                             "external": true,
                             "targetPort": 3000,
@@ -3263,7 +3279,7 @@
                                 "cpu": "[json('2.0')]",
                                 "memory": "4.0Gi"
                               },
-                              "env": "[concat(createArray(createObject('name', 'PORT', 'value', '3000'), createObject('name', 'AZURE_CLIENT_ID', 'value', parameters('uamiClientId')), createObject('name', 'DEVELOPER_MODE', 'value', parameters('developerMode')), createObject('name', 'AZURE_VOICELIVE_ENDPOINT', 'value', parameters('voiceliveEndpoint')), createObject('name', 'PROJECT_ENDPOINT', 'value', parameters('projectEndpoint')), createObject('name', 'AGENT_NAME', 'value', parameters('agentName')), createObject('name', 'AGENT_PROJECT_NAME', 'value', parameters('agentProjectName')), createObject('name', 'EMBEDDING_DEPLOYMENT', 'value', parameters('embeddingDeployment')), createObject('name', 'AZURE_SEARCH_ENDPOINT', 'value', parameters('searchEndpoint')), createObject('name', 'SEARCH_CONNECTION_NAME', 'value', parameters('searchConnectionName')), createObject('name', 'SEARCH_INDEX_NAME', 'value', parameters('searchIndexName')), createObject('name', 'VOICELIVE_VOICE', 'value', parameters('voiceLiveVoice')), createObject('name', 'BING_CONNECTION_NAME', 'value', parameters('bingConnectionName')), createObject('name', 'BING_CUSTOM_CONFIG_NAME', 'value', parameters('bingCustomConfigName')), createObject('name', 'AVATAR_TYPE', 'value', parameters('avatarType')), createObject('name', 'AVATAR_MODEL', 'value', parameters('avatarModel')), createObject('name', 'AVATAR_DISPLAY_NAME', 'value', parameters('avatarDisplayName')), createObject('name', 'AVATAR_TAGLINE', 'value', parameters('avatarTagline')), createObject('name', 'AVATAR_BACKGROUND_IMAGE_URL', 'value', parameters('avatarBackgroundImageUrl')), createObject('name', 'ENABLE_AVATAR_SPEAKING_STYLE', 'value', parameters('enableAvatarSpeakingStyle')), createObject('name', 'SR_MODEL', 'value', parameters('srModel')), createObject('name', 'RECOGNITION_LANGUAGE', 'value', parameters('recognitionLanguage')), createObject('name', 'APPLICATIONINSIGHTS_CONNECTION_STRING', 'value', parameters('appInsightsConnectionString'))), concat(variables('acsEnv'), variables('meetingBotEnv'), variables('voiceBindingEnv'), variables('webIqEnv'), variables('auditEnv')))]",
+                              "env": "[concat(createArray(createObject('name', 'PORT', 'value', '3000'), createObject('name', 'AZURE_CLIENT_ID', 'value', parameters('uamiClientId')), createObject('name', 'DEVELOPER_MODE', 'value', parameters('developerMode')), createObject('name', 'AZURE_VOICELIVE_ENDPOINT', 'value', parameters('voiceliveEndpoint')), createObject('name', 'PROJECT_ENDPOINT', 'value', parameters('projectEndpoint')), createObject('name', 'AGENT_NAME', 'value', parameters('agentName')), createObject('name', 'AGENT_PROJECT_NAME', 'value', parameters('agentProjectName')), createObject('name', 'EMBEDDING_DEPLOYMENT', 'value', parameters('embeddingDeployment')), createObject('name', 'AZURE_SEARCH_ENDPOINT', 'value', parameters('searchEndpoint')), createObject('name', 'SEARCH_CONNECTION_NAME', 'value', parameters('searchConnectionName')), createObject('name', 'SEARCH_INDEX_NAME', 'value', parameters('searchIndexName')), createObject('name', 'VOICELIVE_VOICE', 'value', parameters('voiceLiveVoice')), createObject('name', 'BING_CONNECTION_NAME', 'value', parameters('bingConnectionName')), createObject('name', 'BING_CUSTOM_CONFIG_NAME', 'value', parameters('bingCustomConfigName')), createObject('name', 'AVATAR_TYPE', 'value', parameters('avatarType')), createObject('name', 'AVATAR_MODEL', 'value', parameters('avatarModel')), createObject('name', 'AVATAR_DISPLAY_NAME', 'value', parameters('avatarDisplayName')), createObject('name', 'AVATAR_TAGLINE', 'value', parameters('avatarTagline')), createObject('name', 'AVATAR_BACKGROUND_IMAGE_URL', 'value', parameters('avatarBackgroundImageUrl')), createObject('name', 'ENABLE_AVATAR_SPEAKING_STYLE', 'value', parameters('enableAvatarSpeakingStyle')), createObject('name', 'SR_MODEL', 'value', parameters('srModel')), createObject('name', 'RECOGNITION_LANGUAGE', 'value', parameters('recognitionLanguage')), createObject('name', 'APPLICATIONINSIGHTS_CONNECTION_STRING', 'value', parameters('appInsightsConnectionString'))), concat(variables('acsEnv'), variables('meetingBotEnv'), variables('voiceBindingEnv'), variables('webIqEnv'), variables('agentWebToolEnv'), variables('auditEnv')))]",
                               "probes": [
                                 {
                                   "type": "Liveness",
@@ -3321,6 +3337,113 @@
                 "[resourceId('Microsoft.Resources/deployments', 'foundry')]",
                 "[resourceId('Microsoft.Resources/deployments', 'search')]",
                 "[resourceId('Microsoft.Resources/deployments', 'uami')]"
+              ]
+            },
+            {
+              "condition": "[variables('agentWebToolKeyed')]",
+              "type": "Microsoft.Resources/deployments",
+              "apiVersion": "2025-04-01",
+              "name": "agent-web-tool-connection",
+              "properties": {
+                "expressionEvaluationOptions": {
+                  "scope": "inner"
+                },
+                "mode": "Incremental",
+                "parameters": {
+                  "accountName": {
+                    "value": "[reference(resourceId('Microsoft.Resources/deployments', 'foundry'), '2025-04-01').outputs.accountName.value]"
+                  },
+                  "projectName": {
+                    "value": "[reference(resourceId('Microsoft.Resources/deployments', 'foundry'), '2025-04-01').outputs.projectName.value]"
+                  },
+                  "connectionName": {
+                    "value": "[variables('agentWebToolConnectionNameEffective')]"
+                  },
+                  "target": {
+                    "value": "[reference(resourceId('Microsoft.Resources/deployments', 'app'), '2025-04-01').outputs.uri.value]"
+                  },
+                  "key": {
+                    "value": "[parameters('agentWebToolKey')]"
+                  }
+                },
+                "template": {
+                  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+                  "contentVersion": "1.0.0.0",
+                  "metadata": {
+                    "_generator": {
+                      "name": "bicep",
+                      "version": "0.43.8.12551",
+                      "templateHash": "12118522488859112267"
+                    }
+                  },
+                  "parameters": {
+                    "accountName": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "Foundry account (kind=AIServices) name."
+                      }
+                    },
+                    "projectName": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "Foundry project name."
+                      }
+                    },
+                    "connectionName": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "Connection name. setup_foundry_agent.py resolves it by name."
+                      }
+                    },
+                    "target": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "What the key opens — the container app's URL. Informational: the OpenAPI spec's servers entry decides where calls go."
+                      }
+                    },
+                    "header": {
+                      "type": "string",
+                      "defaultValue": "x-tool-key",
+                      "metadata": {
+                        "description": "Header the key is sent in. Must match the OpenAPI spec's apiKey scheme and backend/api/agent_tools.py."
+                      }
+                    },
+                    "key": {
+                      "type": "securestring"
+                    }
+                  },
+                  "resources": [
+                    {
+                      "type": "Microsoft.CognitiveServices/accounts/projects/connections",
+                      "apiVersion": "2025-04-01-preview",
+                      "name": "[format('{0}/{1}/{2}', parameters('accountName'), parameters('projectName'), parameters('connectionName'))]",
+                      "properties": {
+                        "category": "CustomKeys",
+                        "authType": "CustomKeys",
+                        "target": "[parameters('target')]",
+                        "isSharedToAll": true,
+                        "credentials": {
+                          "keys": {
+                            "[format('{0}', parameters('header'))]": "[parameters('key')]"
+                          }
+                        },
+                        "metadata": {
+                          "purpose": "agent-web-tool"
+                        }
+                      }
+                    }
+                  ],
+                  "outputs": {
+                    "name": {
+                      "type": "string",
+                      "value": "[parameters('connectionName')]"
+                    }
+                  }
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Resources/deployments', 'app')]",
+                "[resourceId('Microsoft.Resources/deployments', 'foundry')]"
               ]
             }
           ],
@@ -3384,6 +3507,14 @@
             "bingCustomConfigName": {
               "type": "string",
               "value": "[if(variables('createBing'), variables('bingCustomConfigNameEffective'), parameters('bingCustomConfigName'))]"
+            },
+            "agentWebToolAuth": {
+              "type": "string",
+              "value": "[if(variables('agentWebToolKeyed'), 'key', if(variables('agentWebToolEntra'), 'entra', ''))]"
+            },
+            "agentWebToolConnectionName": {
+              "type": "string",
+              "value": "[if(variables('agentWebToolKeyed'), reference(resourceId('Microsoft.Resources/deployments', 'agent-web-tool-connection'), '2025-04-01').outputs.name.value, '')]"
             }
           }
         }
@@ -3847,6 +3978,14 @@
     "BING_CUSTOM_CONFIG_NAME": {
       "type": "string",
       "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('resourceGroupName')), 'Microsoft.Resources/deployments', 'resources'), '2025-04-01').outputs.bingCustomConfigName.value]"
+    },
+    "AGENT_WEB_TOOL_AUTH": {
+      "type": "string",
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('resourceGroupName')), 'Microsoft.Resources/deployments', 'resources'), '2025-04-01').outputs.agentWebToolAuth.value]"
+    },
+    "AGENT_WEB_TOOL_CONNECTION_NAME": {
+      "type": "string",
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('resourceGroupName')), 'Microsoft.Resources/deployments', 'resources'), '2025-04-01').outputs.agentWebToolConnectionName.value]"
     },
     "APPLICATIONINSIGHTS_CONNECTION_STRING": {
       "type": "string",
