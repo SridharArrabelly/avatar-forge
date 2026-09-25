@@ -233,7 +233,8 @@ source that is unavailable in the current session.
 > `/api/tools/search-web`, so both bindings search Web IQ over the same hosts.
 > It was faster and answered better than Bing in agent mode
 > ([evaluation history](evaluation-history.md#web-iq-as-the-agents-web-tool-24-september-2026)).
-> Bing remains the agent default. See [deployment.md](deployment.md#choosing-the-agents-web-tool).
+> It is the agent's default on new environments; Bing is the alternative. See
+> [deployment.md](deployment.md#choosing-the-agents-web-tool).
 
 ---
 

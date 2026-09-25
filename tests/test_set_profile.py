@@ -171,29 +171,55 @@ check(
     f"param agentWebTool string = '{ch.DEFAULT_WEB_TOOL}'"
     in (REPO / "infra" / "main.bicep").read_text(encoding="utf-8"),
 )
-check("the menu offers exactly bing and webiq", ch.WEB_TOOL_ORDER == ["bing", "webiq"])
+check("the menu offers exactly webiq, then bing", ch.WEB_TOOL_ORDER == ["webiq", "bing"])
+check("webiq is the default", ch.DEFAULT_WEB_TOOL == "webiq")
 
 print("\nThe web tool is asked only in an interactive agent-mode run")
 written, out = run({}, "web")
-check("CI (--binding agent) leaves AGENT_WEB_TOOL untouched", "AGENT_WEB_TOOL" not in written)
-check("and reports the default", "Agent web tool: 'bing'" in out)
+check("CI (--binding agent) records the default on a new env", written.get("AGENT_WEB_TOOL") == "webiq")
+check("and reports it", "Agent web tool: 'webiq'" in out)
 
-written, _ = run({}, "web", ["--binding", "agent", "--web-tool", "webiq"])
-check("--web-tool webiq is written without a prompt", written.get("AGENT_WEB_TOOL") == "webiq")
+written, _ = run({}, "web", ["--binding", "agent", "--web-tool", "bing"])
+check("--web-tool bing is written without a prompt", written.get("AGENT_WEB_TOOL") == "bing")
 
 written, out = run({}, "web", [], answers=["1", ""])
-check("interactive agent mode asks, and Enter picks bing", written.get("AGENT_WEB_TOOL") == "bing")
+check("interactive agent mode asks, and Enter picks webiq", written.get("AGENT_WEB_TOOL") == "webiq")
 check("the menu says what each option measured", "1.83 s" in out and "0.66 s" in out)
+check("and says Web IQ needs a key", "WEBIQ_API_KEY" in out)
 
-written, _ = run({"AGENT_WEB_TOOL": "webiq"}, "web", [], answers=["1", ""])
-check("Enter keeps a web tool already chosen", written.get("AGENT_WEB_TOOL") == "webiq")
+written, _ = run({"AGENT_WEB_TOOL": "bing"}, "web", [], answers=["1", ""])
+check("Enter keeps a web tool already chosen", written.get("AGENT_WEB_TOOL") == "bing")
 
 written, out = run({}, "web", [], answers=["1", "2"])
-check("choosing 2 selects webiq", written.get("AGENT_WEB_TOOL") == "webiq")
-check("and says Web IQ needs a key", "WEBIQ_API_KEY" in out)
+check("choosing 2 selects bing", written.get("AGENT_WEB_TOOL") == "bing")
 
 written, _ = run({}, "web", [], answers=["2"])
 check("model mode is not asked about the agent's web tool", "AGENT_WEB_TOOL" not in written)
+
+print("\nAn unset web tool keeps Bing where Web IQ would change or break the environment")
+legacy = {"DEPLOY_PROFILE": "web", "SERVICE_APP_URI": "https://x"}
+written, out = run(legacy, "web")
+check("a deployed agent env that never chose is recorded as bing",
+      written.get("AGENT_WEB_TOOL") == "bing")
+check("and nothing needs re-provisioning", "Nothing to re-provision" in out)
+check("and it says why, and how to move", "deployed before Web IQ became the default" in out
+      and "--web-tool webiq" in out)
+
+written, out = run(legacy, "web", [], answers=["1", ""])
+check("interactively, Enter keeps bing on that env", written.get("AGENT_WEB_TOOL") == "bing")
+check("and the menu marks it current", "(current)" in out)
+check("and still nothing to re-provision", "Nothing to re-provision" in out)
+
+written, out = run({"FOUNDRY_ACCOUNT_NAME": "byo"}, "web")
+check("BYO Foundry records bing", written.get("AGENT_WEB_TOOL") == "bing")
+check("and says Web IQ needs this template's account", "FOUNDRY_ACCOUNT_NAME is set" in out)
+
+written, out = run({**legacy, "VOICE_BINDING": "model"}, "web")
+check("model -> agent on a deployed env gets webiq (it has no agent to preserve)",
+      written.get("AGENT_WEB_TOOL") == "webiq")
+
+written, _ = run({**legacy, "VOICE_BINDING": "model"}, "web", ["--binding", "model"])
+check("model mode records no web tool", "AGENT_WEB_TOOL" not in written)
 
 _, out = run({"FOUNDRY_ACCOUNT_NAME": "byo"}, "web", ["--binding", "agent", "--web-tool", "webiq"])
 check("webiq with a BYO Foundry account warns before preflight", "FOUNDRY_ACCOUNT_NAME is set" in out)
@@ -206,6 +232,9 @@ deployed = {"DEPLOY_PROFILE": "web", "SERVICE_APP_URI": "https://x"}
 _, out = run(deployed, "web", ["--binding", "agent", "--web-tool", "webiq"])
 check("bing -> webiq says azd provision", "azd provision" in out and "AGENT_WEB_TOOL=webiq" in out)
 check("and warns the Bing account keeps billing", "keeps billing" in out)
+
+_, out = run({**deployed, "AGENT_WEB_TOOL": "bing"}, "web", ["--binding", "agent", "--web-tool", "webiq"])
+check("an explicit bing -> webiq says azd provision too", "AGENT_WEB_TOOL=webiq" in out)
 
 _, out = run({**deployed, "AGENT_WEB_TOOL": "webiq"}, "web", ["--binding", "agent", "--web-tool", "webiq"])
 check("re-choosing the same web tool asks for nothing", "Nothing to re-provision" in out)

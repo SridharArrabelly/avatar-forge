@@ -177,9 +177,52 @@ class WebTool:
     tradeoff: str
 
 
-WEB_TOOL_ORDER = ["bing", "webiq"]
+WEB_TOOL_ORDER = ["webiq", "bing"]
 # Must match agentWebTool's default in infra/main.bicep and main.parameters.json.
-DEFAULT_WEB_TOOL = "bing"
+DEFAULT_WEB_TOOL = "webiq"
+
+# Why resolve_web_tool() picked a tool.
+WEB_TOOL_SET = "set"
+WEB_TOOL_DEFAULT = "default"
+WEB_TOOL_EXISTING = "existing"
+WEB_TOOL_BYO_FOUNDRY = "byo-foundry"
+
+
+def resolve_web_tool(env) -> tuple[str, str]:
+    """The agent web tool an environment deploys, and why: ``(tool, reason)``.
+
+    AGENT_WEB_TOOL wins when set (lower-cased, not validated). Unset, Web IQ is
+    the default for NEW environments only; two kinds keep Bing, because Web IQ
+    would change or break them:
+
+    * ``existing``: agent mode and already deployed (SERVICE_APP_URI is a
+      provision output). The environment predates the choice, when Bing was the
+      only web tool, so defaulting it to Web IQ would silently swap a live
+      agent's tool. Preflight records the tool in agent mode, so a deployed
+      agent-mode environment with nothing recorded is always one of these.
+    * ``byo-foundry``: FOUNDRY_ACCOUNT_NAME is set, and Web IQ needs the Foundry
+      account this template creates.
+    """
+    raw = (env.get("AGENT_WEB_TOOL") or "").strip().lower()
+    if raw:
+        return raw, WEB_TOOL_SET
+    if (env.get("FOUNDRY_ACCOUNT_NAME") or "").strip():
+        return "bing", WEB_TOOL_BYO_FOUNDRY
+    agent = ((env.get("VOICE_BINDING") or "").strip().lower() or "agent") == "agent"
+    if agent and (env.get("SERVICE_APP_URI") or "").strip():
+        return "bing", WEB_TOOL_EXISTING
+    return DEFAULT_WEB_TOOL, WEB_TOOL_DEFAULT
+
+
+def web_tool_reason_note(reason: str) -> str:
+    """One line on why an unset AGENT_WEB_TOOL resolved to Bing, or ""."""
+    if reason == WEB_TOOL_EXISTING:
+        return ("kept: this environment was deployed before Web IQ became the default, "
+                "so its agent stays on Bing until you choose otherwise")
+    if reason == WEB_TOOL_BYO_FOUNDRY:
+        return "Web IQ needs the Foundry account this template creates, and FOUNDRY_ACCOUNT_NAME is set"
+    return ""
+
 
 WEB_TOOLS: dict[str, WebTool] = {
     "bing": WebTool(
@@ -190,8 +233,8 @@ WEB_TOOLS: dict[str, WebTool] = {
             "list and the connection."
         ),
         tradeoff=(
-            "The established default. Slower in our tests: 1.83 s per search, "
-            "13/15 good answers."
+            "Slower in our tests: 1.83 s per search, 13/15 good answers. The one to "
+            "use with an existing Foundry account (FOUNDRY_ACCOUNT_NAME)."
         ),
     ),
     "webiq": WebTool(
@@ -203,8 +246,8 @@ WEB_TOOLS: dict[str, WebTool] = {
             "means the open web). No Bing is deployed."
         ),
         tradeoff=(
-            "Faster in our tests: 0.66 s per search, first token 1.2 s sooner, 15/15 "
-            "good answers. Needs WEBIQ_API_KEY (unless the app's identity is bound in "
+            "The default. Faster in our tests: 0.66 s per search, first token 1.2 s "
+            "sooner, 15/15 good answers. Needs WEBIQ_API_KEY (unless the app's identity is bound in "
             "the Web IQ portal) and the Foundry account this template creates."
         ),
     ),

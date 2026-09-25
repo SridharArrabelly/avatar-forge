@@ -220,12 +220,22 @@ class Preflight(unittest.TestCase):
                 self.assertNotIn("fail", [state for state, _ in self.states(cfg)])
 
     def test_bing_without_sites_says_no_web_tool(self):
-        [(state, detail)] = self.states({})
+        [(state, detail)] = self.states({"AGENT_WEB_TOOL": "bing"})
         self.assertEqual(state, "warn")
         self.assertIn("NO web tool", detail)
 
     def test_bing_turned_off_is_silent(self):
-        self.assertEqual(self.states({"DEPLOY_BING_GROUNDING": "false"}), [])
+        self.assertEqual(self.states({"AGENT_WEB_TOOL": "bing", "DEPLOY_BING_GROUNDING": "false"}), [])
+
+    def test_deployed_agent_that_never_chose_is_checked_as_bing(self):
+        [(state, detail)] = self.states({"SERVICE_APP_URI": "https://x"})
+        self.assertEqual(state, "warn")
+        self.assertIn("NO web tool", detail)
+
+    def test_new_agent_env_is_checked_as_web_iq(self):
+        [(state, detail)] = self.states({})
+        self.assertEqual(state, "ok")
+        self.assertIn("open web", detail)
 
     def test_web_iq_unset_is_open_web(self):
         [(state, detail)] = self.states({"VOICE_BINDING": "model"})
@@ -246,7 +256,7 @@ class Preflight(unittest.TestCase):
         raw = ",".join(f"site{i:03d}.example.com" for i in range(40))
         self.assertIn("fail", [state for state, _ in self.states({"VOICE_BINDING": "model", "TRUSTED_WEB_SITES": raw})])
         # Bing has no such cap, so the same list is fine for it.
-        self.assertNotIn("fail", [state for state, _ in self.states({"TRUSTED_WEB_SITES": raw})])
+        self.assertNotIn("fail", [state for state, _ in self.states({"AGENT_WEB_TOOL": "bing", "TRUSTED_WEB_SITES": raw})])
 
     def test_summary(self):
         [(state, detail)] = self.states({"VOICE_BINDING": "model", "TRUSTED_WEB_SITES": SAMPLE})

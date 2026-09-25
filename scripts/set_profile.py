@@ -10,7 +10,7 @@ The questions are independent:
     channel   (DEPLOY_PROFILE)  where people reach the avatar   web / teams-tab /
                                                                 in-call-browser / in-call
     brain     (VOICE_BINDING)   what answers                    agent / model
-    web tool  (AGENT_WEB_TOOL)  agent mode's web search         bing / webiq
+    web tool  (AGENT_WEB_TOOL)  agent mode's web search         webiq / bing
 
 The web tool is only asked for agent mode; model mode always uses Web IQ.
 
@@ -36,7 +36,6 @@ from channels import (
     BINDINGS,
     BOLD,
     CYAN,
-    DEFAULT_WEB_TOOL,
     DIM,
     GREEN,
     PROFILE_MANAGED_FLAGS,
@@ -44,10 +43,14 @@ from channels import (
     PROFILES,
     RESET,
     WEB_TOOL_ORDER,
+    WEB_TOOL_EXISTING,
+    WEB_TOOL_SET,
     WEB_TOOLS,
     YELLOW,
     get_profile,
     render_steps,
+    resolve_web_tool,
+    web_tool_reason_note,
 )
 
 
@@ -131,16 +134,19 @@ def _choose_binding(current: str) -> str:
         print(f"{YELLOW}Not a valid choice.{RESET}")
 
 
-def _choose_web_tool(current: str) -> str:
+def _choose_web_tool(default: str, current: str = "", note: str = "") -> str:
     # Enter keeps what the environment already has, so re-running this to change
     # the channel cannot quietly swap a deployed agent's web tool.
-    default = current if current in WEB_TOOLS else DEFAULT_WEB_TOOL
+    if default not in WEB_TOOLS:
+        default = WEB_TOOL_ORDER[0]
     default_n = WEB_TOOL_ORDER.index(default) + 1
     print()
     print(f"{BOLD}Which web search should the agent use?{RESET}")
     print(f"{DIM}  Agent mode only. Both search the sites in TRUSTED_WEB_SITES; with none set, "
           f"Web IQ searches the open web and Bing is not deployed. Change it later by "
           f"re-running this and redeploying.{RESET}")
+    if note:
+        print(f"{DIM}  {note[0].upper()}{note[1:]}.{RESET}")
     print()
     for i, key in enumerate(WEB_TOOL_ORDER, start=1):
         t = WEB_TOOLS[key]
@@ -170,7 +176,8 @@ def main() -> int:
     ap.add_argument(
         "--web-tool",
         choices=WEB_TOOL_ORDER,
-        help=f"Set AGENT_WEB_TOOL without prompting (agent mode only; default {DEFAULT_WEB_TOOL}).",
+        help="Set AGENT_WEB_TOOL without prompting (agent mode only). Unset, new environments "
+             "get webiq; deployed ones and BYO Foundry keep bing.",
     )
     ap.add_argument("--show", action="store_true", help="Print the current profile's plan and exit.")
     args = ap.parse_args()
@@ -215,15 +222,21 @@ def main() -> int:
 
     # Third question, agent mode only: which web tool. Asked only in an
     # interactive run (no --binding), so existing CI invocations never block on
-    # it; unanswered, the environment keeps whatever it already had.
-    current_web_tool = env.get("AGENT_WEB_TOOL", "").strip().lower()
+    # it. Resolved against the environment as it was, so a deployed agent that
+    # never chose keeps Bing, while a model-mode environment moving to agent
+    # mode (it has no agent yet) gets the default.
+    recorded_web_tool = env.get("AGENT_WEB_TOOL", "").strip().lower()
+    resolved_web_tool, web_tool_reason = resolve_web_tool(env)
     web_tool = args.web_tool
     if not web_tool and binding == "agent" and not args.binding:
-        web_tool = _choose_web_tool(current_web_tool)
-    if web_tool:
-        _azd_env_set("AGENT_WEB_TOOL", web_tool)
-    effective_web_tool = web_tool or current_web_tool or DEFAULT_WEB_TOOL
-    if binding == "agent" and effective_web_tool != (current_web_tool or DEFAULT_WEB_TOOL):
+        current = resolved_web_tool if web_tool_reason in (WEB_TOOL_SET, WEB_TOOL_EXISTING) else ""
+        web_tool = _choose_web_tool(resolved_web_tool, current, web_tool_reason_note(web_tool_reason))
+    effective_web_tool = web_tool or resolved_web_tool
+    # Record it in agent mode even when nobody chose, so preflight, Bicep and the
+    # setup script all see the same tool, and a later default cannot move it.
+    if web_tool or (binding == "agent" and not recorded_web_tool and effective_web_tool in WEB_TOOLS):
+        _azd_env_set("AGENT_WEB_TOOL", effective_web_tool)
+    if binding == "agent" and effective_web_tool != resolved_web_tool:
         changed.append(f"AGENT_WEB_TOOL={effective_web_tool}")
 
     print()
@@ -243,6 +256,11 @@ def main() -> int:
         tool = WEB_TOOLS.get(effective_web_tool)
         if tool:
             print(f"{GREEN}Agent web tool: '{effective_web_tool}' ({tool.title}).{RESET}")
+            note = "" if web_tool else web_tool_reason_note(web_tool_reason)
+            if note:
+                print(f"{DIM}  {note[0].upper()}{note[1:]}.{RESET}")
+            if note and web_tool_reason == WEB_TOOL_EXISTING:
+                print(f"{DIM}  To move to Web IQ: --web-tool webiq, then provision and deploy.{RESET}")
         else:
             print(f"{YELLOW}AGENT_WEB_TOOL={effective_web_tool!r} is not a valid web tool, so "
                   f"preflight will stop.{RESET} {DIM}Re-run with --web-tool "

@@ -6,22 +6,23 @@ This script creates a new version of a Microsoft Foundry agent (e.g.
 * **Azure AI Search** - internal index of past MTN executive meetings.
 * **A web tool**, chosen by ``AGENT_WEB_TOOL``:
 
-  * ``bing`` (default) - **Grounding with Bing Custom Search**: single-shot
-    open-web grounding restricted to a curated allow-list (configured
-    server-side as a Bing Custom Search "configuration"). Provides hard source
-    restriction rather than a soft ``site:`` hint, which makes the avatar's
-    external answers safer to trust.
-  * ``webiq`` - an OpenAPI tool that calls the app's own
+  * ``webiq`` (default) - an OpenAPI tool that calls the app's own
     ``/api/tools/search-web``, which runs the same trusted-site Web IQ search as
     model mode (``backend/api/agent_tools.py``). Measured faster than Bing with
     equal-or-better answers; see docs/evaluation-history.md.
+  * ``bing`` - **Grounding with Bing Custom Search**: single-shot
+    open-web grounding restricted to a curated allow-list (configured
+    server-side as a Bing Custom Search "configuration"). Provides hard source
+    restriction rather than a soft ``site:`` hint, which makes the avatar's
+    external answers safer to trust. Kept by environments deployed before Web
+    IQ became the default, and the one to use with an existing Foundry account.
 
 The agent's system prompt, model, and tool wiring live here; the runtime
 backend (``backend/``) only references the agent by ``AGENT_NAME`` /
 ``AGENT_PROJECT_NAME`` and lets Foundry resolve the rest server-side.
 
 The default agent config is ``gpt-5.6-terra`` with reasoning ``none``,
-lexical/semantic Search at top-5, and Grounding-with-Bing-Custom-Search.
+lexical/semantic Search at top-5, and Web IQ for the web.
 The deployment name is overridable via ``AGENT_MODEL``. See
 ``docs/evaluation-results.md`` for measured quality and latency, including limits.
 
@@ -36,7 +37,9 @@ Required environment variables (see ``.env.example``):
     AGENT_NAME                Name of the Foundry agent to create / version (e.g. ``MtnAvatarAgent``)
     AGENT_MODEL               Model deployment name; defaults to ``gpt-5.6-terra``.
                               This deployment must exist in the target project.
-    AGENT_WEB_TOOL            OPTIONAL. ``bing`` (default) or ``webiq``.
+    AGENT_WEB_TOOL            OPTIONAL. ``webiq`` or ``bing``; preflight records it for azd
+                              deployments. Unset in a hand-run: ``bing`` when BING_CONNECTION_NAME
+                              is set (a .env from before the choice existed), else ``webiq``.
     BING_CONNECTION_NAME      OPTIONAL. Grounding-with-Bing-Custom-Search connection in the project.
                               Leave unset to build a search-only agent; add it later and re-run.
     BING_CUSTOM_CONFIG_NAME   OPTIONAL. Bing Custom Search configuration (instance) name — the curated
@@ -106,6 +109,7 @@ from azure.core.exceptions import HttpResponseError, ResourceNotFoundError
 from azure.identity import DefaultAzureCredential
 from dotenv import dotenv_values, load_dotenv
 
+from channels import DEFAULT_WEB_TOOL
 from rbac_propagation import wait_for_data_plane
 
 # Repo root on sys.path so this deploy-time script and the runtime backend share
@@ -255,7 +259,11 @@ def _web_tool_settings() -> dict:
     hand-run from a .env without it, infer it the same way bicep decides: a key
     connection means key mode, else an audience means managed identity.
     """
-    choice = (os.getenv("AGENT_WEB_TOOL") or "").strip().lower() or "bing"
+    choice = (os.getenv("AGENT_WEB_TOOL") or "").strip().lower()
+    if not choice:
+        # azd deployments always have it (preflight records it). A hand-run from a
+        # .env that predates the choice and names a Bing connection keeps Bing.
+        choice = "bing" if (os.getenv("BING_CONNECTION_NAME") or "").strip() else DEFAULT_WEB_TOOL
     if choice not in AGENT_WEB_TOOL_NAMES:
         raise ValueError(
             f"AGENT_WEB_TOOL must be one of: {', '.join(AGENT_WEB_TOOL_NAMES)}; got {choice!r}."
@@ -676,7 +684,10 @@ def create_agent(project: AIProjectClient, settings: dict) -> tuple[object, bool
     bing_custom_config_name = settings.get("bing_custom_config_name")
     bing_connection_name = settings.get("bing_connection_name")
     web_tool_enabled = False
-    web_choice = settings.get("agent_web_tool") or "bing"
+    # Same fallback as _web_tool_settings: a named Bing connection means Bing.
+    web_choice = settings.get("agent_web_tool") or (
+        "bing" if settings.get("bing_connection_name") else DEFAULT_WEB_TOOL
+    )
     web_tool_name = AGENT_WEB_TOOL_NAMES[web_choice]
     webiq_tool = None
 

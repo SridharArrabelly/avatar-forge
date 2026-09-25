@@ -52,7 +52,7 @@ param webIqApiKey string = ''
 
 @description('The agent\'s web tool in agent mode: "bing" or "webiq". See main.bicep.')
 @allowed([ 'bing', 'webiq' ])
-param agentWebTool string = 'bing'
+param agentWebTool string = 'webiq'
 @description('Key mode for the Web IQ agent tool. Wins over the audience when both are set.')
 @secure()
 param agentWebToolKey string = ''

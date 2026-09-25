@@ -58,8 +58,8 @@ flowchart LR
 
     subgraph Ground["Grounding — where the answers come from"]
         S["Azure AI Search<br/>your document corpus"]
-        N["Grounding with Bing<br/>site-scoped web search"]
         W["<b>Web IQ</b><br/>site-scoped web search"]
+        N["Grounding with Bing<br/>site-scoped web search<br/><i>alternative to Web IQ</i>"]
     end
 
     A --> API
@@ -67,25 +67,29 @@ flowchart LR
     C --> API
     D -.-> API
     AG --> S
-    AG -->|"AGENT_WEB_TOOL=bing"| N
-    AG -.->|"AGENT_WEB_TOOL=webiq"| WT
-    WT -.-> W
+    AG -->|"AGENT_WEB_TOOL=webiq (default)"| WT
+    WT --> W
+    AG -.->|"or AGENT_WEB_TOOL=bing"| N
 
     %% Only the stroke is pinned. Fill and text stay with the renderer's theme,
     %% so this reads correctly in GitHub's light and dark modes alike.
     classDef default stroke:#539bf5,stroke-width:2px
+    %% Dashed: the agent gets Web IQ OR Bing, never both.
+    classDef alternative stroke:#539bf5,stroke-width:2px,stroke-dasharray:6 4
+    class N alternative
     linkStyle default stroke:#539bf5,stroke-width:1.5px
     style Doors stroke:#539bf5
     style Brain stroke:#539bf5
     style Ground stroke:#539bf5
 ```
 
-The agent has **one web tool**, chosen at deploy time with `AGENT_WEB_TOOL`:
-Grounding with Bing Custom Search (`bing`, the default), or `webiq`, an OpenAPI
-tool that calls back into this backend's `/api/tools/search-web` — the same
-trusted-site Web IQ search model mode uses. In the measured comparison Web IQ
-reached first token in 3.88 s against Bing's 5.07 s, and answered 15/15 web
-questions well against Bing's 13/15
+The agent has **one web tool**, chosen at deploy time with `AGENT_WEB_TOOL`.
+The default, `webiq`, is an OpenAPI tool that calls back into this backend's
+`/api/tools/search-web`: the same trusted-site Web IQ search model mode uses. The
+dashed alternative, `bing`, is Grounding with Bing Custom Search; environments
+deployed before Web IQ became the default keep it until you switch. In the
+measured comparison Web IQ reached first token in 3.88 s against Bing's 5.07 s,
+and answered 15/15 web questions well against Bing's 13/15
 ([evaluation](docs/evaluation-history.md#web-iq-as-the-agents-web-tool-24-september-2026)).
 How to switch, and how Foundry's call is authenticated:
 [choosing the agent's web tool](docs/deployment.md#choosing-the-agents-web-tool).
@@ -336,8 +340,8 @@ Avatar Forge was built by referencing the following Microsoft samples and docume
 - **Azure AI VoiceLive samples** — the project started from and the real-time avatar/voice implementation is based on these official samples: [microsoft-foundry/voicelive-samples (Python)](https://github.com/microsoft-foundry/voicelive-samples/tree/main/python) ([`azure-ai-voicelive` SDK](https://pypi.org/project/azure-ai-voicelive/)).
 - **Azure AI Search** — retrieval/grounding index: [Azure AI Search documentation](https://learn.microsoft.com/en-us/azure/search/).
 - **Azure AI Foundry (Agent Service)** — agent orchestration and tool-calling: [Azure AI Foundry documentation](https://learn.microsoft.com/en-us/azure/ai-foundry/).
-- **Grounding with Bing Custom Search** — domain-scoped web grounding for the agent (the default `AGENT_WEB_TOOL=bing`): [Bing Custom Search tool](https://learn.microsoft.com/en-us/azure/foundry-classic/agents/how-to/tools-classic/bing-custom-search).
-- **Foundry OpenAPI tool** — how the agent calls the Web IQ route (`AGENT_WEB_TOOL=webiq`), with API-key or managed-identity auth: [Connect OpenAPI tools to Foundry agents](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/tools/openapi).
+- **Grounding with Bing Custom Search** — domain-scoped web grounding for the agent, the alternative to Web IQ (`AGENT_WEB_TOOL=bing`): [Bing Custom Search tool](https://learn.microsoft.com/en-us/azure/foundry-classic/agents/how-to/tools-classic/bing-custom-search).
+- **Foundry OpenAPI tool** — how the agent calls the Web IQ route (`AGENT_WEB_TOOL=webiq`, the default), with API-key or managed-identity auth: [Connect OpenAPI tools to Foundry agents](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/tools/openapi).
 - **Foundry web search (Grounding with Bing Search) tool** — real-time web grounding: [Grounding with Bing Search tools](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/tools/bing-tools).
 
 ## License

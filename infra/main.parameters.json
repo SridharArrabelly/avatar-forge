@@ -36,7 +36,7 @@
     "webIqLanguage":       { "value": "${WEBIQ_LANGUAGE=en}" },
     "webIqRegion":         { "value": "${WEBIQ_REGION=ZA}" },
     "webIqApiKey":         { "value": "${WEBIQ_API_KEY=}" },
-    "agentWebTool":        { "value": "${AGENT_WEB_TOOL=bing}" },
+    "agentWebTool":        { "value": "${AGENT_WEB_TOOL=webiq}" },
     "agentWebToolKey":     { "value": "${AGENT_WEB_TOOL_KEY=}" },
     "agentWebToolAudience":{ "value": "${AGENT_WEB_TOOL_AUDIENCE=}" },
     "agentWebToolAppId":   { "value": "${AGENT_WEB_TOOL_APP_ID=}" },

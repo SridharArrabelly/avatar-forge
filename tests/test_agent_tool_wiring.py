@@ -224,7 +224,13 @@ def main() -> int:
         with patch.dict(os.environ, env, clear=True):
             return sfa._web_tool_settings()
 
-    check("default is bing", settings_for({})["agent_web_tool"], "bing")
+    check("default is webiq", settings_for({})["agent_web_tool"], "webiq")
+    # Run by hand on an environment deployed before Web IQ became the default,
+    # the Bing connection it has is the tool it was using.
+    check("unset with a Bing connection -> bing",
+          settings_for({"BING_CONNECTION_NAME": "b"})["agent_web_tool"], "bing")
+    check("an explicit choice beats the Bing connection",
+          settings_for({"BING_CONNECTION_NAME": "b", "AGENT_WEB_TOOL": "webiq"})["agent_web_tool"], "webiq")
     check("case-insensitive", settings_for({"AGENT_WEB_TOOL": " WebIQ "})["agent_web_tool"], "webiq")
     try:
         settings_for({"AGENT_WEB_TOOL": "google"})

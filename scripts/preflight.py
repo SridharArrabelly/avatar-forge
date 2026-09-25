@@ -17,6 +17,7 @@ Usage:
     uv run python scripts/preflight.py --profile in-call
     uv run python scripts/preflight.py --location eastus2 --voicelive-location eastus2
     uv run python scripts/preflight.py --steps-only          # just print the plan
+    uv run python scripts/preflight.py --record-web-tool     # only pin AGENT_WEB_TOOL
 """
 
 from __future__ import annotations
@@ -39,14 +40,20 @@ from channels import (
     BINDINGS,
     BOLD,
     CYAN,
+    DEFAULT_WEB_TOOL,
     DIM,
     GREEN,
     RED,
     RESET,
+    WEB_TOOL_DEFAULT,
+    WEB_TOOL_EXISTING,
     WEB_TOOL_ORDER,
+    WEB_TOOL_SET,
     YELLOW,
     get_profile,
     render_steps,
+    resolve_web_tool,
+    web_tool_reason_note,
 )
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -471,7 +478,7 @@ def check_agent_web_tool(cfg: dict[str, str]) -> list[CheckResult]:
     checks pass — see _settle_agent_web_tool_auth.
     """
     raw = cfg.get("AGENT_WEB_TOOL", "").strip().lower()
-    tool = raw or "bing"
+    tool, reason = resolve_web_tool(cfg)
     if tool not in AGENT_WEB_TOOLS:
         return [
             CheckResult(
@@ -485,23 +492,24 @@ def check_agent_web_tool(cfg: dict[str, str]) -> list[CheckResult]:
         ]
 
     if not _agent_binding(cfg):
-        if tool == "bing":
+        if reason != WEB_TOOL_SET or tool == "webiq":
             return []
         return [
             CheckResult(
                 "Agent web tool",
                 True,
-                f"{tool} — ignored in model mode, where Web IQ is already the web tool",
+                f"{tool} — ignored in model mode, where Web IQ is the web tool",
                 warn_only=True,
             )
         ]
 
     if tool == "bing":
+        note = web_tool_reason_note(reason)
         return [
             CheckResult(
                 "Agent web tool",
                 True,
-                "bing — Grounding with Bing Custom Search" + ("" if raw else " (default)"),
+                "bing — Grounding with Bing Custom Search" + (f" ({note})" if note else ""),
             )
         ]
 
@@ -523,7 +531,8 @@ def check_agent_web_tool(cfg: dict[str, str]) -> list[CheckResult]:
         CheckResult(
             "Agent web tool",
             True,
-            "webiq — trusted-site Web IQ search through the app's /api/tools/search-web",
+            "webiq — trusted-site Web IQ search through the app's /api/tools/search-web"
+            + (" (the default)" if reason == WEB_TOOL_DEFAULT else ""),
         )
     ]
 
@@ -591,7 +600,7 @@ def check_trusted_web_sites(cfg: dict[str, str]) -> list[CheckResult]:
     chosen = "TRUSTED_WEB_SITES" in cfg
     legacy = cfg.get("WEBIQ_ALLOWED_DOMAINS", "").strip()
     agent = _agent_binding(cfg)
-    tool = cfg.get("AGENT_WEB_TOOL", "").strip().lower() or "bing"
+    tool = resolve_web_tool(cfg)[0]
     uses_web_iq = not agent or tool == "webiq"
     uses_bing = (
         agent and tool == "bing"
@@ -1017,6 +1026,48 @@ def _ensure_web_tool_app(cfg: dict[str, str], display_name: str) -> tuple[str, s
     return app_id, ""
 
 
+def _settle_agent_web_tool(cfg: dict[str, str]) -> CheckResult | None:
+    """Record agent mode's web tool in the azd env when nothing chose one.
+
+    Unset, AGENT_WEB_TOOL resolves by environment (see channels.resolve_web_tool):
+    Web IQ for a new environment, Bing for one deployed before the choice existed
+    or bringing its own Foundry account. Bicep only knows its own default, so the
+    resolved value is written here, in the preprovision hook, before bicep reads
+    the env. Recording it also pins the choice: a deployed environment keeps its
+    tool whatever a later default says.
+
+    Returns a failing check only when the value could not be stored AND it
+    differs from the Bicep default, because then this deploy would swap the
+    agent's web tool.
+    """
+    if not _agent_binding(cfg):
+        return None
+    tool, reason = resolve_web_tool(cfg)
+    if reason == WEB_TOOL_SET:
+        return None
+    note = web_tool_reason_note(reason)
+    if _azd_env_set("AGENT_WEB_TOOL", tool):
+        cfg["AGENT_WEB_TOOL"] = tool
+        print(f"{BOLD}Agent web tool:{RESET} recorded AGENT_WEB_TOOL={tool}"
+              + (f" — {note}." if note else ", the default for new environments."))
+        if reason == WEB_TOOL_EXISTING:
+            print(f"{DIM}  To move to Web IQ: uv run python scripts/set_profile.py --profile "
+                  f"{cfg.get('DEPLOY_PROFILE') or 'web'} --binding agent --web-tool webiq{RESET}")
+        print()
+        return None
+    cfg["AGENT_WEB_TOOL"] = tool
+    if tool == DEFAULT_WEB_TOOL:
+        return None
+    return CheckResult(
+        "Agent web tool",
+        False,
+        f"could not record AGENT_WEB_TOOL={tool}; without it this deploy would switch "
+        f"the agent to {DEFAULT_WEB_TOOL}",
+        fix=f"        {note[0].upper()}{note[1:]}.\n"
+            f"        azd env set AGENT_WEB_TOOL {tool}",
+    )
+
+
 def _settle_agent_web_tool_auth(cfg: dict[str, str]) -> None:
     """Give the Web IQ agent tool a way to authenticate, preferring managed identity.
 
@@ -1033,7 +1084,7 @@ def _settle_agent_web_tool_auth(cfg: dict[str, str]) -> None:
     """
     if not _agent_binding(cfg):
         return
-    if (cfg.get("AGENT_WEB_TOOL", "").strip().lower() or "bing") != "webiq":
+    if resolve_web_tool(cfg)[0] != "webiq":
         return
     if cfg.get("FOUNDRY_ACCOUNT_NAME", "").strip():
         return
@@ -1091,6 +1142,12 @@ def main() -> int:
         action="store_true",
         help="Print only the post-deployment steps and exit (used by the postprovision hook).",
     )
+    ap.add_argument(
+        "--record-web-tool",
+        action="store_true",
+        help="Only record agent mode's resolved AGENT_WEB_TOOL, then exit. Never fails "
+             "(used by the preprovision hook when PREFLIGHT_SKIP=true).",
+    )
     args = ap.parse_args()
 
     cfg = _config()
@@ -1118,7 +1175,17 @@ def main() -> int:
         print(f"        {BOLD}azd env list{RESET}              # what still exists")
         print(f"        {BOLD}azd env new <name>{RESET}        # start a fresh one, then re-set your values")
         print(f"        {BOLD}azd env select <name>{RESET}     # point at an existing one")
-        return 2
+        return 0 if args.record_web_tool else 2
+
+    if args.record_web_tool:
+        # PREFLIGHT_SKIP skips every check, but not this: without a recorded value
+        # an environment deployed before Web IQ became the default would get
+        # Bicep's default and silently swap its agent's web tool.
+        failed = _settle_agent_web_tool(cfg)
+        if failed is not None:
+            print(f"{YELLOW}WARN{RESET}  {failed.name}: {failed.detail}")
+            print(f"{DIM}{failed.fix}{RESET}")
+        return 0
 
     # Settle the whole deploy target here -- subscription, region, resource group --
     # so `azd up` has nothing left to stop and ask for. azd resolves them in this
@@ -1171,6 +1238,9 @@ def main() -> int:
         ]
     checks += check_required_inputs(profile, cfg)
     checks += check_voice_binding(cfg)
+    recorded = _settle_agent_web_tool(cfg)
+    if recorded is not None:
+        checks.append(recorded)
     checks += check_agent_web_tool(cfg)
     checks += check_trusted_web_sites(cfg)
     checks += check_audit(cfg)

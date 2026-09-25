@@ -6,8 +6,10 @@ so what is pinned is what ARM will actually deploy.
 
 What matters, and why:
 
-* ``agentWebTool=bing`` (the default) changes nothing: no Web IQ settings, no
-  tool route credentials, Bing deployed exactly as before.
+* ``webiq`` is the default, at every level, so what preflight records for a new
+  environment and what Bicep deploys unrecorded agree.
+* ``agentWebTool=bing`` changes nothing: no Web IQ settings, no tool route
+  credentials, Bing deployed exactly as before.
 * ``webiq`` replaces Bing — Bing is not deployed — and turns on the model-mode
   Web IQ settings **including the trusted sites**. The agent's tool runs the same
   ``search_web()``, so a ``TRUSTED_WEB_SITES`` that went missing would silently
@@ -93,7 +95,7 @@ def webiq_names(env: dict) -> list[str]:
     return sorted(n for n in env if n.startswith("WEBIQ_"))
 
 
-print("container: bing (default) is unchanged")
+print("container: bing (agentWebIq off) is unchanged")
 env, secrets = container()
 check("no Web IQ settings", webiq_names(env), [])
 check("no tool credentials", tool_names(env), [])
@@ -156,8 +158,10 @@ def res(expr: str, **params: object) -> object:
 
 
 print("resources: which web tool is deployed")
+check("resources.bicep defaults agentWebTool to webiq", defaults(res_scope).get("agentWebTool"), "webiq")
 for label, params, web_iq, bing in (
-    ("bing (default)", {}, False, True),
+    ("the default", {"agentWebTool": defaults(res_scope).get("agentWebTool")}, True, False),
+    ("bing", {}, False, True),
     ("webiq", {"agentWebTool": "webiq"}, True, False),
     ("webiq, case-insensitive", {"agentWebTool": "WebIQ"}, True, False),
     ("webiq in model mode", {"agentWebTool": "webiq", "voiceBinding": "model"}, False, False),
@@ -213,12 +217,12 @@ check("foundry exposes the account identity", "accountPrincipalId" in foundry["o
 print("main: inputs and outputs")
 main_params = TEMPLATE["parameters"]
 check("agentWebTool values", main_params["agentWebTool"].get("allowedValues"), ["bing", "webiq"])
-check("agentWebTool defaults to bing", main_params["agentWebTool"]["defaultValue"], "bing")
+check("agentWebTool defaults to webiq", main_params["agentWebTool"]["defaultValue"], "webiq")
 for body in _walk_templates(TEMPLATE):
     if "agentWebToolKey" in body.get("parameters", {}):
         check("agentWebToolKey is secure at every level", body["parameters"]["agentWebToolKey"]["type"].lower(), "securestring")
 for parameter, substitution in {
-    "agentWebTool": "${AGENT_WEB_TOOL=bing}",
+    "agentWebTool": "${AGENT_WEB_TOOL=webiq}",
     "agentWebToolKey": "${AGENT_WEB_TOOL_KEY=}",
     "agentWebToolAudience": "${AGENT_WEB_TOOL_AUDIENCE=}",
     "agentWebToolAppId": "${AGENT_WEB_TOOL_APP_ID=}",

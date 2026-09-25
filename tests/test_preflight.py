@@ -280,16 +280,61 @@ def main() -> int:
         return {r.name: r for r in pf.check_agent_web_tool(cfg)}
 
     r = web_tool({})
-    check("web tool: defaults to bing and says so",
-          r["Agent web tool"].ok and "bing" in r["Agent web tool"].detail and "default" in r["Agent web tool"].detail)
-    check("web tool: bing needs no auth lines", list(r) == ["Agent web tool"])
+    check("web tool: a new env defaults to webiq and says so",
+          r["Agent web tool"].ok and "webiq" in r["Agent web tool"].detail and "default" in r["Agent web tool"].detail)
+    check("web tool: webiq reports its caller auth", "Agent web tool: caller auth" in r)
+    r = web_tool({"AGENT_WEB_TOOL": "bing"})
+    check("web tool: bing needs no auth lines", list(r) == ["Agent web tool"] and r["Agent web tool"].ok)
+    r = web_tool({"SERVICE_APP_URI": "https://x"})
+    check("web tool: a deployed agent env with nothing recorded stays on bing, and says why",
+          r["Agent web tool"].ok and r["Agent web tool"].detail.startswith("bing")
+          and "before Web IQ became the default" in r["Agent web tool"].detail)
+    r = web_tool({"FOUNDRY_ACCOUNT_NAME": "byo"})
+    check("web tool: BYO Foundry with nothing recorded resolves to bing, not a failure",
+          r["Agent web tool"].ok and r["Agent web tool"].detail.startswith("bing")
+          and "FOUNDRY_ACCOUNT_NAME" in r["Agent web tool"].detail)
     r = web_tool({"AGENT_WEB_TOOL": "google"})
     check("web tool: an invalid value fails and is the only result",
           len(r) == 1 and not r["Agent web tool"].ok and not r["Agent web tool"].warn_only)
-    check("web tool: silent in model mode when left at bing", web_tool({"VOICE_BINDING": "model"}) == {})
-    r = web_tool({"VOICE_BINDING": "model", "AGENT_WEB_TOOL": "webiq"})
-    check("web tool: webiq in model mode is reported as ignored, never blocks",
+    check("web tool: silent in model mode by default", web_tool({"VOICE_BINDING": "model"}) == {})
+    check("web tool: silent in model mode when set to webiq",
+          web_tool({"VOICE_BINDING": "model", "AGENT_WEB_TOOL": "webiq"}) == {})
+    r = web_tool({"VOICE_BINDING": "model", "AGENT_WEB_TOOL": "bing"})
+    check("web tool: bing in model mode is reported as ignored, never blocks",
           r["Agent web tool"].ok and "ignored" in r["Agent web tool"].detail)
+
+    # --- agent web tool: recording the resolved value ---------------------
+    def record(cfg, env_ok=True):
+        saved.clear()
+        with _Patch(_azd_env_set=(fake_set if env_ok else lambda *_a: False)):
+            result = pf._settle_agent_web_tool(cfg)
+        return result, dict(saved)
+
+    cfg = {}
+    result, got = record(cfg)
+    check("record: a new agent env records webiq", result is None and got == {"AGENT_WEB_TOOL": "webiq"})
+    check("record: and updates the in-memory config", cfg.get("AGENT_WEB_TOOL") == "webiq")
+    cfg = {"SERVICE_APP_URI": "https://x"}
+    result, got = record(cfg)
+    check("record: a deployed env that never chose is pinned to bing",
+          result is None and got == {"AGENT_WEB_TOOL": "bing"} and cfg["AGENT_WEB_TOOL"] == "bing")
+    result, got = record({"FOUNDRY_ACCOUNT_NAME": "byo"})
+    check("record: BYO Foundry is pinned to bing", got == {"AGENT_WEB_TOOL": "bing"})
+    for label, cfg in (
+        ("an explicit choice", {"AGENT_WEB_TOOL": "webiq", "SERVICE_APP_URI": "https://x"}),
+        ("model mode", {"VOICE_BINDING": "model"}),
+        ("model mode, deployed", {"VOICE_BINDING": "model", "SERVICE_APP_URI": "https://x"}),
+    ):
+        result, got = record(dict(cfg))
+        check(f"record: {label} -> writes nothing", result is None and got == {})
+    result, _ = record({}, env_ok=False)
+    check("record: failing to store the default is harmless (bicep has the same default)", result is None)
+    cfg = {"SERVICE_APP_URI": "https://x"}
+    result, _ = record(cfg, env_ok=False)
+    check("record: failing to pin bing blocks, because the deploy would swap the tool",
+          result is not None and not result.ok and not result.warn_only
+          and "azd env set AGENT_WEB_TOOL bing" in result.fix)
+    check("record: and the check that follows still sees bing", cfg.get("AGENT_WEB_TOOL") == "bing")
     # With an existing Foundry account bicep deploys neither the connection nor
     # the caller identities, so the agent would silently get no web tool.
     r = web_tool({"AGENT_WEB_TOOL": "webiq", "FOUNDRY_ACCOUNT_NAME": "byo"})
@@ -357,7 +402,8 @@ def main() -> int:
     name = pf.AGENT_WEB_TOOL_APP_PREFIX + "ava"
 
     for label, cfg in (
-        ("bing", {"AZURE_ENV_NAME": "ava"}),
+        ("bing", {"AGENT_WEB_TOOL": "bing", "AZURE_ENV_NAME": "ava"}),
+        ("deployed, nothing recorded", {"SERVICE_APP_URI": "https://x", "AZURE_ENV_NAME": "ava"}),
         ("model mode", {**base, "VOICE_BINDING": "model"}),
         ("BYO Foundry", {**base, "FOUNDRY_ACCOUNT_NAME": "byo"}),
         ("key already set", {**base, "AGENT_WEB_TOOL_KEY": strong}),

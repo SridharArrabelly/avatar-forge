@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.43.8.12551",
-      "templateHash": "15573600309776948628"
+      "templateHash": "11199472528455680459"
     }
   },
   "parameters": {
@@ -180,13 +180,13 @@
     },
     "agentWebTool": {
       "type": "string",
-      "defaultValue": "bing",
+      "defaultValue": "webiq",
       "allowedValues": [
         "bing",
         "webiq"
       ],
       "metadata": {
-        "description": "The agent's web tool, agent mode only. Model mode always uses Web IQ in-process.\n\n\"bing\" (default): Grounding with Bing Custom Search, a managed Foundry tool with a\nserver-side site allow-list (TRUSTED_WEB_SITES). Not deployed when that list is\nempty, because Bing Custom Search has no open-web mode.\n\n\"webiq\": Web IQ, called through this app's /api/tools/search-web as an OpenAPI\ntool. It runs the model-mode search_web() unchanged, so the same trusted sites\n(TRUSTED_WEB_SITES, reduced to hosts; empty = open web) and filtering apply.\nReplaces Bing: nothing Bing-related is deployed. Greenfield Foundry only.\nMeasured against Bing on the same agent: faster tool step (0.66 s vs 1.83 s)\nand 15/15 good answers; see docs/evaluation-history.md.\n\nFoundry's calls to the app are authenticated with agentWebToolKey when set,\notherwise with a managed-identity token for agentWebToolAudience. The\npreprovision hook settles one of the two; see docs/auth.md.\n"
+        "description": "The agent's web tool, agent mode only. Model mode always uses Web IQ in-process.\n\n\"webiq\" (default): Web IQ, called through this app's /api/tools/search-web as an\nOpenAPI tool. It runs the model-mode search_web() unchanged, so the same trusted\nsites (TRUSTED_WEB_SITES, reduced to hosts; empty = open web) and filtering apply.\nReplaces Bing: nothing Bing-related is deployed. Greenfield Foundry only.\nMeasured against Bing on the same agent: faster tool step (0.66 s vs 1.83 s)\nand 15/15 good answers; see docs/evaluation-history.md.\n\n\"bing\": Grounding with Bing Custom Search, a managed Foundry tool with a\nserver-side site allow-list (TRUSTED_WEB_SITES). Not deployed when that list is\nempty, because Bing Custom Search has no open-web mode.\n\nThe preprovision hook records the value before this is read: \"webiq\" for a new\nenvironment, \"bing\" for one deployed before Web IQ became the default or using\nan existing Foundry account.\n\nFoundry's calls to the app are authenticated with agentWebToolKey when set,\notherwise with a managed-identity token for agentWebToolAudience. The\npreprovision hook settles one of the two; see docs/auth.md.\n"
       }
     },
     "agentWebToolKey": {
@@ -664,7 +664,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.43.8.12551",
-              "templateHash": "3554663626732686325"
+              "templateHash": "80386075869770131"
             }
           },
           "parameters": {
@@ -803,7 +803,7 @@
             },
             "agentWebTool": {
               "type": "string",
-              "defaultValue": "bing",
+              "defaultValue": "webiq",
               "allowedValues": [
                 "bing",
                 "webiq"

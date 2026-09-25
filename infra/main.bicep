@@ -102,23 +102,27 @@ param webIqApiKey string = ''
 @description('''
 The agent's web tool, agent mode only. Model mode always uses Web IQ in-process.
 
-"bing" (default): Grounding with Bing Custom Search, a managed Foundry tool with a
-server-side site allow-list (TRUSTED_WEB_SITES). Not deployed when that list is
-empty, because Bing Custom Search has no open-web mode.
-
-"webiq": Web IQ, called through this app's /api/tools/search-web as an OpenAPI
-tool. It runs the model-mode search_web() unchanged, so the same trusted sites
-(TRUSTED_WEB_SITES, reduced to hosts; empty = open web) and filtering apply.
+"webiq" (default): Web IQ, called through this app's /api/tools/search-web as an
+OpenAPI tool. It runs the model-mode search_web() unchanged, so the same trusted
+sites (TRUSTED_WEB_SITES, reduced to hosts; empty = open web) and filtering apply.
 Replaces Bing: nothing Bing-related is deployed. Greenfield Foundry only.
 Measured against Bing on the same agent: faster tool step (0.66 s vs 1.83 s)
 and 15/15 good answers; see docs/evaluation-history.md.
+
+"bing": Grounding with Bing Custom Search, a managed Foundry tool with a
+server-side site allow-list (TRUSTED_WEB_SITES). Not deployed when that list is
+empty, because Bing Custom Search has no open-web mode.
+
+The preprovision hook records the value before this is read: "webiq" for a new
+environment, "bing" for one deployed before Web IQ became the default or using
+an existing Foundry account.
 
 Foundry's calls to the app are authenticated with agentWebToolKey when set,
 otherwise with a managed-identity token for agentWebToolAudience. The
 preprovision hook settles one of the two; see docs/auth.md.
 ''')
 @allowed([ 'bing', 'webiq' ])
-param agentWebTool string = 'bing'
+param agentWebTool string = 'webiq'
 
 @description('Shared key Foundry presents to the app for the Web IQ agent tool. Stored as a container-app secret and in a Foundry project connection. Wins over agentWebToolAudience. Empty in the normal case: preflight creates an app registration instead, and generates this only if it cannot.')
 @secure()

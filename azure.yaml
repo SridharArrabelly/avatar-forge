@@ -35,6 +35,9 @@ hooks:
       run: |
         if ($env:PREFLIGHT_SKIP -eq 'true') {
           Write-Host "PREFLIGHT_SKIP=true - skipping preflight checks." -ForegroundColor Yellow
+          # Still pin the agent's web tool, so an older environment keeps Bing.
+          uv run python scripts/preflight.py --record-web-tool
+          $global:LASTEXITCODE = 0
         } else {
           uv run python scripts/preflight.py
           if ($LASTEXITCODE -ne 0) {
@@ -47,6 +50,8 @@ hooks:
       run: |
         if [ "$PREFLIGHT_SKIP" = "true" ]; then
           echo "PREFLIGHT_SKIP=true - skipping preflight checks."
+          # Still pin the agent's web tool, so an older environment keeps Bing.
+          uv run python scripts/preflight.py --record-web-tool || true
         else
           uv run python scripts/preflight.py || {
             echo "Preflight failed. Fix the items above, or set PREFLIGHT_SKIP=true to bypass." >&2

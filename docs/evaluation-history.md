@@ -1175,3 +1175,33 @@ figure it quoted a truncated investing.com history row (R200.74) as the 23
 September close, although it said it was not a confirmed live price. It is a
 source-quality failure in the same class as the unfiltered arm's, and the thing to
 watch in the Voice Live check.
+
+## Voice Live check (24 September 2026)
+
+The last gate: spoken questions through the deployed app's avatar, timed by the
+browser probe (`?probe=1`), against the same probe run earlier on the live
+environment's Bing agent. `answer_ms` runs from the end of the question to the
+last answer token; `total_ms` adds end-of-speech detection, recognition and
+rendering.
+
+| Medians | Live env, Bing | Test env, Web IQ |
+|---|---:|---:|
+| Web `answer_ms` | 5.24 s (n=3) | 3.98 s (n=2) |
+| Web `total_ms` | 6.41 s | 5.29 s |
+| Minutes `answer_ms` | 4.24 s (n=3) | 3.44 s (n=2) |
+| Web minus minutes, `answer_ms` | 1.00 s | 0.54 s |
+
+The samples are tiny and the environments differ, and the minutes turns, which use
+no web tool, were 0.8 s faster too, so part of the gap is the fresh Foundry
+account. The web-over-minutes cost, which isolates the tool, halved. The tester
+judged every answer correct, and the container logs showed each web turn going
+through Web IQ.
+
+## The default
+
+With both checks passed, `webiq` became the default for **new** environments.
+Unset, `AGENT_WEB_TOOL` still resolves to `bing` for an agent-mode environment
+deployed before the change, so a redeploy does not swap a live agent's tool, and
+for an existing Foundry account, which Web IQ can't use. Preflight records the
+resolved value in the azd env
+([deployment](deployment.md#choosing-the-agents-web-tool)).

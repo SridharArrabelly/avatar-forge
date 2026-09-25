@@ -120,7 +120,8 @@ azd env set FOUNDRY_LOCATION eastus2
 > wires its Foundry project connection automatically.
 
 Fresh agent deployments default to **Terra (`2026-07-09`) / reasoning none /
-GlobalStandard**, with native Search `semantic` and top-k 5, and Bing count 5.
+GlobalStandard**, with native Search `semantic` and top-k 5, and the Web IQ web
+tool (Bing count 5 if you choose Bing).
 GlobalStandard may process prompts outside the resource's data zone; set
 `MODEL_SKU_NAME=DataZoneStandard` if residency is required, accepting the
 availability risk recorded in
@@ -187,14 +188,14 @@ azd env set AVATAR_MODEL Simone
 # app refuses to start rather than discard records silently. Set
 # AUDIT_SINK_FALLBACK=file to accept a degraded, ephemeral trail instead.
 # azd env set ENABLE_AUDIT true
-# The trusted sites the web tool may search. Unset, Web IQ searches the open web
-# and agent mode on Bing gets no web tool, because Bing needs a list. MTN's list is
-# in configuration.md#trusted-web-sources.
+# The trusted sites the web tool may search. Unset, Web IQ (the default) searches
+# the open web, and an agent on Bing gets no web tool, because Bing needs a list.
+# MTN's list is in configuration.md#trusted-web-sources.
 # azd env set TRUSTED_WEB_SITES "+www.example.com/investors,news.example.com"
 
 # 5. Choose the channel, the brain and, for agent mode, the web tool. Records
 #    DEPLOY_PROFILE (web · teams-tab · in-call-browser · in-call), VOICE_BINDING
-#    (agent · model) and AGENT_WEB_TOOL (bing · webiq), sets every flag
+#    (agent · model) and AGENT_WEB_TOOL (webiq · bing), sets every flag
 #    those imply and resets the ones they do not, and
 #    prints the full numbered plan marking who performs each step.
 #    channels/README.md to choose the channel; voice-binding.md to choose the brain.
@@ -215,7 +216,7 @@ These two variables are the only avatar-selection settings. See
 
 For **model mode**, provisioning explicitly sets `VOICELIVE_MODEL=gpt-realtime-2.1`
 and Web IQ's endpoint, language (`en`), region (`ZA`), and trusted sites in the
-container; agent mode with `AGENT_WEB_TOOL=webiq` gets the same Web IQ settings.
+container; agent mode with `AGENT_WEB_TOOL=webiq` (the default) gets the same Web IQ settings.
 Override these through `azd env set VOICELIVE_MODEL`,
 `WEBIQ_BASE_URL`, `WEBIQ_LANGUAGE`, `WEBIQ_REGION`, and `TRUSTED_WEB_SITES`
 with the desired values before provisioning. Unset, `TRUSTED_WEB_SITES` means the
@@ -324,8 +325,10 @@ azd env set APPINSIGHTS_RESOURCE_GROUP rg-shared-observability
 azd env set AGENT_NAME              MtnAvatarAgent
 azd env set SEARCH_CONNECTION_NAME  aisearch-connection
 
-# The web tool: azd deploys the Bing account, the site allow-list and the Foundry
-# connection, and feeds the two names back automatically. Bing has no open-web mode,
+# The web tool is Bing here: Web IQ needs a Foundry account this template creates,
+# so preflight records AGENT_WEB_TOOL=bing. azd deploys the Bing account, the site
+# allow-list and the Foundry connection, and feeds the two names back automatically.
+# Bing has no open-web mode,
 # so it is deployed only once TRUSTED_WEB_SITES lists YOUR sources
 # (configuration.md#trusted-web-sources). To skip it (it is billable), or to reuse a
 # connection you already have, see "The web tool is optional" below.
@@ -455,8 +458,8 @@ For **greenfield** (template provisions Foundry + Search) the `postprovision` ho
   `data/` BEFORE `azd up`**; section mode rejects an empty/incompatible corpus
   and existing indexes with a different layout.
 - `scripts/setup_foundry_agent.py` — registers the Foundry agent (`AGENT_NAME`) with the
-  AI Search tool, plus its web tool **if** it is configured: Grounding-with-Bing-Custom-Search
-  by default, or the Web IQ tool with `AGENT_WEB_TOOL=webiq`.
+  AI Search tool, plus its web tool **if** it is configured: the Web IQ tool by default,
+  or Grounding-with-Bing-Custom-Search with `AGENT_WEB_TOOL=bing`.
 
 ### Choosing the agent's web tool
 
@@ -466,15 +469,27 @@ With no list, Web IQ searches the open web, and Bing is not deployed:
 
 | `AGENT_WEB_TOOL` | What the agent calls | Deploys |
 |---|---|---|
-| `bing` *(default)* | Grounding with Bing Custom Search, a native Foundry tool | the Bing account, its allow-list and a Foundry connection |
-| `webiq` | an OpenAPI tool → the app's `/api/tools/search-web` → Web IQ, filtered to those sites | no Bing; Web IQ settings on the container app, and an app registration *or* a key for Foundry's call ([auth.md](auth.md#the-agents-web-iq-tool-foundry-calls-the-app)) |
+| `webiq` *(default)* | an OpenAPI tool → the app's `/api/tools/search-web` → Web IQ, filtered to those sites | no Bing; Web IQ settings on the container app, and an app registration *or* a key for Foundry's call ([auth.md](auth.md#the-agents-web-iq-tool-foundry-calls-the-app)) |
+| `bing` | Grounding with Bing Custom Search, a native Foundry tool | the Bing account, its allow-list and a Foundry connection |
 
 In the measured comparison `webiq` was faster and answered better
-([evaluation history](evaluation-history.md#web-iq-as-the-agents-web-tool-24-september-2026)).
+([evaluation history](evaluation-history.md#web-iq-as-the-agents-web-tool-24-september-2026)),
+and it has since been validated end to end in a fresh environment, through Voice
+Live.
+
+**Unset, the default depends on the environment, and preflight records it** in the
+azd env so it can't change later. The preprovision hook records it even with
+`PREFLIGHT_SKIP=true`:
+
+| Environment | Unset `AGENT_WEB_TOOL` becomes |
+|---|---|
+| New (no `SERVICE_APP_URI` yet) | `webiq` |
+| Already deployed in agent mode, before Web IQ became the default | `bing`, so the next deploy doesn't swap a live agent's tool |
+| Using an existing Foundry account (`FOUNDRY_ACCOUNT_NAME`) | `bing`: Web IQ needs the Foundry account this template creates |
+
 `scripts/set_profile.py` asks which to use when you choose agent mode; Enter keeps
-the environment's current choice, which is `bing` on a new one. For CI, pass
-`--web-tool bing` or `--web-tool webiq`. To switch an existing greenfield agent-mode
-environment directly:
+that value. For CI, pass `--web-tool webiq` or `--web-tool bing`. To switch an
+existing greenfield agent-mode environment directly:
 
 ```powershell
 azd env set AGENT_WEB_TOOL webiq
@@ -490,8 +505,8 @@ or, if the directory refuses, generates `AGENT_WEB_TOOL_KEY` and says so.
 Bing. The template stops deploying Bing, but azd deploys incrementally, so an
 existing Bing account is **not deleted** and keeps billing — delete its resource
 yourself once you will not switch back. Set `bing` and `azd up` again to go back.
-It needs the Foundry account this template creates, so
-it is not available with `FOUNDRY_ACCOUNT_NAME` (BYO).
+Web IQ needs the Foundry account this template creates, so it is not available
+with `FOUNDRY_ACCOUNT_NAME` (BYO).
 
 After `azd down`, delete the app registration yourself:
 `az ad app delete --id <AGENT_WEB_TOOL_APP_ID>`.
