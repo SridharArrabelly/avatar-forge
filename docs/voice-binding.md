@@ -209,14 +209,14 @@ foundry/search  : none — no azure_ai_search, no bing_grounding
 Binding to a model takes the agent out of the picture, and its managed tools go
 with it. There is no mixing the two. So model mode ships its own:
 
-The following tool timings are historical measurements from the earlier mixed
-corpus/hybrid profile, not the current minutes-only onboarding scope or section
+The following tool timings are historical measurements from an earlier hybrid
+retrieval profile, not the current minutes-only onboarding scope or section
 retrieval profile. Current results are in
 [evaluation-model-mode.md](evaluation-model-mode.md).
 
 | tool | source | measured |
 | --- | --- | --- |
-| `search_minutes` | the same minutes-and-policies `knowledge-index` the agent queried, hybrid + semantic | 620–714 ms |
+| `search_minutes` | the same `knowledge-index` the agent queried, hybrid + semantic | 620–714 ms |
 | `search_web` | Web IQ, host-allow-listed | 268–298 ms warm |
 
 Owning them is also the reason they are faster: an in-process function can be

@@ -1,8 +1,8 @@
 """Create (or update) the Azure AI Search index used by the Foundry agent.
 
 Defaults to whole sections of structured, dated meeting DOCX files under
-``data/``, excluding designated policy folders. Explicit ``CHUNKING_MODE=window``
-and ``DOCUMENT_SCOPE=all`` retain general DOCX/PDF/Markdown/text ingestion.
+``data/``. Explicit ``CHUNKING_MODE=window`` retains general
+DOCX/PDF/Markdown/text ingestion.
 The index stores both text and embeddings and has a semantic configuration;
 the agent query mode defaults to lexical/BM25 with semantic reranking.
 
@@ -35,7 +35,6 @@ Optional:
     AZURE_SEARCH_API_KEY       if unset, uses DefaultAzureCredential
     DATA_DIR                   default: ./data
     CHUNKING_MODE              section (default), or window
-    DOCUMENT_SCOPE            minutes (default), or all with window mode
     CHUNK_SIZE                 window mode chars per chunk, default: 1200
     CHUNK_OVERLAP              window mode char overlap, default: 200
     RECREATE_INDEX             window-only drop+recreate, default: false
@@ -152,13 +151,8 @@ def _require(name: str) -> str:
 
 def load_settings() -> dict:
     mode = os.getenv("CHUNKING_MODE", "section").strip().lower()
-    scope = os.getenv("DOCUMENT_SCOPE", "minutes").strip().lower()
     if mode not in ("window", "section"):
         raise ValueError("CHUNKING_MODE must be 'window' or 'section'")
-    if scope not in ("all", "minutes"):
-        raise ValueError("DOCUMENT_SCOPE must be 'all' or 'minutes'")
-    if mode == "section" and scope != "minutes":
-        raise ValueError("Section mode requires DOCUMENT_SCOPE=minutes; policy material is not included")
     settings = {
         "search_endpoint": _require("AZURE_SEARCH_ENDPOINT").rstrip("/"),
         "index_name": _require("SEARCH_INDEX_NAME"),
@@ -171,7 +165,6 @@ def load_settings() -> dict:
         "chunk_overlap": int(os.getenv("CHUNK_OVERLAP", "200")),
         "recreate": os.getenv("RECREATE_INDEX", "false").lower() == "true",
         "chunking_mode": mode,
-        "document_scope": scope,
         "vector_profile": os.getenv("SEARCH_VECTOR_PROFILE", "default-vector-profile"),
         "hnsw_algo": os.getenv("SEARCH_HNSW_ALGO", "default-hnsw"),
         "semantic_config": os.getenv("SEARCH_SEMANTIC_CONFIG", "default-semantic"),
@@ -489,31 +482,11 @@ def detect_embed_dim(client, deployment: str) -> int:
 
 
 DOC_TYPE_MINUTES = "MeetingMinutes"
-DOC_TYPE_POLICY = "Policy"
-
-# Sub-directories of data/ whose contents are policy documents rather than minutes.
-POLICY_DIRS = {"policies"}
 
 # Repo documentation that lives alongside the corpus but is NOT corpus content.
 # data/README.md explains how to build the index; indexing it would let build
 # instructions surface as if they were an executive document.
 EXCLUDED_STEMS = {"readme"}
-
-
-def classify_document(path: Path, data_dir: Path) -> str:
-    """Derive documentType from where the file sits under ``data/``.
-
-    Anything beneath ``data/policies/`` is a Policy; everything else is treated as
-    meeting minutes. The value is both indexed as a filterable field and prepended
-    into the chunk text, because only the text form participates in the embedding
-    and the BM25 index -- the field alone cannot influence retrieval.
-    """
-    try:
-        rel = path.relative_to(data_dir)
-    except ValueError:
-        return DOC_TYPE_MINUTES
-    parents = {part.lower() for part in rel.parts[:-1]}
-    return DOC_TYPE_POLICY if parents & POLICY_DIRS else DOC_TYPE_MINUTES
 
 
 def document_files(s: dict) -> list[Path]:
@@ -522,7 +495,6 @@ def document_files(s: dict) -> list[Path]:
         if f.is_file()
         and f.suffix.lower() in READERS
         and f.stem.lower() not in EXCLUDED_STEMS
-        and (s.get("document_scope", "minutes") == "all" or classify_document(f, s["data_dir"]) == DOC_TYPE_MINUTES)
     )
 
 
@@ -534,7 +506,7 @@ def prepare_section_documents(s: dict) -> list[dict]:
         raise ValueError("Section mode requires unique source filenames across DATA_DIR")
     documents = []
     for path in files:
-        if path.suffix.lower() != ".docx" or classify_document(path, s["data_dir"]) != DOC_TYPE_MINUTES:
+        if path.suffix.lower() != ".docx":
             raise ValueError(f"{path.name}: section mode supports structured meeting DOCX files only")
         meeting_dt = parse_meeting_date(path.stem)
         if meeting_dt is None:
@@ -572,7 +544,7 @@ def iter_documents(s: dict, aoai) -> Iterable[dict]:
 
     for path in files:
         reader = READERS[path.suffix.lower()]
-        doc_type = classify_document(path, s["data_dir"])
+        doc_type = DOC_TYPE_MINUTES
         title = display_document_title(path.stem, doc_type)
         log.info("Reading %s  [%s]", path.name, doc_type)
         try:
@@ -736,7 +708,7 @@ def main() -> None:
     if args.manifest:
         receipt = {
             "index": s["index_name"], "chunking_mode": s["chunking_mode"],
-            "document_scope": s["document_scope"], "documents": n,
+            "documents": n,
             "semantic_config": s["semantic_config"],
             "embedding_deployment": s["embed_deployment"], "embedding_dimensions": s["embed_dim"],
         }

@@ -1,7 +1,7 @@
 """Offline original-document references and span-based retrieval scoring.
 
 Reference text belongs in private artifacts, never in committed fixtures.
-This module neither calls Azure nor reads policy subdirectories.
+This module does not call Azure.
 """
 from __future__ import annotations
 
@@ -57,7 +57,7 @@ def read_original(path: Path) -> dict:
         root = ET.fromstring(archive.read("word/document.xml"))
     for tag in ("ins", "del", "footnoteReference", "endnoteReference", "drawing", "pict"):
         if root.findall(f".//{W}{tag}"):
-            raise ValueError(f"{path.name}: {tag} needs a source-review policy before evaluation")
+            raise ValueError(f"{path.name}: {tag} needs source-review approval before evaluation")
     body = root.find(f"{W}body")
     if body is None:
         raise ValueError(f"{path.name}: missing document body")

@@ -39,7 +39,7 @@ def audit(cfg: dict, data_dir: Path, output: Path) -> None:
 
     paths = sorted(data_dir.glob("Board Meeting*.docx"))
     if not paths:
-        raise ValueError("No original meeting DOCX files found (policy subdirectories are never scanned)")
+        raise ValueError("No original meeting DOCX files found")
     documents = [read_original(path) for path in paths]
     by_source = {doc["source"]: doc for doc in documents}
     expected = {}

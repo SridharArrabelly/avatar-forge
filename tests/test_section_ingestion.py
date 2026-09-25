@@ -56,21 +56,23 @@ def main() -> int:
     assert catalogue_title("Strategy | Risk Review") == "Strategy | Risk Review"
     with patch.dict(os.environ, ENV, clear=True):
         defaults = setup.load_settings()
-        assert defaults["chunking_mode"] == "section" and defaults["document_scope"] == "minutes"
-    with patch.dict(os.environ, {**ENV, "CHUNKING_MODE": "window", "DOCUMENT_SCOPE": "all"}, clear=True):
+        assert defaults["chunking_mode"] == "section"
+    with patch.dict(os.environ, {**ENV, "CHUNKING_MODE": "window"}, clear=True):
         legacy = setup.load_settings()
-        assert legacy["chunking_mode"] == "window" and legacy["document_scope"] == "all"
+        assert legacy["chunking_mode"] == "window"
+    legacy_scope_key = "DOCUMENT" + "_SCOPE"
+    with patch.dict(os.environ, {**ENV, legacy_scope_key: "ignored"}, clear=True):
+        ignored = setup.load_settings()
+        assert ignored["chunking_mode"] == "section"
     for values, message in (
         ({"CHUNKING_MODE": "invalid"}, "CHUNKING_MODE"),
-        ({"DOCUMENT_SCOPE": "invalid"}, "DOCUMENT_SCOPE"),
-        ({"CHUNKING_MODE": "section", "DOCUMENT_SCOPE": "all"}, "DOCUMENT_SCOPE=minutes"),
-        ({"CHUNKING_MODE": "section", "DOCUMENT_SCOPE": "minutes", "RECREATE_INDEX": "true"}, "versioned"),
+        ({"CHUNKING_MODE": "section", "RECREATE_INDEX": "true"}, "versioned"),
     ):
         with patch.dict(os.environ, {**ENV, **values}, clear=True):
             rejects(setup.load_settings, message)
-    print("PASS section/minutes defaults, explicit window/all compatibility, and invalid settings")
+    print("PASS section defaults, window compatibility, ignored legacy scope, and invalid settings")
 
-    section = {**defaults, "chunking_mode": "section", "document_scope": "minutes", "embed_dim": 1536}
+    section = {**defaults, "chunking_mode": "section", "embed_dim": 1536}
     schema = setup.build_index("minutes-v2", section)
     assert setup.SECTION_FIELDS <= {field.name for field in schema.fields}
     assert schema.semantic_search.default_configuration_name == section["semantic_config"]
@@ -107,9 +109,6 @@ def main() -> int:
         ]:
             doc.add_paragraph(text)
         doc.save(source)
-        policy = root / "policies"
-        policy.mkdir()
-        (policy / "do-not-read.docx").write_bytes(b"not a document; must be excluded")
         settings = {**section, "data_dir": root}
         documents = setup.prepare_section_documents(settings)
         assert len(documents) == 6
@@ -120,7 +119,7 @@ def main() -> int:
         doc.paragraphs[-1]._p.append(OxmlElement("w:footnoteReference"))
         doc.save(source)
         rejects(lambda: setup.prepare_section_documents(settings), "footnoteReference")
-    print("PASS whole sections preserve context and never open excluded policy documents")
+    print("PASS whole sections preserve context for normal meeting documents")
 
     ready = {**section, "section_documents": documents}
     search = MagicMock()

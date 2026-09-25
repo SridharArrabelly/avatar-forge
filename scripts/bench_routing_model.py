@@ -337,7 +337,7 @@ async def main() -> int:
         "--groups",
         default="",
         help=(
-            "optional comma-separated core groups: minutes,policies,web. "
+            "optional comma-separated core groups: minutes,web. "
             "When Web IQ is unavailable its schema remains as a routing-only stub, "
             "so internal questions still have a real competing tool."
         ),

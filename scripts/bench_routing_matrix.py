@@ -142,7 +142,7 @@ def summarize(records: list[dict]) -> dict:
                 "correct": sum(record.get("routing_ok", False) for record in records if record["group"] == group),
                 "total": sum(record["group"] == group for record in records),
             }
-            for group in ("minutes", "policies", "web")
+            for group in ("minutes", "web")
         },
         "first_token_s": latency("first_token_s"),
         "completion_s": latency("completion_s"),
@@ -208,8 +208,8 @@ def argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--interval", type=float, default=15)
     parser.add_argument("--token-budget", type=int, default=240000)
     parser.add_argument("--reserve-tokens", type=int, default=60000)
-    parser.add_argument("--question-limit", type=int, default=15, help="Use 1 for a pilot; 15 for the scored core suite.")
-    parser.add_argument("--groups", nargs="+", choices=("minutes", "policies", "web"), default=["minutes", "policies", "web"])
+    parser.add_argument("--question-limit", type=int, default=10, help="Use 1 for a pilot; 10 for the scored core suite.")
+    parser.add_argument("--groups", nargs="+", choices=("minutes", "web"), default=["minutes", "web"])
     parser.add_argument("--resume", action="store_true", help="Reuse completed turns with the same source definition and retrieval mode; allows narrowing groups.")
     return parser
 
@@ -219,8 +219,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     args = parser.parse_args(argv)
     if not args.fixed_retrieval and args.breadths is None:
         args.breadths = [5, 8]
-    if args.runs < 1 or not 1 <= args.question_limit <= 15:
-        parser.error("runs must be positive and question-limit must be between 1 and 15")
+    if args.runs < 1 or not 1 <= args.question_limit <= 10:
+        parser.error("runs must be positive and question-limit must be between 1 and 10")
     if args.interval < 0 or not 0 < args.reserve_tokens <= args.token_budget:
         parser.error("interval must be nonnegative and reserve must fit the positive token budget")
     return args

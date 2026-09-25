@@ -24,10 +24,9 @@ measurements, their scopes and limitations.
 
 ## Scope and evidence handling
 
-Use **original meeting minutes only** for the internal evaluation. Exclude
-customer policy documents and questions from **all new evaluation**, even where
-historical harness defaults include them. Do not use generated summaries,
-rewritten minutes or an index's own output as independent ground truth.
+Use **original meeting minutes only** for the internal evaluation. Do not use
+generated summaries, rewritten minutes or an index's own output as independent
+ground truth.
 
 Source text, gold answers, document manifests, retrieved passages, full traces
 and customer material belong only in access-controlled **private artifacts**.
@@ -99,8 +98,8 @@ disposable-agent compatibility/evidence probe, not an offline test or a model
 bakeoff. Keep its definitions, queries and full tool passages private.
 
 The current reference set has **40 paragraph-span retrieval cases: 20 development
-and 20 held-out**, with no policies. Source hashes, reference spans and full traces
-stay private. Paragraph-span coverage is a retrieval diagnostic, not a substitute
+and 20 held-out**. Source hashes, reference spans and full traces stay private.
+Paragraph-span coverage is a retrieval diagnostic, not a substitute
 for independently reviewed required-fact gold or a claim of answer correctness.
 
 ## 3. Direct retrieval A/B, without answer generation
